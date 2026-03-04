@@ -1,0 +1,53 @@
+panels:
+  - type: overview
+    title: EVAL OVERVIEW
+    source: overview
+  - type: task_queue
+    title: TASK QUEUE
+    source: task_monitor
+  - type: stage_widget
+    title: STAGE
+    source: runtime_state
+  - type: metric_spotlight
+    title: METRIC SPOTLIGHT
+    source: metrics
+    options:
+      primary_metric: strongreject
+      top_k: 2
+  - type: task_detail
+    title: TASK DETAIL
+    source: task_monitor
+  - type: event_stream
+    title: EVENT STREAM
+    source: events
+    visibility: always
+  - type: model_io
+    title: MODEL IO
+    source: model_io
+    visibility: always
+  - type: qa_result
+    title: QA RESULT
+    source: qa_result
+    visibility: always
+  - type: scorer_explain
+    title: SCORER EXPLAIN
+    source: scorer_explain
+    visibility: always
+  - type: failures
+    title: FAILURES
+    source: failures
+    visibility: always
+
+layout:
+  left:
+    - stage_widget
+    - task_queue
+    - event_stream
+    - task_detail
+  right:
+    - metric_spotlight
+    - qa_result
+    - model_io
+    - scorer_explain
+    - compare_board
+    - failures

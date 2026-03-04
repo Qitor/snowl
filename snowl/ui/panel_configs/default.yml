@@ -1,0 +1,71 @@
+panels:
+  - type: overview
+    title: EVAL OVERVIEW
+    source: overview
+    visibility: always
+  - type: task_queue
+    title: TASK QUEUE
+    source: task_monitor
+    visibility: always
+  - type: stage_widget
+    title: STAGE
+    source: runtime_state
+    visibility: always
+  - type: metric_spotlight
+    title: METRIC SPOTLIGHT
+    source: metrics
+    visibility: always
+    options:
+      top_k: 3
+  - type: task_detail
+    title: TASK DETAIL
+    source: task_monitor
+    visibility: always
+  - type: event_stream
+    title: EVENT STREAM
+    source: events
+    visibility: always
+  - type: env_timeline
+    title: ENV TIMELINE
+    source: env_events
+    visibility: when_env_present
+  - type: action_stream
+    title: ACTION STREAM
+    source: action_events
+    visibility: always
+  - type: observation_stream
+    title: OBSERVATION STREAM
+    source: observation_events
+    visibility: always
+  - type: model_io
+    title: MODEL IO
+    source: model_io
+    visibility: when_model_io_present
+  - type: scorer_explain
+    title: SCORER EXPLAIN
+    source: scorer_explain
+    visibility: when_scorer_present
+  - type: compare_board
+    title: COMPARE BOARD
+    source: compare
+    visibility: always
+  - type: failures
+    title: FAILURES
+    source: failures
+    visibility: always
+
+layout:
+  left:
+    - stage_widget
+    - task_queue
+    - event_stream
+    - action_stream
+    - observation_stream
+    - env_timeline
+    - task_detail
+  right:
+    - metric_spotlight
+    - model_io
+    - scorer_explain
+    - compare_board
+    - failures
