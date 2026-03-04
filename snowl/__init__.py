@@ -1,5 +1,7 @@
 """Snowl package root."""
 
+__version__ = "0.1.0"
+
 from snowl.agents import ChatAgent, ReActAgent
 from snowl.core import *  # noqa: F401,F403
 from snowl.envs import LocalEnv, LocalSandboxRuntime
@@ -13,6 +15,7 @@ from snowl.runtime import TrialLimits, TrialOutcome, TrialRequest, execute_trial
 from snowl.scorer import includes, match, model_as_judge_json, pattern
 
 __all__ = [
+    "__version__",
     "ChatAgent",
     "LocalEnv",
     "LocalSandboxRuntime",

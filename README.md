@@ -11,6 +11,16 @@ Snowl is a general agent evaluation framework built around a simple contract:
 
 It is designed for both custom evals and benchmark adaptation, with container/runtime complexity handled by the framework as much as possible.
 
+## Name Origin
+
+`snowl` comes from **Snow Owl**.
+
+We chose this name because it conveys:
+
+- sharp observation and signal detection in complex environments
+- calm, reliable operation in difficult conditions
+- a strong semantic fit with agent safety and AI safety evaluation workflows
+
 ## What Snowl Solves
 
 - Unified eval contract across very different benchmarks (QA, terminal, GUI)
@@ -19,6 +29,10 @@ It is designed for both custom evals and benchmark adaptation, with container/ru
 - Built-in benchmark adapters (`strongreject`, `terminalbench`, `osworld`)
 - Research-friendly artifacts (`trials.jsonl`, `events.jsonl`, `metrics_wide.csv`, diagnostics)
 - Live interactive CLI for long-running experiments
+
+## CLI UI Preview
+
+![Snowl CLI UI](./assets/cli_ui.png)
 
 ## Core Roadmap
 
@@ -76,6 +90,21 @@ Or run without install:
 ```bash
 python -m snowl.cli --help
 ```
+
+## 2.1) PyPI packaging and release
+
+This project is packaged as `snowl` for PyPI release.
+
+Build/check locally:
+
+```bash
+cd /Users/morinop/coding/snowl_v2
+./scripts/release_pypi.sh
+```
+
+Release guide:
+
+- `/Users/morinop/coding/snowl_v2/docs/pypi_release.md`
 
 ## 3) Run an Example
 

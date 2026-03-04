@@ -11,6 +11,16 @@ Snowl 是一个通用的 Agent 评测框架，核心使用范式非常简单：
 
 框架目标是让你把精力放在“评测对象与评测规则”上，而不是运行编排细节（尤其是容器、环境、并发、日志与产物管理）。
 
+## 命名由来
+
+`snowl` 来自 **Snow Owl（雪鸮）**。
+
+我们选择这个名字，是希望传达：
+
+- 在复杂环境中进行敏锐观测和信号识别
+- 在高复杂度评测链路中保持稳定、冷静和可靠
+- 与 Agent 安全 / AI 安全评测场景具有很强语义贴合度
+
 ## 一、项目能做什么
 
 - 统一的评测契约，覆盖 QA / Terminal / GUI 等不同类型任务
@@ -19,6 +29,10 @@ Snowl 是一个通用的 Agent 评测框架，核心使用范式非常简单：
 - 内置 benchmark 适配器：`strongreject`、`terminalbench`、`osworld`
 - 研究友好的产物导出：`trials.jsonl`、`events.jsonl`、`metrics_wide.csv`
 - Live CLI（交互式实时界面）
+
+## CLI 界面预览
+
+![Snowl CLI UI](./assets/cli_ui.png)
 
 ## 核心 Roadmap
 
@@ -81,6 +95,21 @@ snowl --help
 ```bash
 python -m snowl.cli --help
 ```
+
+## 3.1) PyPI 打包与发布
+
+本项目已经按 PyPI 包 `snowl` 的方式配置。
+
+本地构建与校验：
+
+```bash
+cd /Users/morinop/coding/snowl_v2
+./scripts/release_pypi.sh
+```
+
+完整发布说明见：
+
+- `/Users/morinop/coding/snowl_v2/docs/pypi_release.md`
 
 ## 4) 模型配置（OpenAI-Compatible）
 
