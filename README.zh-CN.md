@@ -33,6 +33,8 @@ Snowl 是一个通用的 Agent 评测框架，核心使用范式非常简单：
 ## CLI 界面预览
 
 ![Snowl CLI UI](./assets/cli_ui.png)
+![Snowl CLI Agent View](./assets/cli_agent.png)
+![Snowl CLI Model View](./assets/cli_model.png)
 
 ## 核心 Roadmap
 
@@ -332,6 +334,13 @@ Runtime 分层：
 - 并发：`--max-trials`、`--max-sandboxes`、`--max-builds`、`--max-model-calls`
 - 可靠性：`--resume`、`--rerun-failed-only`
 - UI：`--no-ui`、`--ui-mode`、`--ui-theme`、`--ui-refresh-profile`
+  主题值：`contrast`、`quiet`、`research`、`research_redops`
+
+示例（即使是非 docker 任务也强制使用红色系主题）：
+
+```bash
+snowl eval /absolute/path/to/my-eval --ui-theme research_redops
+```
 
 ## 四、项目架构（维护视角）
 
@@ -426,6 +435,37 @@ tool.py (optional) ----->|                      |
 - `metrics_wide.csv`：宽表指标（便于分析）
 - `diagnostics/*.json` + `diagnostics_index.json`
 - `report.html`
+
+### 实时日志与可观测性（包含模型完整 I/O）
+
+Snowl 现在会把 **运行时事件 + 模型完整输入输出** 按可回放格式落盘：
+
+- `run.log`：运行开始即创建，并实时 append。
+- `events.jsonl`：结构化事件流，便于机器分析。
+- `trials.jsonl`：每个 trial 的最终结果行。
+
+核心事件（建议重点关注）：
+
+- `runtime.agent.step`：agent 每一步执行进度
+- `runtime.model.query.start|finish|error`：模型调用生命周期
+- `runtime.model.io`：OpenAI-compatible 完整请求/响应
+  - 请求包含完整 `messages` 与 generation kwargs
+  - 响应包含 `message`、`raw` JSON、`usage`、`timing`
+- `runtime.env.command.start|stdout|stderr|finish|timeout`：容器/环境命令流
+
+常用排障命令：
+
+```bash
+# 通过 run_id 快速定位目录
+ls -la <project>/.snowl/runs/by_run_id/
+
+# 实时跟踪运行日志
+tail -f <project>/.snowl/runs/by_run_id/run-.../run.log
+
+# 只看模型 I/O 与模型报错
+rg "runtime.model.io|runtime.model.query.error" \
+  <project>/.snowl/runs/by_run_id/run-.../run.log
+```
 
 ## 六、如何新增功能（给维护同学）
 

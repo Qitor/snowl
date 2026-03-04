@@ -27,7 +27,7 @@ class InteractionController:
     palette_open: bool = False
     show_help: bool = False
     explain_metric: str | None = None
-    theme_mode: str = "research"  # one of: contrast/quiet/research
+    theme_mode: str = "research"  # one of: contrast/quiet/research/research_redops
     banner_collapsed: bool = False
     panel_mode: str = "auto"  # one of: auto/default/qa_dense/ops_dense/compare_dense
     qa_result_expanded: bool = False
@@ -263,7 +263,7 @@ class InteractionController:
             return action
 
         if key == "x":
-            order = ["contrast", "quiet", "research"]
+            order = ["contrast", "quiet", "research", "research_redops"]
             try:
                 idx = order.index(self.theme_mode)
             except ValueError:
@@ -448,16 +448,16 @@ class InteractionController:
         if cmd == "theme":
             arg = (args[0].lower() if args else "toggle")
             if arg == "toggle":
-                order = ["contrast", "quiet", "research"]
+                order = ["contrast", "quiet", "research", "research_redops"]
                 try:
                     idx = order.index(self.theme_mode)
                 except ValueError:
                     idx = 0
                 self.theme_mode = order[(idx + 1) % len(order)]
-            elif arg in {"contrast", "quiet", "research"}:
+            elif arg in {"contrast", "quiet", "research", "research_redops"}:
                 self.theme_mode = arg
             else:
-                return "theme usage: /theme [contrast|quiet|research|toggle]"
+                return "theme usage: /theme [contrast|quiet|research|research_redops|toggle]"
             return f"theme_mode={self.theme_mode}"
         if cmd == "banner":
             arg = (args[0].lower() if args else "toggle")

@@ -33,6 +33,8 @@ We chose this name because it conveys:
 ## CLI UI Preview
 
 ![Snowl CLI UI](./assets/cli_ui.png)
+![Snowl CLI Agent View](./assets/cli_agent.png)
+![Snowl CLI Model View](./assets/cli_model.png)
 
 ## Core Roadmap
 
@@ -309,6 +311,13 @@ Useful eval flags:
 - runtime limits: `--max-trials`, `--max-sandboxes`, `--max-builds`, `--max-model-calls`
 - reliability: `--resume`, `--rerun-failed-only`
 - UI: `--no-ui`, `--ui-mode`, `--ui-theme`, `--ui-refresh-profile`
+  theme values: `contrast`, `quiet`, `research`, `research_redops`
+
+Example (force red ops theme even for non-docker tasks):
+
+```bash
+snowl eval /absolute/path/to/my-eval --ui-theme research_redops
+```
 
 ## Project Architecture
 
@@ -435,6 +444,37 @@ Main outputs:
 - `profiling.json`
 
 This layout is designed for both human debugging and downstream research analysis pipelines.
+
+### Real-time Logging and What Is Captured
+
+Snowl now logs **runtime events + full model I/O** in a replayable format.
+
+- `run.log` is created at run start and appended in real time.
+- `events.jsonl` stores structured events for machine analysis.
+- `trials.jsonl` stores per-trial final result rows.
+
+Agent/model observability events (key ones):
+
+- `runtime.agent.step`: per-step agent execution progress
+- `runtime.model.query.start|finish|error`: model call lifecycle
+- `runtime.model.io`: full OpenAI-compatible request/response payload
+  - request includes full `messages` and generation kwargs
+  - response includes model `message`, `raw` JSON, `usage`, `timing`
+- `runtime.env.command.start|stdout|stderr|finish|timeout`: container/env command stream
+
+Quick debugging commands:
+
+```bash
+# resolve run dir by run_id
+ls -la <project>/.snowl/runs/by_run_id/
+
+# stream runtime log
+tail -f <project>/.snowl/runs/by_run_id/run-.../run.log
+
+# inspect model I/O events only
+rg "runtime.model.io|runtime.model.query.error" \
+  <project>/.snowl/runs/by_run_id/run-.../run.log
+```
 
 ## Extension Guide
 

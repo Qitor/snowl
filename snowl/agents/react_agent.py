@@ -66,8 +66,16 @@ class ReActAgent:
     ) -> AgentState:
         emit = context.metadata.get("__snowl_emit_event")
 
-        async def _generate_with_events(messages: list[dict[str, Any]], **kwargs: Any):
+        async def _generate_with_events(
+            messages: list[dict[str, Any]],
+            *,
+            step: int,
+            mode_name: str,
+            **kwargs: Any,
+        ):
             start_ms = int(time.time() * 1000)
+            request_messages = [dict(m) for m in messages]
+            request_kwargs = dict(kwargs)
             if callable(emit):
                 emit(
                     {
@@ -78,7 +86,24 @@ class ReActAgent:
                         "sample_id": context.sample_id,
                     }
                 )
-            response = await self.model_client.generate(messages, **kwargs)
+            try:
+                response = await self.model_client.generate(request_messages, **request_kwargs)
+            except Exception as exc:
+                if callable(emit):
+                    emit(
+                        {
+                            "event": "runtime.model.query.error",
+                            "phase": "agent",
+                            "agent_id": self.agent_id,
+                            "task_id": context.task_id,
+                            "sample_id": context.sample_id,
+                            "step": step,
+                            "mode": mode_name,
+                            "message": str(exc),
+                            "error_type": exc.__class__.__name__,
+                        }
+                    )
+                raise
             if callable(emit):
                 emit(
                     {
@@ -91,6 +116,37 @@ class ReActAgent:
                         "input_tokens": response.usage.input_tokens,
                         "output_tokens": response.usage.output_tokens,
                         "total_tokens": response.usage.total_tokens,
+                    }
+                )
+                emit(
+                    {
+                        "event": "runtime.model.io",
+                        "phase": "agent",
+                        "agent_id": self.agent_id,
+                        "task_id": context.task_id,
+                        "sample_id": context.sample_id,
+                        "step": step,
+                        "mode": mode_name,
+                        "message": "full model request/response captured",
+                        "model": self.model_client.model,
+                        "request": {
+                            "messages": request_messages,
+                            "generation_kwargs": request_kwargs,
+                        },
+                        "response": {
+                            "message": dict(response.message),
+                            "raw": response.raw,
+                            "usage": {
+                                "input_tokens": response.usage.input_tokens,
+                                "output_tokens": response.usage.output_tokens,
+                                "total_tokens": response.usage.total_tokens,
+                            },
+                            "timing": {
+                                "started_at_ms": response.timing.started_at_ms,
+                                "ended_at_ms": response.timing.ended_at_ms,
+                                "duration_ms": response.timing.duration_ms,
+                            },
+                        },
                     }
                 )
             return response
@@ -120,7 +176,12 @@ class ReActAgent:
                     if tool_schemas:
                         kwargs["tools"] = tool_schemas
                         kwargs.setdefault("tool_choice", "auto")
-                    response = await _generate_with_events(messages, **kwargs)
+                    response = await _generate_with_events(
+                        messages,
+                        step=step,
+                        mode_name=mode,
+                        **kwargs,
+                    )
                 except Exception as exc:
                     if not self.enable_json_fallback:
                         raise
@@ -139,7 +200,12 @@ class ReActAgent:
             if mode == "json_fallback" and response is None:
                 kwargs = dict(self.default_generation_kwargs)
                 kwargs.setdefault("temperature", self.temperature)
-                response = await _generate_with_events(messages, **kwargs)
+                response = await _generate_with_events(
+                    messages,
+                    step=step,
+                    mode_name=mode,
+                    **kwargs,
+                )
 
             usage_total["input_tokens"] += response.usage.input_tokens
             usage_total["output_tokens"] += response.usage.output_tokens
@@ -165,6 +231,20 @@ class ReActAgent:
                     },
                 }
             )
+            if callable(emit):
+                emit(
+                    {
+                        "event": "runtime.agent.step",
+                        "phase": "agent",
+                        "agent_id": self.agent_id,
+                        "task_id": context.task_id,
+                        "sample_id": context.sample_id,
+                        "step": step,
+                        "mode": mode,
+                        "status": "running",
+                        "message": "react agent step executed",
+                    }
+                )
 
             if mode == "json_fallback":
                 content = str(message.get("content", "") or "")

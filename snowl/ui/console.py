@@ -445,10 +445,10 @@ class LiveConsoleRenderer(ConsoleRenderer):
     def _active_theme_mode(self) -> str:
         if self._controller is not None:
             mode = str(getattr(self._controller, "theme_mode", self.theme_mode) or self.theme_mode).lower()
-            if mode in {"contrast", "quiet", "research"}:
+            if mode in {"contrast", "quiet", "research", "research_redops"}:
                 return mode
         mode = str(self.theme_mode).lower()
-        if mode in {"quiet", "research"}:
+        if mode in {"quiet", "research", "research_redops"}:
             return mode
         return "contrast"
 
@@ -458,6 +458,21 @@ class LiveConsoleRenderer(ConsoleRenderer):
         return bool(self.show_banner)
 
     def _theme_tokens(self) -> ThemeTokens:
+        docker_like_benchmark = self._benchmark_name in {"terminalbench", "osworld"}
+        if self._active_theme_mode() == "research_redops":
+            return ThemeTokens(
+                title="#FFEDEA",
+                subtitle="#FFCFC7",
+                panel_border="#B85C4C",
+                panel_title="#FFAA99",
+                panel_text="#FFE4DF",
+                accent="#FF8A75",
+                warn="#FF6E5B",
+                ok="#9FE3B0",
+                banner_primary="#FFD2CA",
+                banner_fill="#E6785E",
+                banner_tag="#FFB199",
+            )
         if self._active_theme_mode() == "quiet":
             return ThemeTokens(
                 title="#EAF4FF",
@@ -473,6 +488,22 @@ class LiveConsoleRenderer(ConsoleRenderer):
                 banner_tag="#B8C8D7",
             )
         if self._active_theme_mode() == "research":
+            if docker_like_benchmark:
+                # Ops/container heavy runs get a warmer palette so they are
+                # visually distinct from QA-style evals in the terminal.
+                return ThemeTokens(
+                    title="#FFEDEA",
+                    subtitle="#FFCFC7",
+                    panel_border="#B85C4C",
+                    panel_title="#FFAA99",
+                    panel_text="#FFE4DF",
+                    accent="#FF8A75",
+                    warn="#FF6E5B",
+                    ok="#9FE3B0",
+                    banner_primary="#FFD2CA",
+                    banner_fill="#E6785E",
+                    banner_tag="#FFB199",
+                )
             return ThemeTokens(
                 title="#E8EEFF",
                 subtitle="#AEB8CC",
@@ -517,54 +548,36 @@ class LiveConsoleRenderer(ConsoleRenderer):
     def _render_banner_lines(self, width: int) -> list[str]:
         if not self._active_banner_visible():
             return [f"Snowl Live  run={self._run_id}  benchmark={self._benchmark_name}"]
-        if self._active_theme_mode() == "research":
-            if width >= 96:
-                return [
-                    "▟▛█▜▙  ▟▛█▜▙  ▟▛█▜▙  ▟▛█▜▙  ▟▛█▜▙",
-                    "▛▙█▟▜  ▛▙█▟▜  ▛▙█▟▜  ▛▙█▟▜  ▛▙█▟▜",
-                    "minimalist stream runtime • theme=research",
-                ]
-            return ["SNOWL  minimalist stream runtime • theme=research"]
-        if width >= 132:
-            return [
-                "   _____                      __ ",
-                "  / ___/____  ____ _      __/ / ",
-                "  \\__ \\/ __ \\/ __ \\ | /| / / /  ",
-                " ___/ / / / / /_/ / |/ |/ / /___",
-                "/____/_/ /_/\\____/|__/|__/_____/",
-                "Snow OWL Agent Evaluation Command Center",
-            ]
         if width >= 96:
             return [
-                " SNOWL  |  Agent Evaluation Command Center",
-                f" run={self._run_id}  benchmark={self._benchmark_name}",
+                " /\\_ _/\\    /\\_ _/\\    /\\_ _/\\    /\\_ _/\\    /\\_ _/\\ ",
+                "( o v o )  ( o v o )  ( o v o )  ( o v o )  ( o v o )",
+                f"minimalist stream runtime • theme={self._active_theme_mode()}",
             ]
-        return [f"Snowl Live  run={self._run_id}  benchmark={self._benchmark_name}"]
+        return [f"/\\_ _/\\ ( o v o )  minimalist runtime • theme={self._active_theme_mode()}"]
 
     def _render_banner_rich_rows(self, width: int, tokens: ThemeTokens) -> list[Any]:
         from rich.text import Text
 
-        if self._active_theme_mode() != "research":
-            return [Text(line, style=f"bold {tokens.title}") for line in self._render_banner_lines(width)]
         rows: list[Any] = []
         if width >= 96:
             top = Text()
-            top.append("▟▛█▜▙  ▟▛█▜▙  ▟▛█▜▙  ▟▛█▜▙  ▟▛█▜▙", style=f"bold {tokens.banner_fill}")
+            top.append(" /\\_ _/\\    /\\_ _/\\    /\\_ _/\\    /\\_ _/\\    /\\_ _/\\ ", style=f"bold {tokens.banner_fill}")
             rows.append(top)
             mid = Text()
-            mid.append("▛▙█▟▜  ▛▙█▟▜  ▛▙█▟▜  ▛▙█▟▜  ▛▙█▟▜", style=f"bold {tokens.banner_primary}")
+            mid.append("( o v o )  ( o v o )  ( o v o )  ( o v o )  ( o v o )", style=f"bold {tokens.banner_primary}")
             rows.append(mid)
             tag = Text()
             tag.append("minimalist stream runtime", style=tokens.subtitle)
             tag.append(" • ", style=tokens.subtitle)
             tag.append("theme=", style=tokens.subtitle)
-            tag.append("research", style=f"bold {tokens.banner_tag}")
+            tag.append(self._active_theme_mode(), style=f"bold {tokens.banner_tag}")
             rows.append(tag)
         else:
             compact = Text()
-            compact.append("SNOWL", style=f"bold {tokens.banner_fill}")
-            compact.append("  minimalist stream runtime • theme=", style=tokens.subtitle)
-            compact.append("research", style=f"bold {tokens.banner_tag}")
+            compact.append("/\\_ _/\\ ( o v o )", style=f"bold {tokens.banner_fill}")
+            compact.append("  minimalist runtime • theme=", style=tokens.subtitle)
+            compact.append(self._active_theme_mode(), style=f"bold {tokens.banner_tag}")
             rows.append(compact)
         return rows
 
@@ -1363,7 +1376,7 @@ class LiveConsoleRenderer(ConsoleRenderer):
             footer_bits = [
                 "keys: p pause  f failed  r rerun  a/t group  m/s sort  v compact  b banner  x theme  u mode  e qa-expand",
                 "cmd: task=<ids> agent=<ids> variant=<ids> status=<states> focus=<task_id> lock clear",
-                "cmd+: /theme [contrast|quiet|research|toggle] /banner [show|hide|toggle] /mode [auto|default|qa_dense|ops_dense|compare_dense] /qa [expand|collapse|toggle]",
+                "cmd+: /theme [contrast|quiet|research|research_redops|toggle] /banner [show|hide|toggle] /mode [auto|default|qa_dense|ops_dense|compare_dense] /qa [expand|collapse|toggle]",
                 "input: press '/' then type command and Enter; Tab complete; ↑↓ history",
                 "example: /task t1   then   /status error",
             ]
@@ -1672,7 +1685,7 @@ class LiveConsoleRenderer(ConsoleRenderer):
         self._emit("")
         self._emit("=== Controls ===")
         self._emit("keys: p pause/resume | f failed-focus | r rerun-failed | a/t group | m/s sort | v compact | b banner | x theme | u mode | e qa-expand | Tab j/k/up/down Enter ?")
-        self._emit("palette: /task /agent /variant /status /focus /rerun failed /explain /theme[contrast|quiet|research] /banner /mode /qa /help /clear  (Tab complete, ↑↓ history)")
+        self._emit("palette: /task /agent /variant /status /focus /rerun failed /explain /theme[contrast|quiet|research|research_redops] /banner /mode /qa /help /clear  (Tab complete, ↑↓ history)")
 
     def render_summary(self, summary: Any, artifacts_dir: str, rerun_cmd: str) -> None:
         self._latest_summary = (

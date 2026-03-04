@@ -308,7 +308,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     eval_parser.add_argument(
         "--ui-theme",
-        choices=["contrast", "quiet", "research"],
+        choices=["contrast", "quiet", "research", "research_redops"],
         default="research",
         help="UI theme mode.",
     )
@@ -362,7 +362,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bench_run.add_argument(
         "--ui-theme",
-        choices=["contrast", "quiet", "research"],
+        choices=["contrast", "quiet", "research", "research_redops"],
         default="research",
         help="UI theme mode.",
     )

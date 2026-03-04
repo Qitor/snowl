@@ -29,6 +29,8 @@ class ChatAgent:
 
         emit = context.metadata.get("__snowl_emit_event")
         started = int(time.time() * 1000)
+        request_messages = [dict(m) for m in state.messages]
+        request_kwargs = dict(self.default_generation_kwargs)
         if callable(emit):
             emit(
                 {
@@ -39,10 +41,25 @@ class ChatAgent:
                     "sample_id": context.sample_id,
                 }
             )
-        response = await self.model_client.generate(
-            list(state.messages),
-            **self.default_generation_kwargs,
-        )
+        try:
+            response = await self.model_client.generate(
+                request_messages,
+                **request_kwargs,
+            )
+        except Exception as exc:
+            if callable(emit):
+                emit(
+                    {
+                        "event": "runtime.model.query.error",
+                        "phase": "agent",
+                        "agent_id": self.agent_id,
+                        "task_id": context.task_id,
+                        "sample_id": context.sample_id,
+                        "message": str(exc),
+                        "error_type": exc.__class__.__name__,
+                    }
+                )
+            raise
         if callable(emit):
             emit(
                 {
@@ -55,6 +72,47 @@ class ChatAgent:
                     "input_tokens": response.usage.input_tokens,
                     "output_tokens": response.usage.output_tokens,
                     "total_tokens": response.usage.total_tokens,
+                }
+            )
+            emit(
+                {
+                    "event": "runtime.model.io",
+                    "phase": "agent",
+                    "agent_id": self.agent_id,
+                    "task_id": context.task_id,
+                    "sample_id": context.sample_id,
+                    "message": "full model request/response captured",
+                    "model": self.model_client.model,
+                    "request": {
+                        "messages": request_messages,
+                        "generation_kwargs": request_kwargs,
+                    },
+                    "response": {
+                        "message": dict(response.message),
+                        "raw": response.raw,
+                        "usage": {
+                            "input_tokens": response.usage.input_tokens,
+                            "output_tokens": response.usage.output_tokens,
+                            "total_tokens": response.usage.total_tokens,
+                        },
+                        "timing": {
+                            "started_at_ms": response.timing.started_at_ms,
+                            "ended_at_ms": response.timing.ended_at_ms,
+                            "duration_ms": response.timing.duration_ms,
+                        },
+                    },
+                }
+            )
+            emit(
+                {
+                    "event": "runtime.agent.step",
+                    "phase": "agent",
+                    "agent_id": self.agent_id,
+                    "task_id": context.task_id,
+                    "sample_id": context.sample_id,
+                    "step": 1,
+                    "status": "completed",
+                    "message": "chat_agent single-step completed",
                 }
             )
 
