@@ -32,7 +32,6 @@ Snowl 是一个通用的 Agent 评测框架，核心使用范式非常简单：
 
 ## CLI 界面预览
 
-![Snowl CLI UI](./assets/cli_ui.png)
 ![Snowl CLI Agent View](./assets/cli_agent.png)
 ![Snowl CLI Model View](./assets/cli_model.png)
 

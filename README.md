@@ -32,7 +32,6 @@ We chose this name because it conveys:
 
 ## CLI UI Preview
 
-![Snowl CLI UI](./assets/cli_ui.png)
 ![Snowl CLI Agent View](./assets/cli_agent.png)
 ![Snowl CLI Model View](./assets/cli_model.png)
 
