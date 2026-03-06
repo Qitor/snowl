@@ -99,6 +99,16 @@ class GuiEnv:
                 8006: int(self.config.get("vnc_port", 8006)),
                 8080: int(self.config.get("vlc_port", 8080)),
             }
+        # KVM device detection and env patch
+        env_dict = dict(env or {})
+        kvm_device = "/dev/kvm"
+        kvm_exists = os.path.exists(kvm_device)
+        if kvm_exists:
+            # Add --device /dev/kvm to docker run
+            kvm_flag = True
+        else:
+            env_dict["KVM"] = "N"
+            kvm_flag = False
         cmd = ["docker", "run"]
         if detach:
             cmd.append("-d")
@@ -106,11 +116,13 @@ class GuiEnv:
             cap_name = str(cap).strip()
             if cap_name:
                 cmd += ["--cap-add", cap_name]
+        if kvm_flag:
+            cmd += ["--device", kvm_device]
         for c_port, h_port in (ports or {}).items():
             cmd += ["-p", f"{h_port}:{c_port}"]
         for host_path, container_path in (volumes or {}).items():
             cmd += ["-v", f"{os.path.abspath(host_path)}:{container_path}"]
-        for k, v in dict(env or {}).items():
+        for k, v in env_dict.items():
             cmd += ["-e", f"{k}={v}"]
         cmd.append(image)
         command_text = " ".join(cmd)
@@ -283,71 +295,65 @@ class GuiEnv:
         include_accessibility: bool | None = None,
         include_terminal: bool | None = None,
     ) -> dict[str, Any]:
-        if include_accessibility is None:
-            include_accessibility = bool(self.config.get("observe_accessibility", False))
-        if include_terminal is None:
-            include_terminal = bool(self.config.get("observe_terminal", False))
         endpoint = str(self.config.get("controller_endpoint") or self.controller_endpoint or "")
+        obs = {}
         if endpoint:
+            # /screenshot (OSWorld strict)
             try:
                 resp = requests.get(f"{endpoint.rstrip('/')}/screenshot", timeout=10)
-                if resp.status_code == 200:
-                    obs = {"screenshot": resp.content, "status_code": 200}
-                    if include_accessibility:
-                        try:
-                            a11y = requests.get(f"{endpoint.rstrip('/')}/accessibility", timeout=20)
-                            if a11y.status_code == 200:
-                                payload = a11y.json() if hasattr(a11y, "json") else {}
-                                obs["accessibility_tree"] = str((payload or {}).get("AT") or "")
-                                obs["accessibility_status_code"] = 200
-                            else:
-                                obs["accessibility_status_code"] = int(a11y.status_code)
-                        except Exception as exc:
-                            obs["accessibility_error"] = str(exc)
-                    if include_terminal:
-                        try:
-                            terminal = requests.get(f"{endpoint.rstrip('/')}/terminal", timeout=20)
-                            if terminal.status_code == 200:
-                                payload = terminal.json() if hasattr(terminal, "json") else {}
-                                obs["terminal_output"] = str((payload or {}).get("output") or "")
-                                obs["terminal_status_code"] = 200
-                            else:
-                                obs["terminal_status_code"] = int(terminal.status_code)
-                        except Exception as exc:
-                            obs["terminal_error"] = str(exc)
-                    self._last_observation = obs
-                    self.history.append(
-                        {
-                            "event": "gui.observe",
-                            "status_code": 200,
-                            "accessibility": bool(include_accessibility),
-                            "terminal": bool(include_terminal),
-                        }
-                    )
-                    return obs
+                content_type = resp.headers.get("Content-Type", "")
+                content = resp.content if resp.status_code == 200 else b""
+                # 必须是 image/png 且 magic 正确
+                if resp.status_code == 200 and content_type.startswith("image/png") and content[:8] == b"\x89PNG\r\n\x1a\n":
+                    obs["screenshot"] = content
+                    obs["screenshot_ok"] = True
+                else:
+                    obs["screenshot"] = b""
+                    obs["screenshot_ok"] = False
+                    obs["screenshot_error"] = f"Invalid screenshot: status={resp.status_code}, content_type={content_type}"
+                obs["status_code"] = resp.status_code
             except Exception as exc:
-                self.history.append({"event": "gui.observe_error", "error": str(exc)})
-        obs = {"screenshot": b"", "status_code": None}
+                obs["screenshot"] = b""
+                obs["screenshot_ok"] = False
+                obs["screenshot_error"] = str(exc)
+            # /accessibility
+            if include_accessibility:
+                try:
+                    a11y = requests.get(f"{endpoint.rstrip('/')}/accessibility", timeout=20)
+                    obs["accessibility_status_code"] = a11y.status_code
+                    if a11y.status_code == 200:
+                        payload = a11y.json() if hasattr(a11y, "json") else {}
+                        obs["accessibility_tree"] = str((payload or {}).get("AT") or "")
+                    else:
+                        obs["accessibility_tree"] = ""
+                except Exception as exc:
+                    obs["accessibility_error"] = str(exc)
+            # /terminal
+            if include_terminal:
+                try:
+                    terminal = requests.get(f"{endpoint.rstrip('/')}/terminal", timeout=20)
+                    obs["terminal_status_code"] = terminal.status_code
+                    if terminal.status_code == 200:
+                        payload = terminal.json() if hasattr(terminal, "json") else {}
+                        obs["terminal_output"] = str((payload or {}).get("output") or "")
+                    else:
+                        obs["terminal_output"] = ""
+                except Exception as exc:
+                    obs["terminal_error"] = str(exc)
         self._last_observation = obs
-        self.history.append({"event": "gui.observe", "status_code": None})
+        self.history.append({"event": "gui.observe", **{k: v for k, v in obs.items() if k != "screenshot"}})
         return obs
 
     def execute_action(self, action: Mapping[str, Any]) -> dict[str, Any]:
         endpoint = str(self.config.get("controller_endpoint") or self.controller_endpoint or "")
+        action_dict = dict(action)
+        payload = self._action_to_execute_payload(action_dict)
+        if payload is None:
+            out = {"event": "gui.action", "action": action_dict, "skipped": True}
+            self.history.append(out)
+            return out
         if endpoint:
             try:
-                action_dict = dict(action)
-                if "command" in action_dict:
-                    payload = {
-                        "command": action_dict.get("command"),
-                        "shell": bool(action_dict.get("shell", False)),
-                    }
-                else:
-                    payload = self._action_to_execute_payload(action_dict)
-                if payload is None:
-                    out = {"event": "gui.action", "action": action_dict, "skipped": True}
-                    self.history.append(out)
-                    return out
                 resp = requests.post(f"{endpoint.rstrip('/')}/execute", json=payload, timeout=60)
                 out = {
                     "event": "gui.action",
@@ -359,10 +365,10 @@ class GuiEnv:
                 self.history.append(out)
                 return out
             except Exception as exc:
-                out = {"event": "gui.action_error", "action": dict(action), "error": str(exc)}
+                out = {"event": "gui.action_error", "action": action_dict, "error": str(exc)}
                 self.history.append(out)
                 return out
-        out = {"event": "gui.action", "action": dict(action), "simulated": True}
+        out = {"event": "gui.action", "action": action_dict, "simulated": True}
         self.history.append(out)
         return out
 
@@ -466,11 +472,12 @@ class GuiEnv:
             self.history.append(out)
             return out
         try:
-            resp = requests.post(f"{endpoint.rstrip('/')}/start_recording", timeout=30)
+            resp = requests.post(f"{endpoint.rstrip('/')}/start_recording", timeout=10)
             out = {
                 "event": "gui.record.start",
                 "status_code": int(resp.status_code),
                 "ok": bool(resp.status_code == 200),
+                "body": resp.text,
             }
         except Exception as exc:
             out = {"event": "gui.record.start", "ok": False, "error": str(exc)}
@@ -484,14 +491,17 @@ class GuiEnv:
             self.history.append(out)
             return out
         try:
-            resp = requests.post(f"{endpoint.rstrip('/')}/end_recording", timeout=120)
+            resp = requests.post(f"{endpoint.rstrip('/')}/end_recording", stream=True, timeout=60)
             data = bytes(resp.content or b"")
+            # 必须 status_code==200 且内容非空
+            ok = bool(resp.status_code == 200 and data)
             out = {
                 "event": "gui.record.stop",
                 "status_code": int(resp.status_code),
-                "ok": bool(resp.status_code == 200 and data),
+                "ok": ok,
                 "bytes": len(data),
                 "recording_bytes": data,
+                "body": resp.text if not ok else "",
             }
         except Exception as exc:
             out = {"event": "gui.record.stop", "ok": False, "error": str(exc), "bytes": 0}
@@ -507,7 +517,7 @@ class GuiEnv:
                 "ok": False,
                 "path": path,
                 "bytes": 0,
-                "reason": result.get("error") or "empty recording",
+                "reason": result.get("error") or result.get("body") or "empty recording",
             }
             self.history.append(out)
             return out

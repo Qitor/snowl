@@ -308,6 +308,12 @@ class ContainerRuntime:
                 }[key]
                 container_env[mapped] = value
 
+        # --- Merge DockerProvider default environment if not set ---
+        docker_default_env = {"DISK_SIZE": "32G", "RAM_SIZE": "4G", "CPU_CORES": "4"}
+        for k, v in docker_default_env.items():
+            if k not in container_env:
+                container_env[k] = v
+
         return container_env, volumes, first_boot, boot_config
 
     def _resolve_osworld_cap_add(self) -> list[str]:

@@ -143,31 +143,33 @@ class OSWorldOfficialAgent:
             if not managed_by_runtime:
                 emit({"event": "osworld.container.config", "image": os.getenv("SNOWL_OSWORLD_IMAGE", "happysixd/osworld-docker")})
                 emit({"event": "osworld.container.starting"})
-                start_evt = env.start_container(
-                    image=os.getenv("SNOWL_OSWORLD_IMAGE", "happysixd/osworld-docker"),
-                    cap_add=_resolve_cap_add(),
+            from snowl.tools.gui import GuiToolset
+            managed_env = (
+                getattr(container_session, "env", None)
+                if getattr(container_session, "kind", "") == "gui_container"
+                else None
+            )
+            env = (
+                managed_env
+                if managed_env is not None
+                else GuiEnv(
+                    env_spec=EnvSpec(
+                        env_type="gui",
+                        provided_ops=(
+                            "gui.action",
+                            "gui.click",
+                            "gui.type",
+                            "gui.key",
+                            "gui.scroll",
+                            "gui.observe",
+                            "gui.wait",
+                            "gui.terminate",
+                        ),
+                    ),
+                    config={"ready_timeout_sec": float(os.getenv("SNOWL_OSWORLD_READY_TIMEOUT", "240"))},
                 )
-                trace_events.append(start_evt)
-                emit({"event": "osworld.container.started", "exit_code": start_evt.get("exit_code"), "ready": start_evt.get("ready")})
-
-            if record_enabled:
-                rec_start = env.start_recording()
-                trace_events.append(
-                    {
-                        "event": "osworld.recording.start",
-                        "ok": bool(rec_start.get("ok")),
-                        "status_code": rec_start.get("status_code"),
-                        "error": rec_start.get("error"),
-                    }
-                )
-                recording_started = bool(rec_start.get("ok"))
-                emit(
-                    {
-                        "event": "osworld.recording.start",
-                        "ok": recording_started,
-                        "status_code": rec_start.get("status_code"),
-                    }
-                )
+            )
+            gui = GuiToolset(env=env)
 
             if self.max_steps <= 0:
                 trace_events.append({"event": "osworld.max_steps.zero", "max_steps": self.max_steps})
