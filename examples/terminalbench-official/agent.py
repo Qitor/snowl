@@ -90,6 +90,7 @@ def _tail(text: Any, limit: int = 240) -> str:
 class TerminusOfficialAgent:
     agent_id: str = "terminalbench_official_agent"
     max_episodes: int = 8
+    max_parse_retries: int = 3
     temperature: float = 0.2
 
     def __post_init__(self) -> None:
@@ -177,6 +178,78 @@ class TerminusOfficialAgent:
             compose_project=trial_name,
             compose_service=str(sample_meta.get("compose_service", "client")),
             compose_env=compose_env,
+        )
+
+    async def _llm_query_handler(
+        self,
+        *,
+        client: OpenAICompatibleChatClient,
+        prompt: str,
+        emit,
+        trace_events: list[dict[str, Any]],
+        usage_total: dict[str, int],
+        episode: int,
+    ) -> dict[str, Any]:
+        for parse_attempt in range(1, self.max_parse_retries + 1):
+            emit(
+                {
+                    "event": "runtime.model.query.start",
+                    "phase": "agent",
+                    "model": getattr(client, "model", None),
+                    "episode": episode,
+                    "parse_attempt": parse_attempt,
+                }
+            )
+            try:
+                resp = await client.generate(
+                    [{"role": "user", "content": prompt}],
+                    temperature=self.temperature,
+                )
+            except Exception as exc:
+                emit(
+                    {
+                        "event": "runtime.model.query.error",
+                        "phase": "error",
+                        "model": getattr(client, "model", None),
+                        "message": str(exc),
+                        "episode": episode,
+                        "parse_attempt": parse_attempt,
+                    }
+                )
+                raise
+            emit(
+                {
+                    "event": "runtime.model.query.finish",
+                    "phase": "agent",
+                    "model": getattr(client, "model", None),
+                    "input_tokens": int(getattr(resp.usage, "input_tokens", 0)),
+                    "output_tokens": int(getattr(resp.usage, "output_tokens", 0)),
+                    "total_tokens": int(getattr(resp.usage, "total_tokens", 0)),
+                    "episode": episode,
+                    "parse_attempt": parse_attempt,
+                }
+            )
+            usage_total["input_tokens"] += resp.usage.input_tokens
+            usage_total["output_tokens"] += resp.usage.output_tokens
+            usage_total["total_tokens"] += resp.usage.total_tokens
+
+            content = str(resp.message.get("content", ""))
+            parsed = _extract_json_object(content)
+            if parsed is not None:
+                return parsed
+            trace_events.append(
+                {
+                    "event": "terminalbench.parse_error",
+                    "episode": episode,
+                    "parse_attempt": parse_attempt,
+                    "max_parse_retries": self.max_parse_retries,
+                    "raw": content,
+                }
+            )
+
+        raise RuntimeError(
+            "terminalbench model response parse failed after "
+            f"{self.max_parse_retries} attempts in episode {episode}"
         )
 
     async def run(
@@ -280,49 +353,14 @@ class TerminusOfficialAgent:
                     history=history,
                     terminal_state=terminal_state,
                 )
-                emit(
-                    {
-                        "event": "runtime.model.query.start",
-                        "phase": "agent",
-                        "model": getattr(client, "model", None),
-                    }
+                parsed = await self._llm_query_handler(
+                    client=client,
+                    prompt=prompt,
+                    emit=emit,
+                    trace_events=trace_events,
+                    usage_total=usage_total,
+                    episode=episode,
                 )
-                try:
-                    resp = await client.generate(
-                        [{"role": "user", "content": prompt}],
-                        temperature=self.temperature,
-                    )
-                except Exception as exc:
-                    emit(
-                        {
-                            "event": "runtime.model.query.error",
-                            "phase": "error",
-                            "model": getattr(client, "model", None),
-                            "message": str(exc),
-                        }
-                    )
-                    raise
-                emit(
-                    {
-                        "event": "runtime.model.query.finish",
-                        "phase": "agent",
-                        "model": getattr(client, "model", None),
-                        "input_tokens": int(getattr(resp.usage, "input_tokens", 0)),
-                        "output_tokens": int(getattr(resp.usage, "output_tokens", 0)),
-                        "total_tokens": int(getattr(resp.usage, "total_tokens", 0)),
-                    }
-                )
-                usage_total["input_tokens"] += resp.usage.input_tokens
-                usage_total["output_tokens"] += resp.usage.output_tokens
-                usage_total["total_tokens"] += resp.usage.total_tokens
-
-                content = str(resp.message.get("content", ""))
-                parsed = _extract_json_object(content)
-                if not parsed:
-                    trace_events.append(
-                        {"event": "terminalbench.parse_error", "episode": episode, "raw": content}
-                    )
-                    break
 
                 commands = parsed.get("commands") or []
                 timeout_happened = False
