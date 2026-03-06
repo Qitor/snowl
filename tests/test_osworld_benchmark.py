@@ -179,43 +179,42 @@ def test_gui_env_action_mapping_coverage() -> None:
     assert "pyautogui.keyUp('ctrl')" in str((key_up or {}).get("command", ["", "", ""])[2])
     right_click = env._action_to_execute_payload({"action_type": "RIGHT_CLICK", "parameters": {"x": 10, "y": 20}})
     assert "pyautogui.rightClick" in str((right_click or {}).get("command", ["", "", ""])[2])
+    type_alias = env._action_to_execute_payload({"action_type": "TYPE", "parameters": {"text": "hello"}})
+    assert "pyautogui.typewrite('hello')" in str((type_alias or {}).get("command", ["", "", ""])[2])
+    key_alias = env._action_to_execute_payload({"action_type": "KEY", "parameters": {"key": "enter"}})
+    assert "pyautogui.press('enter')" in str((key_alias or {}).get("command", ["", "", ""])[2])
+    type_top_level = env._action_to_execute_payload({"action_type": "TYPE", "text": "hi"})
+    assert "pyautogui.typewrite('hi')" in str((type_top_level or {}).get("command", ["", "", ""])[2])
+    key_combo = env._action_to_execute_payload({"action_type": "KEY", "key": "ctrl+l"})
+    assert "pyautogui.hotkey('ctrl', 'l')" in str((key_combo or {}).get("command", ["", "", ""])[2])
+    click_type = env._action_to_execute_payload({"action_type": "CLICK", "click_type": "RIGHT"})
+    assert "pyautogui.click(button='right')" in str((click_type or {}).get("command", ["", "", ""])[2])
     with pytest.raises(ValueError):
         env._action_to_execute_payload({"action_type": "UNSUPPORTED", "parameters": {}})
 
 
-def test_gui_env_evaluate_uses_osworld_evaluator(monkeypatch) -> None:
+def test_gui_env_evaluate_done_status_success() -> None:
     env = GuiEnv(
         env_spec=EnvSpec(
             env_type="gui",
             provided_ops=("gui.action", "gui.click", "gui.type", "gui.key", "gui.scroll", "gui.wait", "gui.terminate"),
         )
     )
-    monkeypatch.setattr(
-        env,
-        "_evaluate_osworld",
-        lambda payload: {"event": "gui.evaluate", "score": 0.42, "simulated": False, "payload_seen": payload},
-    )
-    out = env.evaluate({"evaluator": {"func": "exact_match"}, "done_status": "success"})
-    assert out["score"] == 0.42
-    assert out["simulated"] is False
+    out = env.evaluate({"done_status": "success"})
+    assert out["score"] == 1.0
+    assert out["simulated"] is True
 
 
-def test_gui_env_evaluate_osworld_failure_falls_back(monkeypatch) -> None:
+def test_gui_env_evaluate_done_status_failed() -> None:
     env = GuiEnv(
         env_spec=EnvSpec(
             env_type="gui",
             provided_ops=("gui.action", "gui.click", "gui.type", "gui.key", "gui.scroll", "gui.wait", "gui.terminate"),
         )
     )
-
-    def _boom(_payload):  # type: ignore[no-untyped-def]
-        raise RuntimeError("evaluator import failed")
-
-    monkeypatch.setattr(env, "_evaluate_osworld", _boom)
-    out = env.evaluate({"evaluator": {"func": "exact_match"}})
+    out = env.evaluate({"done_status": "failed"})
     assert out["score"] == 0.0
     assert out["simulated"] is True
-    assert out["mode"] == "osworld_evaluator_fallback"
 
 
 def test_osworld_scorer_semantics() -> None:

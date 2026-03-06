@@ -309,3 +309,110 @@
 - Validation:
   - `python -m pytest -q tests/test_runtime_engine.py` -> `8 passed`
   - `python -m pytest -q tests/test_osworld_benchmark.py tests/test_osworld_container_runtime.py` -> `11 passed`
+
+### 2026-03-06 (Round 13)
+
+#### Refactor Goal (Collaboration-Friendly Boundaries)
+- Move OSWorld-specific setup/evaluate/container details out of shared framework modules.
+- Keep `snowl/envs/gui_env.py` and `snowl/runtime/container_runtime.py` as reusable interfaces for all benchmarks.
+- Place OSWorld behavior in benchmark layer (`snowl/benchmarks/osworld/*`) so future benchmark adapters do not inherit OSWorld coupling.
+
+#### Changes
+- Added OSWorld evaluator module:
+  - `snowl/benchmarks/osworld/evaluator.py`
+  - dynamic getter/metric loading from `references/OSWorld/desktop_env/evaluators/*`
+  - task-json driven `postconfig` setup execution and evaluate semantics (`conj`, options, infeasible, FAIL handling).
+- Added OSWorld container launcher:
+  - `snowl/benchmarks/osworld/container.py`
+  - centralizes VM cache/boot input, cap-add, dynamic port allocation/retry, and startup diagnostics.
+- Simplified shared runtime/env modules:
+  - `snowl/runtime/container_runtime.py` now delegates OSWorld prep to launcher module.
+  - `snowl/envs/gui_env.py` now keeps generic GUI container, observation, action, and recording interfaces only.
+- Adapter + agent wiring:
+  - `snowl/benchmarks/osworld/adapter.py` now stores task metadata needed by evaluator/setup.
+  - `examples/osworld-official/agent.py` now calls benchmark-layer setup/evaluator path.
+- Toolset compatibility:
+  - `snowl/tools/gui.py` adds compatibility aliases (`key`, `terminate`).
+
+#### Test Alignment
+- Added:
+  - `tests/test_osworld_evaluator.py`
+- Updated:
+  - `tests/test_osworld_container_runtime.py`
+  - `tests/test_osworld_benchmark.py`
+  - `tests/test_gui_env_interaction.py` (updated to new launcher interface, default skipped unless `SNOWL_RUN_DOCKER_INTEGRATION=1`).
+
+#### Validation
+- Passed:
+  - `python -m pytest -q -p no:cacheprovider tests/test_osworld_evaluator.py tests/test_osworld_container_runtime.py tests/test_osworld_benchmark.py::test_gui_env_and_built_in_tools tests/test_osworld_benchmark.py::test_gui_env_real_container_contract tests/test_osworld_benchmark.py::test_gui_env_action_mapping_coverage tests/test_osworld_benchmark.py::test_gui_env_evaluate_done_status_success tests/test_osworld_benchmark.py::test_gui_env_evaluate_done_status_failed tests/test_osworld_benchmark.py::test_osworld_official_example_modules_importable tests/test_gui_env_interaction.py`
+  - result: `10 passed, 1 skipped`.
+- Environment note:
+  - full-suite runs including `tmp_path` fixtures are currently affected on this machine by Windows temp-dir permission errors (`WinError 5`), so final verification used fixture-independent targeted tests.
+
+### 2026-03-06 (Round 14)
+
+#### Prompt/Action Compatibility Check Against OSWorld Source
+- Reviewed official prompt/action definitions in:
+  - `references/OSWorld/mm_agents/prompts.py`
+  - `references/OSWorld/mm_agents/agent.py`
+- Key finding:
+  - official prompt examples include legacy aliases like `TYPE`/`KEY` and top-level action fields (not always nested `parameters`), while Snowl adapter expected normalized schema only.
+
+#### Runtime Behavior Issue Observed
+- Recent run log showed:
+  - container marked ready by `/screenshot` health check,
+  - first observation had low-signal state (`screenshot_bytes` small, no a11y/terminal),
+  - trial failed early due `Unsupported action_type: TYPE`.
+- This can produce poor agent behavior when desktop is still effectively not usable.
+
+#### Fixes
+- Added OSWorld visual readiness probe in benchmark container launcher:
+  - `snowl/benchmarks/osworld/container.py`
+  - after HTTP-ready, poll observations with signal checks before handing env to agent.
+  - configurable via:
+    - `SNOWL_OSWORLD_VISUAL_READY_TIMEOUT`
+    - `SNOWL_OSWORLD_VISUAL_READY_MIN_SCREENSHOT_BYTES`
+    - `SNOWL_OSWORLD_VISUAL_READY_POLL_SEC`
+  - defaults are longer on no-KVM hosts.
+- Added action compatibility aliases in GUI env:
+  - `TYPE -> TYPING`
+  - `KEY -> PRESS` (or `HOTKEY` when combo detected)
+  - supports top-level action fields (`text`, `key`, `x`, `y`, `click_type`, etc.) when `parameters` is absent.
+- Improved example agent prompt constraints:
+  - `examples/osworld-official/agent.py`
+  - stricter schema instructions to avoid abstract `target` placeholders and enforce executable parameters.
+- Agent robustness:
+  - action execution exceptions are now recorded and continued instead of hard-crashing the whole trial immediately.
+
+#### Validation
+- Passed:
+  - `python -m pytest -q -p no:cacheprovider tests/test_osworld_container_runtime.py tests/test_osworld_benchmark.py::test_gui_env_action_mapping_coverage tests/test_osworld_benchmark.py::test_osworld_official_example_modules_importable`
+  - result: `6 passed`.
+
+### 2026-03-06 (Round 15)
+
+#### Setup Visibility Clarification
+- Confirmed setup execution path in example agent:
+  - `examples/osworld-official/agent.py`
+  - uses `run_setup_config(...)` before action loop.
+- Runtime logs now consistently show:
+  - `osworld.setup` event with `steps` and `failed` fields.
+
+#### Prompt/Input Simplification (Per OSWorld Observation Types)
+- Adjusted agent model input to only include:
+  - `Instruction`
+  - `Observation`
+- Removed large `Task Metadata` payload from model prompt context.
+
+#### Observation Type Alignment + VLM Guard
+- Added `SNOWL_OSWORLD_OBSERVATION_TYPE` with supported values:
+  - `a11y_tree` (default)
+  - `screenshot`
+  - `screenshot_a11y_tree`
+- Added strict VLM requirement for screenshot-based modes:
+  - if model is non-vision and observation type includes screenshot, run fails fast with actionable message.
+
+#### Logging Hygiene
+- Model I/O event now sanitizes request payload for logs:
+  - screenshot data URLs are redacted.
+  - avoids oversized and noisy event payloads.

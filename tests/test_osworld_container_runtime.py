@@ -2,22 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from snowl.runtime.container_runtime import ContainerRuntime
-
-
-def _runtime() -> ContainerRuntime:
-    return ContainerRuntime(
-        task_id="osworld:test",
-        agent_id="osworld_official_agent",
-        variant_id="default",
-        task_env_type="gui",
-        task_metadata={"benchmark": "osworld"},
-        sample={"id": "s1", "input": "x"},
-    )
+from snowl.benchmarks.osworld import container as osw_container
+from snowl.benchmarks.osworld.container import OSWorldContainerLauncher
 
 
 def test_osworld_port_resolution_auto_allocates_unique_ports(monkeypatch) -> None:
-    runtime = _runtime()
+    launcher = OSWorldContainerLauncher(repo_root=Path.cwd(), emit=None)
     for key in (
         "SNOWL_OSWORLD_SERVER_PORT",
         "SNOWL_OSWORLD_CHROMIUM_PORT",
@@ -28,9 +18,9 @@ def test_osworld_port_resolution_auto_allocates_unique_ports(monkeypatch) -> Non
 
     # Simulate default ports busy to force allocation to next free values.
     busy = {5000, 9222, 8006, 8080}
-    monkeypatch.setattr(runtime, "_is_tcp_port_available", lambda p: int(p) not in busy)
+    monkeypatch.setattr(launcher, "_is_port_available", lambda p: int(p) not in busy)
 
-    ports, explicit = runtime._resolve_osworld_ports()
+    ports, explicit = launcher._resolve_ports()
     assert explicit is False
     assert set(ports.keys()) == {5000, 9222, 8006, 8080}
     assert len(set(ports.values())) == 4
@@ -40,19 +30,24 @@ def test_osworld_port_resolution_auto_allocates_unique_ports(monkeypatch) -> Non
     assert ports[8080] != 8080
 
 
-def test_osworld_prepare_retries_when_port_conflict(monkeypatch, tmp_path: Path) -> None:
-    runtime = _runtime()
-    vm = tmp_path / "Ubuntu.qcow2"
+def test_osworld_prepare_retries_when_port_conflict(monkeypatch) -> None:
+    launcher = OSWorldContainerLauncher(repo_root=Path.cwd(), emit=None)
+    vm = Path.cwd() / ".snowl_test_vm_Ubuntu.qcow2"
     vm.write_bytes(b"vm")
 
     monkeypatch.setenv("SNOWL_OSWORLD_START_RETRIES", "2")
-    monkeypatch.setattr(runtime, "_ensure_docker_available", lambda **kwargs: "docker")
     monkeypatch.setattr(
-        runtime,
-        "_resolve_osworld_boot_inputs",
+        launcher,
+        "_resolve_boot_inputs",
         lambda: ({}, {str(vm): "/System.qcow2:ro"}, False, {"source": "auto_cached_vm"}),
     )
-    monkeypatch.setattr(runtime, "_resolve_osworld_cap_add", lambda: ["NET_ADMIN"])
+    monkeypatch.setattr(launcher, "_resolve_cap_add", lambda: ["NET_ADMIN"])
+    monkeypatch.setattr(launcher, "_resolve_visual_ready_params", lambda **kwargs: (1.0, 1, 0.5))
+    monkeypatch.setattr(
+        launcher,
+        "_probe_visual_ready",
+        lambda **kwargs: (True, {"status_code": 200, "screenshot_bytes": 15000, "attempt": 1, "ready": True}),
+    )
 
     port_batches = iter(
         [
@@ -60,7 +55,7 @@ def test_osworld_prepare_retries_when_port_conflict(monkeypatch, tmp_path: Path)
             ({5000: 15000, 9222: 19222, 8006: 18006, 8080: 18080}, False),
         ]
     )
-    monkeypatch.setattr(runtime, "_resolve_osworld_ports", lambda: next(port_batches))
+    monkeypatch.setattr(launcher, "_resolve_ports", lambda: next(port_batches))
 
     calls: list[dict[int, int]] = []
 
@@ -80,18 +75,64 @@ def test_osworld_prepare_retries_when_port_conflict(monkeypatch, tmp_path: Path)
             "ready": True,
         }
 
-    monkeypatch.setattr("snowl.runtime.container_runtime.GuiEnv.start_container", fake_start_container)
+    monkeypatch.setattr(osw_container.GuiEnv, "start_container", fake_start_container)
     monkeypatch.setattr(
-        "snowl.runtime.container_runtime.GuiEnv.container_logs",
+        osw_container.GuiEnv,
+        "container_logs",
         lambda self, **kwargs: {"stdout": "", "stderr": "port is already allocated", "exit_code": 0},
     )
     monkeypatch.setattr(
-        "snowl.runtime.container_runtime.GuiEnv.stop_container",
+        osw_container.GuiEnv,
+        "stop_container",
         lambda self, **kwargs: {"exit_code": 0},
     )
+    monkeypatch.setattr(launcher, "_is_port_conflict", lambda **kwargs: True)
 
-    session = runtime._prepare_osworld()
-    assert session.kind == "gui_container"
-    assert len(calls) == 2
-    assert calls[0][5000] == 5000
-    assert calls[1][5000] == 15000
+    try:
+        out = launcher.prepare(docker_path="docker")
+        assert len(calls) == 2
+        assert calls[0][5000] == 5000
+        assert calls[1][5000] == 15000
+        assert out.metadata["ports"][5000] == 15000
+    finally:
+        if vm.exists():
+            vm.unlink()
+
+
+def test_osworld_visual_ready_params_no_kvm_default(monkeypatch) -> None:
+    launcher = OSWorldContainerLauncher(repo_root=Path.cwd(), emit=None)
+    monkeypatch.delenv("SNOWL_OSWORLD_VISUAL_READY_TIMEOUT", raising=False)
+    monkeypatch.delenv("SNOWL_OSWORLD_VISUAL_READY_MIN_SCREENSHOT_BYTES", raising=False)
+    monkeypatch.delenv("SNOWL_OSWORLD_VISUAL_READY_POLL_SEC", raising=False)
+
+    timeout_sec, min_bytes, poll_sec = launcher._resolve_visual_ready_params(
+        first_boot=False,
+        kvm_disabled=True,
+    )
+    assert timeout_sec == osw_container.OSWORLD_VISUAL_READY_TIMEOUT_NO_KVM_SEC
+    assert min_bytes == osw_container.OSWORLD_VISUAL_READY_MIN_SCREENSHOT_BYTES
+    assert poll_sec == osw_container.OSWORLD_VISUAL_READY_POLL_SEC
+
+
+def test_osworld_probe_visual_ready_succeeds_when_signal_available(monkeypatch) -> None:
+    launcher = OSWorldContainerLauncher(repo_root=Path.cwd(), emit=None)
+
+    class _FakeEnv:
+        def __init__(self) -> None:
+            self._idx = 0
+
+        def observe(self, *, include_accessibility=None, include_terminal=None):  # type: ignore[no-untyped-def]
+            self._idx += 1
+            if self._idx == 1:
+                return {"status_code": 200, "screenshot": b"x" * 2000, "accessibility_tree": "", "terminal_output": ""}
+            return {"status_code": 200, "screenshot": b"x" * 12000, "accessibility_tree": "", "terminal_output": ""}
+
+    monkeypatch.setattr(osw_container.time, "sleep", lambda *_args, **_kwargs: None)
+    ready, diag = launcher._probe_visual_ready(
+        env=_FakeEnv(),  # type: ignore[arg-type]
+        timeout_sec=4.0,
+        min_screenshot_bytes=10000,
+        poll_sec=0.5,
+    )
+    assert ready is True
+    assert int(diag["screenshot_bytes"]) >= 10000

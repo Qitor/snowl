@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
+from snowl.benchmarks.osworld.evaluator import evaluate_task, run_setup_config
 from snowl.core import AgentContext, AgentState, EnvSpec, StopReason, agent as declare_agent
 from snowl.envs import GuiEnv
 from snowl.model import OpenAICompatibleChatClient, OpenAICompatibleConfig
@@ -70,6 +72,100 @@ def _clip_text(value: str, limit: int = 600) -> str:
     return text[: limit - 1] + "..."
 
 
+def _resolve_observation_type() -> str:
+    raw = str(os.getenv("SNOWL_OSWORLD_OBSERVATION_TYPE", "screenshot")).strip().lower()
+    if raw not in {"screenshot", "a11y_tree", "screenshot_a11y_tree"}:
+        raise ValueError(
+            "SNOWL_OSWORLD_OBSERVATION_TYPE must be one of: "
+            "screenshot, a11y_tree, screenshot_a11y_tree."
+        )
+    return raw
+
+
+def _supports_vision(model_name: str) -> bool:
+    text = str(model_name or "").strip().lower()
+    if not text:
+        return False
+    signals = (
+        "gpt-4o",
+        "gpt-4.1",
+        "vision",
+        "vl",
+        "gemini",
+        "claude-3",
+        "qvq",
+    )
+    return any(sig in text for sig in signals)
+
+
+def _build_user_message(
+    *,
+    instruction: str,
+    observation_type: str,
+    observation: dict[str, Any],
+) -> tuple[str | list[dict[str, Any]], str]:
+    screenshot_bytes = bytes(observation.get("screenshot") or b"")
+    accessibility_tree = _clip_text(str(observation.get("accessibility_tree") or ""), limit=4000)
+
+    if observation_type == "a11y_tree":
+        observation_text = accessibility_tree
+        message_text = f"Instruction:\n{instruction}\n\nObservation:\n{observation_text}"
+        return message_text, observation_text
+
+    if observation_type == "screenshot":
+        encoded = base64.b64encode(screenshot_bytes).decode("utf-8")
+        observation_text = f"screenshot_bytes={len(screenshot_bytes)}"
+        message = [
+            {"type": "text", "text": f"Instruction:\n{instruction}\n\nObservation: screenshot attached."},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}", "detail": "high"}},
+        ]
+        return message, observation_text
+
+    encoded = base64.b64encode(screenshot_bytes).decode("utf-8")
+    observation_text = json.dumps(
+        {
+            "screenshot_bytes": len(screenshot_bytes),
+            "accessibility_tree": accessibility_tree,
+        },
+        ensure_ascii=False,
+    )
+    message = [
+        {
+            "type": "text",
+            "text": f"Instruction:\n{instruction}\n\nObservation (a11y):\n{accessibility_tree}",
+        },
+        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}", "detail": "high"}},
+    ]
+    return message, observation_text
+
+
+def _sanitize_messages_for_log(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    sanitized: list[dict[str, Any]] = []
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, list):
+            items: list[dict[str, Any]] = []
+            for item in content:
+                if not isinstance(item, dict):
+                    items.append({"type": "unknown"})
+                    continue
+                if item.get("type") == "image_url":
+                    items.append({"type": "image_url", "image_url": {"url": "<redacted>"}})
+                elif item.get("type") == "text":
+                    items.append({"type": "text", "text": _clip_text(str(item.get("text") or ""), limit=1000)})
+                else:
+                    items.append({"type": str(item.get("type") or "unknown")})
+            sanitized.append({"role": msg.get("role"), "content": items})
+        else:
+            sanitized.append(
+                {
+                    "role": msg.get("role"),
+                    "content": _clip_text(str(content or ""), limit=1500),
+                }
+            )
+    return sanitized
+
+
 @dataclass
 class OSWorldOfficialAgent:
     agent_id: str = "osworld_official_agent"
@@ -86,9 +182,20 @@ class OSWorldOfficialAgent:
         )
         self._client = OpenAICompatibleChatClient(cfg)
         self._system_prompt = (
-            "You are an OSWorld-style GUI agent. "
-            "Return ONLY JSON: "
-            '{"thinking":"...","actions":[{"action_type":"MOVE_TO|CLICK|RIGHT_CLICK|DOUBLE_CLICK|MOUSE_DOWN|MOUSE_UP|DRAG_TO|SCROLL|TYPING|PRESS|KEY_DOWN|KEY_UP|HOTKEY|WAIT|DONE|FAIL","parameters":{...}}],"done":false,"done_status":"success|failed|in_progress"}'
+            "You are an GUI agent.\n"
+            "Return ONLY valid JSON with this shape:\n"
+            '{"thinking":"...","actions":[{"action_type":"...","parameters":{...}}],"done":false,"done_status":"success|failed|in_progress"}\n'
+            "Action schema:\n"
+            "- MOVE_TO, DRAG_TO: parameters must include numeric x,y.\n"
+            "- CLICK, RIGHT_CLICK, DOUBLE_CLICK: optional x,y; CLICK may include button,num_clicks.\n"
+            "- MOUSE_DOWN, MOUSE_UP: optional button.\n"
+            "- SCROLL: parameters include dx,dy integers.\n"
+            "- TYPING: parameters include text string.\n"
+            "- PRESS, KEY_DOWN, KEY_UP: parameters include key string.\n"
+            "- HOTKEY: parameters include keys list of strings.\n"
+            "- WAIT, DONE, FAIL: empty parameters allowed.\n"
+            "Allowed action_type values only: MOVE_TO, CLICK, RIGHT_CLICK, DOUBLE_CLICK, MOUSE_DOWN, MOUSE_UP, DRAG_TO, SCROLL, TYPING, PRESS, KEY_DOWN, KEY_UP, HOTKEY, WAIT, DONE, FAIL.\n"
+            "Do NOT output TYPE/KEY aliases, and do NOT use abstract target placeholders like 'search_box'; use executable parameters only."
         )
 
     async def run(self, state: AgentState, context: AgentContext, tools=None) -> AgentState:
@@ -133,8 +240,9 @@ class OSWorldOfficialAgent:
         done_status = "in_progress"
         final_score = 0.0
         action_history: list[Any] = []
-        observe_accessibility = _truthy_env("SNOWL_OSWORLD_OBSERVE_ACCESSIBILITY", default=False)
-        observe_terminal = _truthy_env("SNOWL_OSWORLD_OBSERVE_TERMINAL", default=False)
+        observation_type = _resolve_observation_type()
+        observe_accessibility = observation_type in {"a11y_tree", "screenshot_a11y_tree"}
+        observe_terminal = False
         record_enabled = _truthy_env("SNOWL_OSWORLD_RECORDING", default=True)
         recording_started = False
         run_error: Exception | None = None
@@ -143,33 +251,51 @@ class OSWorldOfficialAgent:
             if not managed_by_runtime:
                 emit({"event": "osworld.container.config", "image": os.getenv("SNOWL_OSWORLD_IMAGE", "happysixd/osworld-docker")})
                 emit({"event": "osworld.container.starting"})
-            from snowl.tools.gui import GuiToolset
-            managed_env = (
-                getattr(container_session, "env", None)
-                if getattr(container_session, "kind", "") == "gui_container"
-                else None
-            )
-            env = (
-                managed_env
-                if managed_env is not None
-                else GuiEnv(
-                    env_spec=EnvSpec(
-                        env_type="gui",
-                        provided_ops=(
-                            "gui.action",
-                            "gui.click",
-                            "gui.type",
-                            "gui.key",
-                            "gui.scroll",
-                            "gui.observe",
-                            "gui.wait",
-                            "gui.terminate",
-                        ),
-                    ),
-                    config={"ready_timeout_sec": float(os.getenv("SNOWL_OSWORLD_READY_TIMEOUT", "240"))},
+                start_evt = env.start_container(
+                    image=os.getenv("SNOWL_OSWORLD_IMAGE", "happysixd/osworld-docker"),
+                    cap_add=_resolve_cap_add(),
                 )
-            )
-            gui = GuiToolset(env=env)
+                trace_events.append(start_evt)
+                emit({"event": "osworld.container.started", "exit_code": start_evt.get("exit_code"), "ready": start_evt.get("ready")})
+
+            if record_enabled:
+                rec_start = env.start_recording()
+                trace_events.append(
+                    {
+                        "event": "osworld.recording.start",
+                        "ok": bool(rec_start.get("ok")),
+                        "status_code": rec_start.get("status_code"),
+                        "error": rec_start.get("error"),
+                    }
+                )
+                recording_started = bool(rec_start.get("ok"))
+                emit(
+                    {
+                        "event": "osworld.recording.start",
+                        "ok": recording_started,
+                        "status_code": rec_start.get("status_code"),
+                    }
+                )
+
+            setup_cfg = sample_meta.get("config") or []
+            if isinstance(setup_cfg, Sequence) and not isinstance(setup_cfg, (str, bytes)) and setup_cfg:
+                endpoint = str(env.config.get("controller_endpoint") or env.controller_endpoint or "")
+                if not endpoint:
+                    raise RuntimeError("Missing controller endpoint before OSWorld setup.")
+                setup_events = run_setup_config(endpoint=endpoint, setup_config=list(setup_cfg))
+                setup_failed = any(not bool(evt.get("ok", False)) for evt in setup_events)
+                trace_events.append(
+                    {
+                        "event": "osworld.setup",
+                        "steps": len(setup_events),
+                        "failed": setup_failed,
+                        "results": setup_events,
+                    }
+                )
+                emit({"event": "osworld.setup", "steps": len(setup_events), "failed": setup_failed})
+                if setup_failed:
+                    first_error = next((evt for evt in setup_events if not bool(evt.get("ok", False))), {})
+                    raise RuntimeError(f"osworld setup failed: {first_error}")
 
             if self.max_steps <= 0:
                 trace_events.append({"event": "osworld.max_steps.zero", "max_steps": self.max_steps})
@@ -188,22 +314,22 @@ class OSWorldOfficialAgent:
                     "terminal_chars": len(str(obs.get("terminal_output") or "")),
                 }
                 trace_events.append(obs_evt)
-                screenshot_bytes = obs.get("screenshot") or b""
-                latest_observation = json.dumps(
-                    {
-                        "screenshot_bytes": len(screenshot_bytes),
-                        "accessibility_tree": _clip_text(str(obs.get("accessibility_tree") or ""), limit=1000),
-                        "terminal_output": _clip_text(str(obs.get("terminal_output") or ""), limit=500),
-                    },
-                    ensure_ascii=False,
+                if observation_type in {"screenshot", "screenshot_a11y_tree"} and not _supports_vision(
+                    getattr(self._client, "model", "")
+                ):
+                    raise RuntimeError(
+                        "Observation type requires screenshot, but current model is not a VLM. "
+                        "Set SNOWL_OSWORLD_OBSERVATION_TYPE=a11y_tree or switch to a vision model."
+                    )
+                user_content, latest_observation = _build_user_message(
+                    instruction=str(sample.get("input", "")),
+                    observation_type=observation_type,
+                    observation=obs,
                 )
-
-                prompt = (
-                    f"Instruction:\n{sample.get('input', '')}\n\n"
-                    f"Task Metadata:\n{json.dumps(sample_meta, ensure_ascii=False)}\n\n"
-                    f"Current Observation:\n{latest_observation}\n\n"
-                    "Plan the next actions."
-                )
+                request_messages: list[dict[str, Any]] = [
+                    {"role": "system", "content": self._system_prompt},
+                    {"role": "user", "content": user_content},
+                ]
                 emit(
                     {
                         "event": "runtime.model.query.start",
@@ -213,10 +339,7 @@ class OSWorldOfficialAgent:
                 )
                 try:
                     response = await self._client.generate(
-                        [
-                            {"role": "system", "content": self._system_prompt},
-                            {"role": "user", "content": prompt},
-                        ],
+                        request_messages,
                         temperature=self.temperature,
                     )
                 except Exception as exc:
@@ -247,10 +370,7 @@ class OSWorldOfficialAgent:
                         "step": step,
                         "message": "full model request/response captured",
                         "request": {
-                            "messages": [
-                                {"role": "system", "content": self._system_prompt},
-                                {"role": "user", "content": prompt},
-                            ],
+                            "messages": _sanitize_messages_for_log(request_messages),
                             "generation_kwargs": {"temperature": self.temperature},
                         },
                         "response": {
@@ -281,7 +401,15 @@ class OSWorldOfficialAgent:
                     if not isinstance(action, dict):
                         trace_events.append({"event": "osworld.action.invalid", "step": step, "raw": str(action)})
                         continue
-                    out = env.execute_action(action)
+                    try:
+                        out = env.execute_action(action)
+                    except Exception as exc:
+                        out = {
+                            "event": "gui.action_error",
+                            "status_code": 400,
+                            "error": str(exc),
+                            "payload": None,
+                        }
                     action_history.append(dict(action))
                     trace_events.append(
                         {
@@ -314,16 +442,29 @@ class OSWorldOfficialAgent:
                 if not action_history or str((action_history[-1] or {}).get("action_type", "")).upper() != "FAIL":
                     action_history.append({"action_type": "FAIL", "parameters": {}})
 
-            eval_out = env.evaluate(
-                {
-                    "done_status": done_status,
-                    "evaluator": sample_meta.get("evaluator"),
-                    "proxy": bool(sample_meta.get("proxy", False)),
-                    "sample_id": sample.get("id") or context.sample_id,
-                    "task_id": context.task_id,
-                    "action_history": action_history,
-                }
-            )
+            evaluator_cfg = sample_meta.get("evaluator")
+            if isinstance(evaluator_cfg, dict):
+                endpoint = str(env.config.get("controller_endpoint") or env.controller_endpoint or "")
+                try:
+                    eval_out = evaluate_task(
+                        endpoint=endpoint,
+                        evaluator=evaluator_cfg,
+                        action_history=action_history,
+                        proxy=bool(sample_meta.get("proxy", False)),
+                        sample_id=str(sample.get("id") or context.sample_id or ""),
+                        task_id=str(context.task_id or ""),
+                    )
+                except Exception as exc:
+                    eval_out = {
+                        "event": "gui.evaluate",
+                        "score": 0.0,
+                        "simulated": True,
+                        "error": str(exc),
+                        "mode": "osworld_evaluator_fallback",
+                    }
+            else:
+                eval_out = env.evaluate({"done_status": done_status})
+
             trace_events.append(
                 {
                     "event": "osworld.evaluate",
@@ -396,6 +537,7 @@ class OSWorldOfficialAgent:
                 stop_evt = env.stop_container()
                 trace_events.append(stop_evt)
                 emit({"event": "osworld.container.stopped", "exit_code": stop_evt.get("exit_code")})
+
             state.output = {
                 "message": {"role": "assistant", "content": latest_observation},
                 "usage": usage_total,

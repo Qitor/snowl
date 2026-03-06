@@ -62,6 +62,10 @@ class GuiToolset:
         """Press a key."""
         return self._exec({"action_type": "PRESS", "parameters": {"key": key}})
 
+    def key(self, key: str) -> dict:
+        """Backward-compatible alias for press."""
+        return self.press(key)
+
     def key_down(self, key: str) -> dict:
         """Key down."""
         return self._exec({"action_type": "KEY_DOWN", "parameters": {"key": key}})
@@ -85,6 +89,12 @@ class GuiToolset:
     def fail(self, reason: str = "") -> dict:
         """Mark task as failed."""
         return self._exec({"action_type": "FAIL", "parameters": {"reason": reason}})
+
+    def terminate(self, status: str = "success") -> dict:
+        """Backward-compatible terminate action."""
+        if str(status).lower() in {"success", "done", "completed"}:
+            return self.done(status=status)
+        return self.fail(reason=str(status))
 
 
 def build_gui_tools(env: GuiEnv | None = None) -> list[ToolSpec]:
