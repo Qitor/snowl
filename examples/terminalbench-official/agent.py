@@ -132,6 +132,10 @@ class TerminusOfficialAgent:
         self._client = OpenAICompatibleChatClient(cfg)
         return self._client
 
+    def _should_block_tmux_command(self, keystrokes: str, is_blocking: bool) -> bool:
+        stripped = keystrokes.strip()
+        return is_blocking and not (stripped.endswith("EOF") or stripped.endswith("&"))
+
     def _build_env(self, context: AgentContext) -> TerminalEnv:
         sample = dict(context.metadata.get("sample", {}))
         sample_meta = dict(sample.get("metadata", {}))
@@ -369,7 +373,11 @@ class TerminusOfficialAgent:
                     if not isinstance(cmd, Mapping):
                         continue
                     keystrokes = str(cmd.get("keystrokes", ""))
-                    is_blocking = bool(cmd.get("is_blocking", False))
+                    requested_blocking = bool(cmd.get("is_blocking", False))
+                    is_blocking = self._should_block_tmux_command(
+                        keystrokes,
+                        requested_blocking,
+                    )
                     timeout_sec = float(cmd.get("timeout_sec", 180.0))
                     try:
                         out = env.send_keys(
@@ -383,6 +391,7 @@ class TerminusOfficialAgent:
                                 "episode": episode,
                                 "keystrokes": keystrokes,
                                 "is_blocking": is_blocking,
+                                "requested_blocking": requested_blocking,
                                 "timeout_sec": timeout_sec,
                                 "exit_code": out.get("exit_code"),
                             }
@@ -393,6 +402,7 @@ class TerminusOfficialAgent:
                             episode=episode,
                             keystrokes=keystrokes,
                             is_blocking=is_blocking,
+                            requested_blocking=requested_blocking,
                             timeout_sec=timeout_sec,
                         )
                     except Exception as exc:

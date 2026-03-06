@@ -121,13 +121,17 @@ def test_terminal_env_compose_lifecycle(monkeypatch, tmp_path: Path) -> None:
 
     seen: list[tuple[list[str], dict[str, str] | None]] = []
 
-    def fake_run(cmd, cwd=None, text=None, capture_output=None, timeout=None, env=None):  # type: ignore[no-untyped-def]
-        seen.append((list(cmd), dict(env) if isinstance(env, dict) else None))
+    def response(cmd: list[str]) -> dict[str, object]:
         if "exec" in cmd:
-            return SimpleNamespace(returncode=0, stdout="exec-ok\n", stderr="")
-        return SimpleNamespace(returncode=0, stdout="ok\n", stderr="")
+            return {"returncode": 0, "stdout": "exec-ok\n", "stderr": ""}
+        return {"returncode": 0, "stdout": "ok\n", "stderr": ""}
 
-    monkeypatch.setattr("subprocess.run", fake_run)
+    def fake_popen(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        env = kwargs.get("env")
+        seen.append((list(cmd), dict(env) if isinstance(env, dict) else None))
+        return _FakePopen(cmd, response=response, **kwargs)
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
 
     env = TerminalEnv(
         env_spec=EnvSpec(
@@ -335,3 +339,222 @@ def test_terminalbench_official_agent_fails_after_parse_retry_exhausted(tmp_path
     with pytest.raises(RuntimeError, match="parse failed after 3 attempts"):
         asyncio.run(agent.run(state, context))
     assert fake_client.calls == 3
+
+
+def test_terminalbench_official_agent_does_not_block_on_background_tmux_command(tmp_path: Path) -> None:
+    module = _load_terminalbench_official_agent_module()
+    response = json.dumps(
+        {
+            "state_analysis": "ok",
+            "explanation": "launch a background task",
+            "commands": [
+                {
+                    "keystrokes": "python worker.py &\n",
+                    "is_blocking": True,
+                    "timeout_sec": 30,
+                }
+            ],
+            "is_task_complete": True,
+        }
+    )
+    fake_client = _FakeModelClient([response])
+    agent = module.TerminusOfficialAgent(max_episodes=1)
+    agent._client = fake_client
+
+    env = _FakeTerminalEnv()
+    events: list[dict[str, object]] = []
+    context = _build_context(tmp_path, env, events)
+    state = AgentState(messages=[{"role": "user", "content": "go"}])
+
+    out = asyncio.run(agent.run(state, context))
+
+    assert out.stop_reason == StopReason.COMPLETED
+    assert len(env.sent) == 1
+    assert env.sent[0]["keystrokes"] == "python worker.py &\n"
+    assert env.sent[0]["is_blocking"] is False
+
+
+def test_terminalbench_official_agent_does_not_block_on_heredoc_terminator(tmp_path: Path) -> None:
+    module = _load_terminalbench_official_agent_module()
+    response = json.dumps(
+        {
+            "state_analysis": "ok",
+            "explanation": "finish heredoc",
+            "commands": [
+                {
+                    "keystrokes": "EOF\n",
+                    "is_blocking": True,
+                    "timeout_sec": 30,
+                }
+            ],
+            "is_task_complete": True,
+        }
+    )
+    fake_client = _FakeModelClient([response])
+    agent = module.TerminusOfficialAgent(max_episodes=1)
+    agent._client = fake_client
+
+    env = _FakeTerminalEnv()
+    events: list[dict[str, object]] = []
+    context = _build_context(tmp_path, env, events)
+    state = AgentState(messages=[{"role": "user", "content": "go"}])
+
+    out = asyncio.run(agent.run(state, context))
+
+    assert out.stop_reason == StopReason.COMPLETED
+    assert len(env.sent) == 1
+    assert env.sent[0]["keystrokes"] == "EOF\n"
+    assert env.sent[0]["is_blocking"] is False
+
+
+class _FakeStream:
+    def __init__(self, text: str = "") -> None:
+        self._chunks = text.splitlines(keepends=True)
+
+    def readline(self) -> str:
+        if self._chunks:
+            return self._chunks.pop(0)
+        return ""
+
+    def close(self) -> None:
+        return None
+
+
+class _FakePopen:
+    def __init__(self, cmd, *, response, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+        payload = response(list(cmd))
+        self.returncode = int(payload.get("returncode", 0))
+        self.stdout = _FakeStream(str(payload.get("stdout", "")))
+        self.stderr = _FakeStream(str(payload.get("stderr", "")))
+        self._killed = False
+
+    def poll(self):  # type: ignore[no-untyped-def]
+        return self.returncode
+
+    def wait(self):  # type: ignore[no-untyped-def]
+        return self.returncode
+
+    def kill(self) -> None:
+        self._killed = True
+        self.returncode = -9
+
+
+def test_terminal_env_compose_tmux_session_created_and_capture_uses_tmux(monkeypatch, tmp_path: Path) -> None:
+    compose_file = tmp_path / "docker-compose.yaml"
+    compose_file.write_text(
+        textwrap.dedent(
+            """\
+            services:
+              client:
+                image: busybox
+                command: ["sh", "-c", "sleep infinity"]
+            """
+        ),
+        encoding="utf-8",
+    )
+    seen: list[list[str]] = []
+    state = {"session_exists": False}
+
+    def response(cmd: list[str]) -> dict[str, object]:
+        seen.append(list(cmd))
+        command_text = " ".join(cmd)
+        if " up -d" in f" {command_text} ":
+            return {"returncode": 0, "stdout": "up ok\n"}
+        if "tmux has-session" in command_text:
+            return {"returncode": 0 if state["session_exists"] else 1}
+        if "tmux new-session" in command_text:
+            state["session_exists"] = True
+            return {"returncode": 0, "stdout": "session started\n"}
+        if "tmux send-keys" in command_text:
+            return {"returncode": 0}
+        if "tmux wait" in command_text:
+            return {"returncode": 0}
+        if "tmux capture-pane" in command_text:
+            return {"returncode": 0, "stdout": "pane-output\n"}
+        return {"returncode": 0}
+
+    monkeypatch.setattr(
+        "subprocess.Popen",
+        lambda cmd, **kwargs: _FakePopen(cmd, response=response, **kwargs),
+    )
+
+    env = TerminalEnv(
+        env_spec=EnvSpec(
+            env_type="terminal",
+            provided_ops=("terminal.exec", "terminal.send_keys", "terminal.capture", "terminal.wait", "process.run"),
+        ),
+        workdir=str(tmp_path),
+        compose_file=str(compose_file),
+        use_docker_compose=True,
+        compose_build=False,
+        compose_project="snowl-test",
+    )
+
+    env.compose_up()
+    out = env.send_keys("echo hello\n", is_blocking=True, timeout_sec=10.0)
+    captured = env.capture()
+
+    assert out["exit_code"] == 0
+    assert captured == "pane-output\n"
+    joined = [" ".join(cmd) for cmd in seen]
+    assert any("tmux new-session" in cmd for cmd in joined)
+    assert any("tmux send-keys" in cmd for cmd in joined)
+    assert any("tmux wait" in cmd for cmd in joined)
+    assert any("tmux capture-pane" in cmd for cmd in joined)
+
+
+def test_terminal_env_compose_tmux_session_is_reused(monkeypatch, tmp_path: Path) -> None:
+    compose_file = tmp_path / "docker-compose.yaml"
+    compose_file.write_text(
+        textwrap.dedent(
+            """\
+            services:
+              client:
+                image: busybox
+                command: ["sh", "-c", "sleep infinity"]
+            """
+        ),
+        encoding="utf-8",
+    )
+    seen: list[list[str]] = []
+    state = {"session_exists": False}
+
+    def response(cmd: list[str]) -> dict[str, object]:
+        seen.append(list(cmd))
+        command_text = " ".join(cmd)
+        if " up -d" in f" {command_text} ":
+            return {"returncode": 0}
+        if "tmux has-session" in command_text:
+            return {"returncode": 0 if state["session_exists"] else 1}
+        if "tmux new-session" in command_text:
+            state["session_exists"] = True
+            return {"returncode": 0}
+        if "tmux send-keys" in command_text:
+            return {"returncode": 0}
+        if "tmux wait" in command_text:
+            return {"returncode": 0}
+        return {"returncode": 0}
+
+    monkeypatch.setattr(
+        "subprocess.Popen",
+        lambda cmd, **kwargs: _FakePopen(cmd, response=response, **kwargs),
+    )
+
+    env = TerminalEnv(
+        env_spec=EnvSpec(
+            env_type="terminal",
+            provided_ops=("terminal.exec", "terminal.send_keys", "terminal.capture", "terminal.wait", "process.run"),
+        ),
+        workdir=str(tmp_path),
+        compose_file=str(compose_file),
+        use_docker_compose=True,
+        compose_build=False,
+        compose_project="snowl-test",
+    )
+
+    env.compose_up()
+    env.send_keys("pwd\n", is_blocking=True, timeout_sec=5.0)
+    env.send_keys("echo again\n", is_blocking=True, timeout_sec=5.0)
+
+    joined = [" ".join(cmd) for cmd in seen]
+    assert sum("tmux new-session" in cmd for cmd in joined) == 1

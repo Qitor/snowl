@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import re
+import shlex
 import subprocess
 import threading
 import time
@@ -45,6 +47,12 @@ class _BuildSemaphoreContext:
 
 @dataclass
 class TerminalEnv:
+    _TMUX_ENTER_KEYS = {"Enter", "C-m", "KPEnter", "C-j", "^M", "^J"}
+    _TMUX_ENDS_WITH_NEWLINE_PATTERN = r"[\r\n]$"
+    _TMUX_NEWLINE_CHARS = "\r\n"
+    _TMUX_COMPLETION_SIGNAL = "done"
+    _TMUX_COMPLETION_COMMAND = f"; tmux wait -S {_TMUX_COMPLETION_SIGNAL}"
+
     env_spec: EnvSpec
     workdir: str | None = None
     compose_file: str | None = None
@@ -56,6 +64,8 @@ class TerminalEnv:
     history: list[dict[str, Any]] = field(default_factory=list)
     _last_output: str = ""
     _compose_started: bool = False
+    _tmux_session_name: str | None = None
+    _tmux_session_ready: bool = False
 
     def __post_init__(self) -> None:
         validate_env_spec(self.env_spec)
@@ -70,6 +80,10 @@ class TerminalEnv:
             self.compose_project = f"snowl-{base}-{int(time.time() * 1000) % 1000000}"
         if self.compose_service is None and self.compose_file:
             self.compose_service = self._infer_service_name(Path(self.compose_file)) or "client"
+        if self._tmux_session_name is None:
+            base = str(self.compose_project or Path(self.workdir).name or "snowl-terminal")
+            safe = re.sub(r"[^a-zA-Z0-9._-]+", "-", base).strip("-") or "snowl-terminal"
+            self._tmux_session_name = f"{safe}-shell"
         self._ensure_compose_env()
 
     @property
@@ -147,6 +161,128 @@ class TerminalEnv:
             "-f",
             str(self.compose_file),
         ]
+
+    def _compose_exec_args(
+        self,
+        args: list[str],
+        *,
+        timeout_seconds: float | None = None,
+        service: str | None = None,
+        on_event: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
+        return self.compose_exec(
+            shlex.join(args),
+            timeout_seconds=timeout_seconds,
+            service=service,
+            on_event=on_event,
+        )
+
+    @staticmethod
+    def _exit_code(out: Mapping[str, Any]) -> int:
+        raw = out.get("exit_code", 1)
+        return 1 if raw is None else int(raw)
+
+    def _tmux_has_session(self) -> bool:
+        out = self._compose_exec_args(
+            ["tmux", "has-session", "-t", str(self._tmux_session_name or "")],
+            timeout_seconds=10.0,
+        )
+        return self._exit_code(out) == 0
+
+    def _ensure_tmux_session(self) -> None:
+        if not self.use_docker_compose:
+            return
+        if self._tmux_session_ready and self._tmux_has_session():
+            return
+        if self._tmux_has_session():
+            self._tmux_session_ready = True
+            return
+        session = str(self._tmux_session_name or "snowl-terminal")
+        command = (
+            f"tmux new-session -x 160 -y 40 -d -s {session} \\; "
+            f"set-option -t {session} history-limit 50000"
+        )
+        out = self.compose_exec(command, timeout_seconds=30.0)
+        if self._exit_code(out) != 0:
+            raise RuntimeError(
+                "Failed to create tmux session: "
+                + str((out.get("stderr") or out.get("stdout") or "").strip())
+            )
+        self._tmux_session_ready = True
+
+    def _tmux_is_enter_key(self, key: str) -> bool:
+        return key in self._TMUX_ENTER_KEYS
+
+    def _tmux_ends_with_newline(self, key: str) -> bool:
+        return re.search(self._TMUX_ENDS_WITH_NEWLINE_PATTERN, key) is not None
+
+    def _tmux_is_executing_command(self, key: str) -> bool:
+        return self._tmux_is_enter_key(key) or self._tmux_ends_with_newline(key)
+
+    def _tmux_prevent_execution(self, keys: list[str]) -> list[str]:
+        prepared = keys.copy()
+        while prepared and self._tmux_is_executing_command(prepared[-1]):
+            if self._tmux_is_enter_key(prepared[-1]):
+                prepared.pop()
+                continue
+            stripped = prepared[-1].rstrip(self._TMUX_NEWLINE_CHARS)
+            if stripped:
+                prepared[-1] = stripped
+            else:
+                prepared.pop()
+        return prepared
+
+    def _tmux_prepare_keys(self, keys: str | list[str], *, block: bool) -> tuple[list[str], bool]:
+        prepared = [keys] if isinstance(keys, str) else list(keys)
+        if not block or not prepared or not self._tmux_is_executing_command(prepared[-1]):
+            return prepared, False
+        prepared = self._tmux_prevent_execution(prepared)
+        prepared.extend([self._TMUX_COMPLETION_COMMAND, "Enter"])
+        return prepared, True
+
+    def _tmux_send_keys(self, keys: str | list[str], *, block: bool, timeout_seconds: float | None) -> dict[str, Any]:
+        self._ensure_tmux_session()
+        prepared_keys, is_blocking = self._tmux_prepare_keys(keys, block=block)
+        send_out = self._compose_exec_args(
+            ["tmux", "send-keys", "-t", str(self._tmux_session_name or ""), *prepared_keys],
+            timeout_seconds=timeout_seconds,
+        )
+        if self._exit_code(send_out) != 0:
+            raise RuntimeError(
+                "Failed to send tmux keys: "
+                + str((send_out.get("stderr") or send_out.get("stdout") or "").strip())
+            )
+        if not is_blocking:
+            send_out["keystrokes"] = keys if isinstance(keys, str) else "".join(keys)
+            send_out["is_blocking"] = False
+            send_out["timeout_sec"] = timeout_seconds
+            return send_out
+
+        wait_timeout = float(timeout_seconds if timeout_seconds is not None else 180.0)
+        wait_out = self._compose_exec_args(
+            ["timeout", f"{wait_timeout}s", "tmux", "wait", self._TMUX_COMPLETION_SIGNAL],
+            timeout_seconds=wait_timeout,
+        )
+        if self._exit_code(wait_out) != 0:
+            raise TimeoutError(f"Command timed out after {wait_timeout} seconds")
+        wait_out["keystrokes"] = keys if isinstance(keys, str) else "".join(keys)
+        wait_out["is_blocking"] = True
+        wait_out["timeout_sec"] = timeout_seconds
+        return wait_out
+
+    def _tmux_capture(self) -> str:
+        self._ensure_tmux_session()
+        out = self._compose_exec_args(
+            ["tmux", "capture-pane", "-p", "-t", str(self._tmux_session_name or "")],
+            timeout_seconds=10.0,
+        )
+        if self._exit_code(out) != 0:
+            raise RuntimeError(
+                "Failed to capture tmux pane: "
+                + str((out.get("stderr") or out.get("stdout") or "").strip())
+            )
+        self._last_output = str(out.get("stdout") or "")
+        return self._last_output
 
     def _run_subprocess(
         self,
@@ -317,6 +453,7 @@ class TerminalEnv:
         )
         down_out["event"] = "terminal.compose.down"
         self._compose_started = False
+        self._tmux_session_ready = False
         return down_out
 
     def compose_exec(
@@ -411,6 +548,12 @@ class TerminalEnv:
         is_blocking: bool = False,
         timeout_sec: float | None = None,
     ) -> dict[str, Any]:
+        if self.use_docker_compose:
+            return self._tmux_send_keys(
+                keystrokes,
+                block=is_blocking,
+                timeout_seconds=timeout_sec,
+            )
         # MVP semantics: treat keystrokes as shell command text when blocking.
         if is_blocking:
             return self.exec(keystrokes, timeout_seconds=timeout_sec)
@@ -419,6 +562,8 @@ class TerminalEnv:
         return event
 
     def capture(self) -> str:
+        if self.use_docker_compose:
+            return self._tmux_capture()
         return self._last_output
 
     def wait(self, seconds: float) -> dict[str, Any]:
