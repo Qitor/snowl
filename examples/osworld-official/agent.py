@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import base64
+import importlib.util
+import hashlib
 import json
 import os
 import re
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -73,7 +76,11 @@ def _clip_text(value: str, limit: int = 600) -> str:
 
 
 def _resolve_observation_type() -> str:
-    raw = str(os.getenv("SNOWL_OSWORLD_OBSERVATION_TYPE", "screenshot")).strip().lower()
+    env_raw = os.getenv("SNOWL_OSWORLD_OBSERVATION_TYPE")
+    if env_raw is None or not str(env_raw).strip():
+        model_name = os.getenv("OPENAI_MODEL", "")
+        return "screenshot" if _supports_vision(model_name) else "a11y_tree"
+    raw = str(env_raw).strip().lower()
     if raw not in {"screenshot", "a11y_tree", "screenshot_a11y_tree"}:
         raise ValueError(
             "SNOWL_OSWORLD_OBSERVATION_TYPE must be one of: "
@@ -100,26 +107,49 @@ def _supports_vision(model_name: str) -> bool:
 
 def _build_user_message(
     *,
-    instruction: str,
     observation_type: str,
     observation: dict[str, Any],
-) -> tuple[str | list[dict[str, Any]], str]:
+) -> tuple[str | list[dict[str, Any]], str, dict[str, Any]]:
     screenshot_bytes = bytes(observation.get("screenshot") or b"")
     accessibility_tree = _clip_text(str(observation.get("accessibility_tree") or ""), limit=4000)
+    screenshot_sha256 = hashlib.sha256(screenshot_bytes).hexdigest() if screenshot_bytes else ""
 
     if observation_type == "a11y_tree":
         observation_text = accessibility_tree
-        message_text = f"Instruction:\n{instruction}\n\nObservation:\n{observation_text}"
-        return message_text, observation_text
+        message_text = (
+            "Given the info from accessibility tree as below:\n"
+            f"{observation_text}\n"
+            "What's the next step that you will do to help with the task?"
+        )
+        return (
+            message_text,
+            observation_text,
+            {
+                "observation_type": "a11y_tree",
+                "screenshot_bytes": 0,
+                "screenshot_sha256": "",
+            },
+        )
 
     if observation_type == "screenshot":
         encoded = base64.b64encode(screenshot_bytes).decode("utf-8")
         observation_text = f"screenshot_bytes={len(screenshot_bytes)}"
         message = [
-            {"type": "text", "text": f"Instruction:\n{instruction}\n\nObservation: screenshot attached."},
+            {
+                "type": "text",
+                "text": "Given the screenshot as below. What's the next step that you will do to help with the task?",
+            },
             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}", "detail": "high"}},
         ]
-        return message, observation_text
+        return (
+            message,
+            observation_text,
+            {
+                "observation_type": "screenshot",
+                "screenshot_bytes": len(screenshot_bytes),
+                "screenshot_sha256": screenshot_sha256,
+            },
+        )
 
     encoded = base64.b64encode(screenshot_bytes).decode("utf-8")
     observation_text = json.dumps(
@@ -132,11 +162,23 @@ def _build_user_message(
     message = [
         {
             "type": "text",
-            "text": f"Instruction:\n{instruction}\n\nObservation (a11y):\n{accessibility_tree}",
+            "text": (
+                "Given the screenshot and info from accessibility tree as below:\n"
+                f"{accessibility_tree}\n"
+                "What's the next step that you will do to help with the task?"
+            ),
         },
         {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}", "detail": "high"}},
     ]
-    return message, observation_text
+    return (
+        message,
+        observation_text,
+        {
+            "observation_type": "screenshot_a11y_tree",
+            "screenshot_bytes": len(screenshot_bytes),
+            "screenshot_sha256": screenshot_sha256,
+        },
+    )
 
 
 def _sanitize_messages_for_log(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -166,6 +208,130 @@ def _sanitize_messages_for_log(messages: list[dict[str, Any]]) -> list[dict[str,
     return sanitized
 
 
+def _ensure_screenshot_for_vlm(
+    *,
+    env: GuiEnv,
+    obs: dict[str, Any],
+    include_accessibility: bool,
+    include_terminal: bool,
+) -> tuple[dict[str, Any], int]:
+    if len(bytes(obs.get("screenshot") or b"")) > 0:
+        return obs, 0
+    retries = max(1, int(os.getenv("SNOWL_OSWORLD_SCREENSHOT_RETRIES", "3")))
+    wait_sec = max(0.1, float(os.getenv("SNOWL_OSWORLD_SCREENSHOT_RETRY_WAIT_SEC", "1.0")))
+    latest = obs
+    attempts = 0
+    for _ in range(retries):
+        attempts += 1
+        time.sleep(wait_sec)
+        latest = env.observe(
+            include_accessibility=include_accessibility,
+            include_terminal=include_terminal,
+        )
+        if len(bytes(latest.get("screenshot") or b"")) > 0:
+            break
+    return latest, attempts
+
+
+def _save_observation_frame(
+    *,
+    sample_id: str,
+    step: int,
+    screenshot_bytes: bytes,
+) -> str | None:
+    enabled = str(os.getenv("SNOWL_OSWORLD_SAVE_OBSERVATION_FRAMES", "1")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if not enabled or not screenshot_bytes:
+        return None
+    out_dir = Path(os.getenv("SNOWL_OSWORLD_OBS_FRAMES_DIR", ".snowl/observations")) / _safe_name(sample_id or "sample")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"step_{int(step):03d}.png"
+    path.write_bytes(screenshot_bytes)
+    return str(path.resolve())
+
+
+@lru_cache(maxsize=1)
+def _load_osworld_prompts_module():
+    prompt_path = Path(__file__).resolve().parents[2] / "references" / "OSWorld" / "mm_agents" / "prompts.py"
+    if not prompt_path.exists():
+        return None
+    spec = importlib.util.spec_from_file_location("osworld_prompts_ref", prompt_path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _resolve_system_prompt(observation_type: str) -> str:
+    key_map = {
+        "screenshot": "SYS_PROMPT_IN_SCREENSHOT_OUT_ACTION",
+        "a11y_tree": "SYS_PROMPT_IN_A11Y_OUT_ACTION",
+        "screenshot_a11y_tree": "SYS_PROMPT_IN_BOTH_OUT_ACTION",
+    }
+    module = _load_osworld_prompts_module()
+    if module is not None:
+        key = key_map[observation_type]
+        value = getattr(module, key, None)
+        if isinstance(value, str) and value.strip():
+            return value
+    return (
+        "You will act as an agent which follow my instruction and perform desktop computer tasks as instructed. "
+        "For each step, return one valid action JSON with action_type and parameters, or WAIT/FAIL/DONE."
+    )
+
+
+def _extract_actions_and_status(content: str) -> tuple[list[Any], bool | None, str | None]:
+    text = str(content or "").strip()
+    if not text:
+        return [], None, None
+
+    upper = text.upper()
+    if upper in {"WAIT", "DONE", "FAIL"}:
+        status = "success" if upper == "DONE" else ("failed" if upper == "FAIL" else "in_progress")
+        return [{"action_type": upper, "parameters": {}}], upper in {"DONE", "FAIL"}, status
+
+    parsed = _extract_json(text)
+    if isinstance(parsed, dict):
+        if isinstance(parsed.get("actions"), list):
+            done = parsed.get("done")
+            done_status = parsed.get("done_status")
+            actions = parsed.get("actions") or []
+            return list(actions), (bool(done) if isinstance(done, bool) else None), (
+                str(done_status) if done_status is not None else None
+            )
+        if parsed.get("action_type") or parsed.get("action"):
+            return [parsed], None, None
+
+    actions: list[Any] = []
+    matches = re.findall(r"```json\s+(.*?)\s+```", text, re.DOTALL)
+    if not matches:
+        matches = re.findall(r"```\s+(.*?)\s+```", text, re.DOTALL)
+    for match in matches:
+        block = str(match or "").strip()
+        if not block:
+            continue
+        upper_block = block.upper()
+        if upper_block in {"WAIT", "DONE", "FAIL"}:
+            actions.append({"action_type": upper_block, "parameters": {}})
+            continue
+        try:
+            obj = json.loads(block)
+        except Exception:
+            continue
+        if isinstance(obj, dict):
+            actions.append(obj)
+        elif isinstance(obj, list):
+            actions.extend(obj)
+    if actions:
+        return actions, None, None
+    return [], None, None
+
+
 @dataclass
 class OSWorldOfficialAgent:
     agent_id: str = "osworld_official_agent"
@@ -181,22 +347,7 @@ class OSWorldOfficialAgent:
             max_retries=int(os.getenv("OPENAI_MAX_RETRIES", "2")),
         )
         self._client = OpenAICompatibleChatClient(cfg)
-        self._system_prompt = (
-            "You are an GUI agent.\n"
-            "Return ONLY valid JSON with this shape:\n"
-            '{"thinking":"...","actions":[{"action_type":"...","parameters":{...}}],"done":false,"done_status":"success|failed|in_progress"}\n'
-            "Action schema:\n"
-            "- MOVE_TO, DRAG_TO: parameters must include numeric x,y.\n"
-            "- CLICK, RIGHT_CLICK, DOUBLE_CLICK: optional x,y; CLICK may include button,num_clicks.\n"
-            "- MOUSE_DOWN, MOUSE_UP: optional button.\n"
-            "- SCROLL: parameters include dx,dy integers.\n"
-            "- TYPING: parameters include text string.\n"
-            "- PRESS, KEY_DOWN, KEY_UP: parameters include key string.\n"
-            "- HOTKEY: parameters include keys list of strings.\n"
-            "- WAIT, DONE, FAIL: empty parameters allowed.\n"
-            "Allowed action_type values only: MOVE_TO, CLICK, RIGHT_CLICK, DOUBLE_CLICK, MOUSE_DOWN, MOUSE_UP, DRAG_TO, SCROLL, TYPING, PRESS, KEY_DOWN, KEY_UP, HOTKEY, WAIT, DONE, FAIL.\n"
-            "Do NOT output TYPE/KEY aliases, and do NOT use abstract target placeholders like 'search_box'; use executable parameters only."
-        )
+        self._client_password = str(os.getenv("SNOWL_OSWORLD_CLIENT_PASSWORD", "password"))
 
     async def run(self, state: AgentState, context: AgentContext, tools=None) -> AgentState:
         _ = tools
@@ -241,6 +392,10 @@ class OSWorldOfficialAgent:
         final_score = 0.0
         action_history: list[Any] = []
         observation_type = _resolve_observation_type()
+        system_prompt_base = _resolve_system_prompt(observation_type).format(CLIENT_PASSWORD=self._client_password)
+        max_trajectory_length = max(0, int(os.getenv("SNOWL_OSWORLD_MAX_TRAJECTORY_LENGTH", "3")))
+        prompt_user_history: list[str | list[dict[str, Any]]] = []
+        prompt_assistant_history: list[str] = []
         observe_accessibility = observation_type in {"a11y_tree", "screenshot_a11y_tree"}
         observe_terminal = False
         record_enabled = _truthy_env("SNOWL_OSWORLD_RECORDING", default=True)
@@ -305,6 +460,14 @@ class OSWorldOfficialAgent:
                     include_accessibility=observe_accessibility,
                     include_terminal=observe_terminal,
                 )
+                screenshot_retry_attempts = 0
+                if observation_type in {"screenshot", "screenshot_a11y_tree"}:
+                    obs, screenshot_retry_attempts = _ensure_screenshot_for_vlm(
+                        env=env,
+                        obs=obs,
+                        include_accessibility=observe_accessibility,
+                        include_terminal=observe_terminal,
+                    )
                 obs_evt = {
                     "event": "osworld.observe",
                     "step": step,
@@ -312,6 +475,7 @@ class OSWorldOfficialAgent:
                     "screenshot_bytes": len(obs.get("screenshot") or b""),
                     "accessibility_chars": len(str(obs.get("accessibility_tree") or "")),
                     "terminal_chars": len(str(obs.get("terminal_output") or "")),
+                    "screenshot_retry_attempts": screenshot_retry_attempts,
                 }
                 trace_events.append(obs_evt)
                 if observation_type in {"screenshot", "screenshot_a11y_tree"} and not _supports_vision(
@@ -321,15 +485,31 @@ class OSWorldOfficialAgent:
                         "Observation type requires screenshot, but current model is not a VLM. "
                         "Set SNOWL_OSWORLD_OBSERVATION_TYPE=a11y_tree or switch to a vision model."
                     )
-                user_content, latest_observation = _build_user_message(
-                    instruction=str(sample.get("input", "")),
+                screenshot_bytes = bytes(obs.get("screenshot") or b"")
+                saved_frame_path = _save_observation_frame(
+                    sample_id=str(sample.get("id") or context.sample_id or ""),
+                    step=step,
+                    screenshot_bytes=screenshot_bytes,
+                )
+                user_content, latest_observation, observation_meta = _build_user_message(
                     observation_type=observation_type,
                     observation=obs,
                 )
-                request_messages: list[dict[str, Any]] = [
-                    {"role": "system", "content": self._system_prompt},
-                    {"role": "user", "content": user_content},
-                ]
+                if saved_frame_path:
+                    observation_meta["saved_frame"] = saved_frame_path
+                instruction = str(sample.get("input", ""))
+                system_message = system_prompt_base + "\nYou are asked to complete the following task: " + instruction
+                request_messages: list[dict[str, Any]] = [{"role": "system", "content": system_message}]
+                if max_trajectory_length > 0:
+                    hist_users = prompt_user_history[-max_trajectory_length:]
+                    hist_assistants = prompt_assistant_history[-max_trajectory_length:]
+                else:
+                    hist_users = []
+                    hist_assistants = []
+                for hist_user, hist_assistant in zip(hist_users, hist_assistants):
+                    request_messages.append({"role": "user", "content": hist_user})
+                    request_messages.append({"role": "assistant", "content": hist_assistant or "No valid action"})
+                request_messages.append({"role": "user", "content": user_content})
                 emit(
                     {
                         "event": "runtime.model.query.start",
@@ -371,6 +551,7 @@ class OSWorldOfficialAgent:
                         "message": "full model request/response captured",
                         "request": {
                             "messages": _sanitize_messages_for_log(request_messages),
+                            "observation_meta": observation_meta,
                             "generation_kwargs": {"temperature": self.temperature},
                         },
                         "response": {
@@ -389,17 +570,57 @@ class OSWorldOfficialAgent:
                 usage_total["total_tokens"] += int(getattr(response.usage, "total_tokens", 0))
 
                 content = str(response.message.get("content", ""))
-                parsed = _extract_json(content)
-                if not parsed:
+                prompt_user_history.append(user_content)
+                prompt_assistant_history.append(content)
+                actions, parsed_done, parsed_done_status = _extract_actions_and_status(content)
+                if not actions:
                     trace_events.append({"event": "osworld.parse_error", "step": step, "raw": content})
                     continue
 
-                actions = parsed.get("actions") or []
                 for action in actions:
                     if isinstance(action, str):
-                        action = {"action_type": action, "parameters": {}}
+                        action = {"action_type": str(action).upper(), "parameters": {}}
                     if not isinstance(action, dict):
                         trace_events.append({"event": "osworld.action.invalid", "step": step, "raw": str(action)})
+                        continue
+                    if "parameters" not in action:
+                        params = {
+                            k: v
+                            for k, v in action.items()
+                            if k
+                            not in {
+                                "action_type",
+                                "action",
+                            }
+                        }
+                        action = {
+                            "action_type": str(action.get("action_type") or action.get("action") or ""),
+                            "parameters": params,
+                        }
+                    action_type = str(action.get("action_type") or "").upper()
+                    if action_type in {"DONE", "FAIL"}:
+                        action_history.append({"action_type": action_type, "parameters": {}})
+                        trace_events.append(
+                            {
+                                "event": "osworld.action",
+                                "step": step,
+                                "action": dict(action),
+                                "action_type": action_type,
+                                "status_code": None,
+                                "error": None,
+                                "body": "",
+                                "payload": None,
+                            }
+                        )
+                        emit(
+                            {
+                                "event": "osworld.action.executed",
+                                "step": step,
+                                "action_type": action_type,
+                                "status_code": None,
+                                "error": None,
+                            }
+                        )
                         continue
                     try:
                         out = env.execute_action(action)
@@ -433,8 +654,22 @@ class OSWorldOfficialAgent:
                         }
                     )
 
-                done = bool(parsed.get("done", False))
-                done_status = str(parsed.get("done_status", "in_progress"))
+                if parsed_done is not None:
+                    done = bool(parsed_done)
+                else:
+                    done = any(
+                        str((x or {}).get("action_type", "")).upper() in {"DONE", "FAIL"}
+                        for x in actions
+                        if isinstance(x, dict)
+                    )
+                if parsed_done_status is not None:
+                    done_status = str(parsed_done_status)
+                elif any(str((x or {}).get("action_type", "")).upper() == "DONE" for x in actions if isinstance(x, dict)):
+                    done_status = "success"
+                elif any(str((x or {}).get("action_type", "")).upper() == "FAIL" for x in actions if isinstance(x, dict)):
+                    done_status = "failed"
+                else:
+                    done_status = "in_progress"
                 if done:
                     break
 

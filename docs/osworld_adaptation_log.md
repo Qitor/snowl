@@ -416,3 +416,77 @@
 - Model I/O event now sanitizes request payload for logs:
   - screenshot data URLs are redacted.
   - avoids oversized and noisy event payloads.
+
+### 2026-03-06 (Round 16)
+
+#### VLM Screenshot Delivery Debuggability Fix
+- Problem observed:
+  - users could see `<redacted>` in `runtime.model.io` and could not verify whether the current screenshot was truly sent to VLM.
+  - occasional empty screenshot observations could cause weak/invalid VLM context.
+
+#### Changes
+- `examples/osworld-official/agent.py`:
+  - dynamic observation-type default:
+    - if `SNOWL_OSWORLD_OBSERVATION_TYPE` unset:
+      - vision model -> `screenshot`
+      - non-vision model -> `a11y_tree`
+  - screenshot-mode retry:
+    - when screenshot bytes are empty, retry observe before querying model.
+    - new env knobs:
+      - `SNOWL_OSWORLD_SCREENSHOT_RETRIES` (default `3`)
+      - `SNOWL_OSWORLD_SCREENSHOT_RETRY_WAIT_SEC` (default `1.0`)
+  - per-step observation frame persistence (debug):
+    - default enabled for screenshot bytes.
+    - saved under `.snowl/observations/<sample_id>/step_XXX.png`
+    - env knobs:
+      - `SNOWL_OSWORLD_SAVE_OBSERVATION_FRAMES` (default `1`)
+      - `SNOWL_OSWORLD_OBS_FRAMES_DIR`
+  - model I/O telemetry now includes `observation_meta`:
+    - `observation_type`
+    - `screenshot_bytes`
+    - `screenshot_sha256`
+    - optional `saved_frame` path
+
+#### Validation
+- Passed:
+  - `python -m pytest -q -p no:cacheprovider tests/test_osworld_benchmark.py::test_osworld_official_example_modules_importable tests/test_osworld_benchmark.py::test_gui_env_action_mapping_coverage tests/test_osworld_container_runtime.py`
+  - result: `6 passed`.
+
+### 2026-03-06 (Round 17)
+
+#### Official Prompt Parity Upgrade
+- Goal:
+  - align Snowl OSWorld example agent prompt behavior with OSWorld native `PromptAgent` as closely as practical.
+- Changes in `examples/osworld-official/agent.py`:
+  - system prompt now loads from official reference templates in:
+    - `references/OSWorld/mm_agents/prompts.py`
+    - mapping by observation type:
+      - `screenshot -> SYS_PROMPT_IN_SCREENSHOT_OUT_ACTION`
+      - `a11y_tree -> SYS_PROMPT_IN_A11Y_OUT_ACTION`
+      - `screenshot_a11y_tree -> SYS_PROMPT_IN_BOTH_OUT_ACTION`
+  - per-step user prompt now follows official wording pattern:
+    - `Given the screenshot as below...`
+    - `Given the info from accessibility tree as below...`
+    - `Given the screenshot and info from accessibility tree as below...`
+  - instruction injected into system message using official pattern:
+    - `You are asked to complete the following task: ...`
+  - added lightweight trajectory history stitching (`max_trajectory_length`) in message construction.
+  - response parsing upgraded for official action outputs:
+    - supports single action dict, fenced JSON blocks, and `WAIT/DONE/FAIL`.
+
+#### Resolution Note
+- Yes: the official prompt templates already include coordinate/screen-size guidance in their action-space instructions.
+- By loading those templates directly, Snowl now inherits the same resolution-related guidance text as native OSWorld prompt flow.
+
+### 2026-03-06 (Round 18)
+
+#### Minimal Evaluator Requirements File
+- Added benchmark-scoped minimal dependency file:
+  - `snowl/benchmarks/osworld/requirements-eval-min.txt`
+- Purpose:
+  - avoid installing the full OSWorld root requirements when only evaluator/getter runtime is needed in Snowl.
+  - cover all third-party imports from metric/getter modules referenced by OSWorld task JSON evaluators.
+- Also updated install docs:
+  - `examples/osworld-official/README.md` now includes:
+    - `pip install -r snowl/benchmarks/osworld/requirements-eval-min.txt`
+    - `python -m playwright install chromium`

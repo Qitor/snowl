@@ -60,6 +60,13 @@ pip install -e ".[osworld_eval]"
 python -m playwright install chromium
 ```
 
+Or install the benchmark-scoped minimal dependency set:
+
+```bash
+pip install -r snowl/benchmarks/osworld/requirements-eval-min.txt
+python -m playwright install chromium
+```
+
 You can check current evaluator import readiness:
 
 ```bash
