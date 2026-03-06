@@ -461,7 +461,7 @@ async def execute_trial(request: TrialRequest) -> TrialOutcome:
                 "scorer_id": getattr(request.scorer, "scorer_id", "scorer"),
             }
         )
-        scores = request.scorer.score(task_result, trace, score_context)
+        scores = await asyncio.to_thread(request.scorer.score, task_result, trace, score_context)
         validate_scores(scores)
         _emit(
             {
