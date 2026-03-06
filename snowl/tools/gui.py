@@ -17,34 +17,84 @@ class GuiToolset:
             return {"simulated": True, "action": action}
         return self.env.execute_action(action)
 
+
+    def move_to(self, x: float, y: float, duration: float = 0.0) -> dict:
+        """Move mouse to coordinates."""
+        return self._exec({"action_type": "MOVE_TO", "parameters": {"x": x, "y": y, "duration": duration}})
+
+    def mouse_move(self, x: float, y: float, duration: float = 0.0) -> dict:
+        """Alias for move_to."""
+        return self._exec({"action_type": "MOUSE_MOVE", "parameters": {"x": x, "y": y, "duration": duration}})
+
     def click(self, x: float, y: float, button: str = "left", num_clicks: int = 1) -> dict:
         """Click at coordinates."""
-        return self._exec(
-            {
-                "action_type": "CLICK",
-                "parameters": {"x": x, "y": y, "button": button, "num_clicks": int(num_clicks)},
-            }
-        )
+        return self._exec({"action_type": "CLICK", "parameters": {"x": x, "y": y, "button": button, "num_clicks": int(num_clicks)}})
 
-    def type_text(self, text: str) -> dict:
-        """Type text."""
-        return self._exec({"action_type": "TYPING", "parameters": {"text": text}})
+    def right_click(self, x: float, y: float) -> dict:
+        """Right click at coordinates."""
+        return self._exec({"action_type": "RIGHT_CLICK", "parameters": {"x": x, "y": y}})
 
-    def key(self, key: str) -> dict:
-        """Press a key."""
-        return self._exec({"action_type": "PRESS", "parameters": {"key": key}})
+    def double_click(self, x: float, y: float) -> dict:
+        """Double click at coordinates."""
+        return self._exec({"action_type": "DOUBLE_CLICK", "parameters": {"x": x, "y": y}})
+
+    def mouse_down(self, button: str = "left") -> dict:
+        """Mouse button down."""
+        return self._exec({"action_type": "MOUSE_DOWN", "parameters": {"button": button}})
+
+    def mouse_up(self, button: str = "left") -> dict:
+        """Mouse button up."""
+        return self._exec({"action_type": "MOUSE_UP", "parameters": {"button": button}})
+
+    def drag_to(self, x: float, y: float, duration: float = 1.0, button: str = "left") -> dict:
+        """Drag mouse to coordinates."""
+        return self._exec({"action_type": "DRAG_TO", "parameters": {"x": x, "y": y, "duration": duration, "button": button}})
 
     def scroll(self, dx: int = 0, dy: int = -800) -> dict:
         """Scroll wheel."""
         return self._exec({"action_type": "SCROLL", "parameters": {"dx": int(dx), "dy": int(dy)}})
 
+    def type_text(self, text: str) -> dict:
+        """Type text."""
+        return self._exec({"action_type": "TYPING", "parameters": {"text": text}})
+
+    def press(self, key: str) -> dict:
+        """Press a key."""
+        return self._exec({"action_type": "PRESS", "parameters": {"key": key}})
+
+    def key(self, key: str) -> dict:
+        """Backward-compatible alias for press."""
+        return self.press(key)
+
+    def key_down(self, key: str) -> dict:
+        """Key down."""
+        return self._exec({"action_type": "KEY_DOWN", "parameters": {"key": key}})
+
+    def key_up(self, key: str) -> dict:
+        """Key up."""
+        return self._exec({"action_type": "KEY_UP", "parameters": {"key": key}})
+
+    def hotkey(self, keys: list[str]) -> dict:
+        """Press hotkey combination."""
+        return self._exec({"action_type": "HOTKEY", "parameters": {"keys": keys}})
+
     def wait(self, seconds: float = 1.0) -> dict:
         """Wait for UI updates."""
         return self._exec({"action_type": "WAIT", "parameters": {"time": float(seconds)}})
 
-    def terminate(self, status: str = "success") -> dict:
-        """Terminate task with status."""
+    def done(self, status: str = "success") -> dict:
+        """Mark task as done."""
         return self._exec({"action_type": "DONE", "parameters": {"status": status}})
+
+    def fail(self, reason: str = "") -> dict:
+        """Mark task as failed."""
+        return self._exec({"action_type": "FAIL", "parameters": {"reason": reason}})
+
+    def terminate(self, status: str = "success") -> dict:
+        """Backward-compatible terminate action."""
+        if str(status).lower() in {"success", "done", "completed"}:
+            return self.done(status=status)
+        return self.fail(reason=str(status))
 
 
 def build_gui_tools(env: GuiEnv | None = None) -> list[ToolSpec]:

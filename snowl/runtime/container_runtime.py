@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from snowl.benchmarks.osworld.container import OSWorldContainerLauncher
 from snowl.core import EnvSpec
 from snowl.envs import GuiEnv, TerminalEnv
 
@@ -64,6 +66,26 @@ class ContainerRuntime:
             payload.setdefault("compose_file", compose_file)
         self._emit_event(payload)
 
+    def _ensure_docker_available(self, *, benchmark: str) -> str:
+        docker_path = shutil.which("docker")
+        if docker_path:
+            return docker_path
+        msg = (
+            "docker executable not found in PATH. Install/start Docker Desktop and ensure "
+            "'docker' is available in the current shell before running "
+            f"{benchmark}."
+        )
+        self._emit_event(
+            {
+                "event": "runtime.env.preflight.error",
+                "phase": "env",
+                "code": "docker_not_found",
+                "benchmark": benchmark,
+                "message": msg,
+            }
+        )
+        raise RuntimeError(msg)
+
     def prepare(self) -> ContainerSession | None:
         benchmark = str(self.task_metadata.get("benchmark") or "").strip().lower()
         if benchmark == "terminalbench":
@@ -95,7 +117,9 @@ class ContainerRuntime:
                 {
                     "exit_code": down_out.get("exit_code"),
                     "duration_ms": down_out.get("duration_ms"),
-                    "command_text": " ".join(down_out.get("command", [])) if isinstance(down_out.get("command"), list) else down_out.get("command"),
+                    "command_text": " ".join(down_out.get("command", []))
+                    if isinstance(down_out.get("command"), list)
+                    else down_out.get("command"),
                     "stdout_tail": str(down_out.get("stdout", ""))[-240:],
                     "stderr_tail": str(down_out.get("stderr", ""))[-240:],
                 }
@@ -168,6 +192,7 @@ class ContainerRuntime:
             compose_env=compose_env,
         )
         if env.use_docker_compose:
+            docker_path = self._ensure_docker_available(benchmark="terminalbench")
             self._emit_event(
                 {
                     "event": "terminalbench.container.config",
@@ -175,6 +200,7 @@ class ContainerRuntime:
                     "compose_file": env.compose_file,
                     "project": env.compose_project,
                     "service": env.compose_service,
+                    "docker_path": docker_path,
                     "compose_build": env.compose_build,
                     "env_injected": {
                         "client_container": env.compose_env.get("T_BENCH_TASK_DOCKER_CLIENT_CONTAINER_NAME"),
@@ -247,37 +273,15 @@ class ContainerRuntime:
         return ContainerSession(kind="terminal_compose", env=env, benchmark="terminalbench", metadata={"project": env.compose_project})
 
     def _prepare_osworld(self) -> ContainerSession:
-        env = GuiEnv(
-            env_spec=EnvSpec(
-                env_type="gui",
-                provided_ops=(
-                    "gui.action",
-                    "gui.click",
-                    "gui.type",
-                    "gui.key",
-                    "gui.scroll",
-                    "gui.observe",
-                    "gui.wait",
-                    "gui.terminate",
-                ),
-            ),
-            config={"ready_timeout_sec": float(os.getenv("SNOWL_OSWORLD_READY_TIMEOUT", "240"))},
+        docker_path = self._ensure_docker_available(benchmark="osworld")
+        launcher = OSWorldContainerLauncher(
+            repo_root=Path(__file__).resolve().parents[2],
+            emit=self._emit_event,
         )
-        image = os.getenv("SNOWL_OSWORLD_IMAGE", "happysixd/osworld-docker")
-        self._emit_event({"event": "osworld.container.config", "phase": "env", "image": image})
-        self._emit_event({"event": "osworld.container.starting", "phase": "env"})
-        start_evt = env.start_container(
-            image=image,
-            on_event=lambda evt: self._emit_env_stream(evt),
+        prepared = launcher.prepare(docker_path=docker_path)
+        return ContainerSession(
+            kind="gui_container",
+            env=prepared.env,
+            benchmark="osworld",
+            metadata=dict(prepared.metadata),
         )
-        self._emit_event(
-            {
-                "event": "osworld.container.started",
-                "phase": "env",
-                "exit_code": start_evt.get("exit_code"),
-                "ready": start_evt.get("ready"),
-            }
-        )
-        if int(start_evt.get("exit_code", 1) or 1) != 0:
-            raise RuntimeError(str(start_evt.get("stderr") or "osworld container start failed"))
-        return ContainerSession(kind="gui_container", env=env, benchmark="osworld", metadata={"image": image})

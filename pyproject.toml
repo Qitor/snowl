@@ -21,6 +21,37 @@ dev = [
   "build>=1.0.0",
   "twine>=5.0.0",
 ]
+osworld_eval = [
+  "beautifulsoup4",
+  "borb",
+  "cssselect",
+  "easyocr",
+  "imagehash",
+  "librosa",
+  "lxml",
+  "mutagen",
+  "numpy",
+  "odfpy",
+  "opencv-python-headless",
+  "openpyxl",
+  "pandas",
+  "pdfplumber",
+  "pillow",
+  "playwright",
+  "pydrive",
+  "pymupdf",
+  "pypdf",
+  "pypdf2",
+  "python-docx",
+  "python-pptx",
+  "pyacoustid",
+  "pytz",
+  "rapidfuzz",
+  "requests-toolbelt",
+  "scikit-image",
+  "tldextract>=5.3.0",
+  "xmltodict",
+]
 
 [project.scripts]
 snowl = "snowl.cli:main"
