@@ -189,12 +189,14 @@ class TerminusOfficialAgent:
         *,
         client: OpenAICompatibleChatClient,
         prompt: str,
+        traj: list[dict[str, str]],
         emit,
         trace_events: list[dict[str, Any]],
         usage_total: dict[str, int],
         episode: int,
     ) -> dict[str, Any]:
         for parse_attempt in range(1, self.max_parse_retries + 1):
+            traj.append({"role": "user", "content": prompt})
             emit(
                 {
                     "event": "runtime.model.query.start",
@@ -238,6 +240,7 @@ class TerminusOfficialAgent:
             usage_total["total_tokens"] += resp.usage.total_tokens
 
             content = str(resp.message.get("content", ""))
+            traj.append({"role": "assistant", "content": content})
             parsed = _extract_json_object(content)
             if parsed is not None:
                 return parsed
@@ -278,6 +281,7 @@ class TerminusOfficialAgent:
         meta = dict(sample.get("metadata", {}))
         instruction = str(sample.get("input") or "")
         trace_events: list[dict[str, Any]] = []
+        traj: list[dict[str, str]] = []
         usage_total = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
         terminal_state = env.capture()
@@ -360,6 +364,7 @@ class TerminusOfficialAgent:
                 parsed = await self._llm_query_handler(
                     client=client,
                     prompt=prompt,
+                    traj=traj,
                     emit=emit,
                     trace_events=trace_events,
                     usage_total=usage_total,
@@ -472,6 +477,7 @@ class TerminusOfficialAgent:
 
         state.output = {
             "message": {"role": "assistant", "content": test_output},
+            "traj": traj,
             "usage": usage_total,
             "trace_events": trace_events,
         }

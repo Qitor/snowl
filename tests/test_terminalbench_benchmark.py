@@ -232,9 +232,11 @@ class _FakeModelClient:
         self._responses = list(responses)
         self.calls = 0
         self.model = "fake-model"
+        self.message_batches: list[list[dict[str, object]]] = []
 
     async def generate(self, _messages, temperature=0.2):
         _ = temperature
+        self.message_batches.append([dict(msg) for msg in _messages])
         idx = min(self.calls, len(self._responses) - 1)
         content = self._responses[idx]
         self.calls += 1
@@ -245,14 +247,19 @@ class _FakeModelClient:
 
 
 class _FakeTerminalEnv:
-    def __init__(self) -> None:
+    def __init__(self, captures: list[str] | None = None) -> None:
         self.use_docker_compose = False
         self.compose_project = "fake-proj"
         self.compose_file = None
         self.sent: list[dict[str, object]] = []
+        self._captures = list(captures) if captures is not None else ["terminal-state"]
+        self._capture_index = 0
 
     def capture(self) -> str:
-        return "terminal-state"
+        idx = min(self._capture_index, len(self._captures) - 1)
+        value = self._captures[idx]
+        self._capture_index += 1
+        return value
 
     def send_keys(
         self,
@@ -339,6 +346,129 @@ def test_terminalbench_official_agent_fails_after_parse_retry_exhausted(tmp_path
     with pytest.raises(RuntimeError, match="parse failed after 3 attempts"):
         asyncio.run(agent.run(state, context))
     assert fake_client.calls == 3
+
+
+def test_terminalbench_official_agent_records_raw_model_traj(tmp_path: Path) -> None:
+    module = _load_terminalbench_official_agent_module()
+    response = json.dumps(
+        {
+            "state_analysis": "ok",
+            "explanation": "continue",
+            "commands": [],
+            "is_task_complete": True,
+        }
+    )
+    fake_client = _FakeModelClient([response])
+    agent = module.TerminusOfficialAgent(max_episodes=1)
+    agent._client = fake_client
+
+    env = _FakeTerminalEnv()
+    events: list[dict[str, object]] = []
+    context = _build_context(tmp_path, env, events)
+    state = AgentState(messages=[{"role": "user", "content": "go"}])
+
+    out = asyncio.run(agent.run(state, context))
+
+    assert out.output is not None
+    traj = out.output["traj"]
+    assert traj == [
+        {
+            "role": "user",
+            "content": fake_client.message_batches[0][0]["content"],
+        },
+        {
+            "role": "assistant",
+            "content": response,
+        },
+    ]
+    assert "solve task" in str(traj[0]["content"])
+
+
+def test_terminalbench_official_agent_uses_official_message_history_progression(tmp_path: Path) -> None:
+    module = _load_terminalbench_official_agent_module()
+    first_response = json.dumps(
+        {
+            "state_analysis": "episode-1",
+            "explanation": "continue",
+            "commands": [],
+            "is_task_complete": False,
+        }
+    )
+    second_response = json.dumps(
+        {
+            "state_analysis": "episode-2",
+            "explanation": "done",
+            "commands": [],
+            "is_task_complete": True,
+        }
+    )
+    fake_client = _FakeModelClient([first_response, second_response])
+    agent = module.TerminusOfficialAgent(max_episodes=2)
+    agent._client = fake_client
+
+    env = _FakeTerminalEnv(captures=["initial-screen", "after-episode-1", "after-episode-2"])
+    events: list[dict[str, object]] = []
+    context = _build_context(tmp_path, env, events)
+    state = AgentState(messages=[{"role": "user", "content": "go"}])
+
+    out = asyncio.run(agent.run(state, context))
+
+    assert out.stop_reason == StopReason.COMPLETED
+    assert len(fake_client.message_batches) == 2
+
+    first_batch = fake_client.message_batches[0]
+    assert len(first_batch) == 1
+    assert first_batch[0]["role"] == "user"
+    assert "solve task" in str(first_batch[0]["content"])
+    assert "initial-screen" in str(first_batch[0]["content"])
+
+    second_batch = fake_client.message_batches[1]
+    assert second_batch == [
+        {"role": "user", "content": first_batch[0]["content"]},
+        {"role": "assistant", "content": first_response},
+        {"role": "user", "content": "after-episode-1"},
+    ]
+
+    assert out.output is not None
+    assert out.output["traj"] == [
+        {"role": "user", "content": first_batch[0]["content"]},
+        {"role": "assistant", "content": first_response},
+        {"role": "user", "content": "after-episode-1"},
+        {"role": "assistant", "content": second_response},
+    ]
+
+
+def test_terminalbench_official_agent_appends_newline_for_blocking_shell_command(tmp_path: Path) -> None:
+    module = _load_terminalbench_official_agent_module()
+    response = json.dumps(
+        {
+            "state_analysis": "ok",
+            "explanation": "run shell command",
+            "commands": [
+                {
+                    "keystrokes": "ls -la /app/",
+                    "is_blocking": True,
+                    "timeout_sec": 30,
+                }
+            ],
+            "is_task_complete": True,
+        }
+    )
+    fake_client = _FakeModelClient([response])
+    agent = module.TerminusOfficialAgent(max_episodes=1)
+    agent._client = fake_client
+
+    env = _FakeTerminalEnv()
+    events: list[dict[str, object]] = []
+    context = _build_context(tmp_path, env, events)
+    state = AgentState(messages=[{"role": "user", "content": "go"}])
+
+    out = asyncio.run(agent.run(state, context))
+
+    assert out.stop_reason == StopReason.COMPLETED
+    assert len(env.sent) == 1
+    assert env.sent[0]["keystrokes"] == "ls -la /app/\n"
+    assert env.sent[0]["is_blocking"] is True
 
 
 def test_terminalbench_official_agent_does_not_block_on_background_tmux_command(tmp_path: Path) -> None:
