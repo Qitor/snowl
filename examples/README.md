@@ -20,6 +20,19 @@ Run an example:
 snowl eval examples/<example_name>
 ```
 
+Official benchmark examples in this repo:
+
+- `examples/strongreject-official`
+- `examples/terminalbench-official`
+- `examples/osworld-official`
+- `examples/toolemu-official`
+- `examples/agentsafetybench-official`
+
+Some benchmark examples depend on reference repos under `references/`, especially:
+
+- `examples/toolemu-official` -> `references/ToolEmu`
+- `examples/agentsafetybench-official` -> `references/Agent-SafetyBench`
+
 Variant filtering:
 
 ```bash

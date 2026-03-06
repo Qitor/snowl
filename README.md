@@ -26,7 +26,7 @@ We chose this name because it conveys:
 - Unified eval contract across very different benchmarks (QA, terminal, GUI)
 - Agent + Task are both first-class evaluation objects
 - Multi-metric scoring (including model-as-judge)
-- Built-in benchmark adapters (`strongreject`, `terminalbench`, `osworld`, `toolemu`)
+- Built-in benchmark adapters (`strongreject`, `terminalbench`, `osworld`, `toolemu`, `agentsafetybench`)
 - Research-friendly artifacts (`trials.jsonl`, `events.jsonl`, `metrics_wide.csv`, diagnostics)
 - Live interactive CLI for long-running experiments
 
@@ -51,7 +51,7 @@ Implemented in this repo now:
 - Decorators: `@task`, `@agent`, `@scorer`, `@tool`
 - Built-in agents: `ChatAgent`, `ReActAgent`
 - Built-in scorer library: text-match family, model-as-judge, composition, unit-test scorer
-- Benchmark adapters: `strongreject`, `terminalbench`, `osworld`, `toolemu`
+- Benchmark adapters: `strongreject`, `terminalbench`, `osworld`, `toolemu`, `agentsafetybench`
 - Container-aware runtime orchestration (`ContainerRuntime`) for terminal/gui benchmarks
 - Live CLI + run artifacts + resume/rerun-failed support
 
@@ -65,6 +65,7 @@ Snowl expects benchmark sources under `references/` with fixed folder names:
 - `references/OSWorld`
 - `references/strongreject`
 - `references/ToolEmu`
+- `references/Agent-SafetyBench`
 
 From repo root:
 
@@ -74,6 +75,7 @@ git clone <TERMINAL_BENCH_GIT_URL> references/terminal-bench
 git clone <OSWORLD_GIT_URL> references/OSWorld
 git clone <STRONGREJECT_GIT_URL> references/strongreject
 git clone <TOOLEMU_GIT_URL> references/ToolEmu
+git clone <AGENT_SAFETY_BENCH_GIT_URL> references/Agent-SafetyBench
 ```
 
 If your team uses internal mirrors, replace the URLs but keep the target directories unchanged.
@@ -125,6 +127,10 @@ snowl eval /Users/morinop/coding/snowl_v2/examples/osworld-official
 
 ```bash
 snowl eval /Users/morinop/coding/snowl_v2/examples/toolemu-official
+```
+
+```bash
+snowl eval /Users/morinop/coding/snowl_v2/examples/agentsafetybench-official
 ```
 
 ## 4) Run via Benchmark Adapter
@@ -408,7 +414,7 @@ tool.py (optional) ----->|                      |
 
 - `snowl/benchmarks/`
 - Benchmark adapters and registry
-- currently: `strongreject`, `terminalbench`, `osworld`, `toolemu`, plus generic `jsonl/csv`
+- currently: `strongreject`, `terminalbench`, `osworld`, `toolemu`, `agentsafetybench`, plus generic `jsonl/csv`
 
 - `snowl/ui/`
 - Live CLI renderer, controls, panel system

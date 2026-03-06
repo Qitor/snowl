@@ -26,7 +26,7 @@ Snowl 是一个通用的 Agent 评测框架，核心使用范式非常简单：
 - 统一的评测契约，覆盖 QA / Terminal / GUI 等不同类型任务
 - `Task` 和 `Agent` 都是一等评测对象
 - 多指标评分（含 model-as-judge）
-- 内置 benchmark 适配器：`strongreject`、`terminalbench`、`osworld`、`toolemu`
+- 内置 benchmark 适配器：`strongreject`、`terminalbench`、`osworld`、`toolemu`、`agentsafetybench`
 - 研究友好的产物导出：`trials.jsonl`、`events.jsonl`、`metrics_wide.csv`
 - Live CLI（交互式实时界面）
 
@@ -62,6 +62,7 @@ Snowl 默认按固定目录读取 benchmark 数据与任务定义，请把仓库
 - `references/OSWorld`
 - `references/strongreject`
 - `references/ToolEmu`
+- `references/Agent-SafetyBench`
 
 
 在项目根目录执行：
@@ -72,6 +73,7 @@ git clone <TERMINAL_BENCH_GIT_URL> references/terminal-bench
 git clone <OSWORLD_GIT_URL> references/OSWorld
 git clone <STRONGREJECT_GIT_URL> references/strongreject
 git clone <TOOLEMU_GIT_URL> references/ToolEmu
+git clone <AGENT_SAFETY_BENCH_GIT_URL> references/Agent-SafetyBench
 ```
 
 如果你们团队使用内部镜像地址，替换 URL 即可，但目标目录名必须保持不变。
@@ -155,6 +157,10 @@ snowl eval /Users/morinop/coding/snowl_v2/examples/osworld-official
 
 ```bash
 snowl eval /Users/morinop/coding/snowl_v2/examples/toolemu-official
+```
+
+```bash
+snowl eval /Users/morinop/coding/snowl_v2/examples/agentsafetybench-official
 ```
 
 ### 方式 B：通过 benchmark 适配器跑
