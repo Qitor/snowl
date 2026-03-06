@@ -12,4 +12,4 @@ DATASET_PATH = ROOT / "references" / "terminal-bench" / "original-tasks"
 @declare_task()
 def task() -> Task:
     adapter = TerminalBenchBenchmarkAdapter(dataset_path=str(DATASET_PATH))
-    return adapter.load_tasks(split="test", limit=25)[0]
+    return adapter.load_tasks(split="test", limit=1)[0]

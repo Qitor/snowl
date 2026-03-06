@@ -379,6 +379,7 @@ async def execute_trial(request: TrialRequest) -> TrialOutcome:
         final_output={
             "message": output.get("message", {}),
             "content": (output.get("message", {}) or {}).get("content"),
+            **({"traj": output.get("traj")} if output.get("traj") is not None else {}),
         },
         timing=Timing(
             started_at_ms=started,
