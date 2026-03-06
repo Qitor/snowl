@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import sys
+import shutil
+from pathlib import Path
 from types import ModuleType
+from uuid import uuid4
 
+import pytest
+
+from snowl.benchmarks.osworld import evaluator as osworld_evaluator
 from snowl.benchmarks.osworld.evaluator import evaluate_task, run_setup_config
 
 
@@ -77,3 +83,77 @@ def test_evaluate_task_single_metric(monkeypatch) -> None:
     )
     assert out["simulated"] is False
     assert out["score"] == 1.0
+
+
+def test_load_callable_bypasses_category_init(monkeypatch) -> None:
+    workspace_root = Path(__file__).resolve().parents[2]
+    tmp_root = workspace_root / f".tmp_osw_eval_{uuid4().hex}"
+    tmp_root.mkdir(parents=True, exist_ok=False)
+    try:
+        ref_root = tmp_root / "ref"
+        metrics_dir = ref_root / "desktop_env" / "evaluators" / "metrics"
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        (ref_root / "desktop_env" / "__init__.py").write_text("", encoding="utf-8")
+        (ref_root / "desktop_env" / "evaluators" / "__init__.py").write_text("", encoding="utf-8")
+        (metrics_dir / "__init__.py").write_text(
+            "raise RuntimeError('metrics init should not run')\n",
+            encoding="utf-8",
+        )
+        (metrics_dir / "utils.py").write_text(
+            "def add(a, b):\n"
+            "    return a + b\n",
+            encoding="utf-8",
+        )
+        (metrics_dir / "general.py").write_text(
+            "from desktop_env.evaluators.metrics.utils import add\n"
+            "\n"
+            "def match_in_list(result, rules):\n"
+            "    return float(add(1, 0))\n",
+            encoding="utf-8",
+        )
+
+        for name in (
+            "desktop_env.evaluators.metrics",
+            "desktop_env.evaluators.metrics.general",
+            "desktop_env.evaluators.metrics.utils",
+        ):
+            sys.modules.pop(name, None)
+
+        osworld_evaluator._FUNC_CACHE.clear()
+        monkeypatch.setattr(osworld_evaluator, "_reference_root", lambda: ref_root)
+        fn = osworld_evaluator._load_callable(category="metrics", func_name="match_in_list")
+        assert callable(fn)
+        assert float(fn(None, None)) == 1.0
+    finally:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+
+
+def test_load_callable_reports_fitz_conflict_hint(monkeypatch) -> None:
+    workspace_root = Path(__file__).resolve().parents[2]
+    tmp_root = workspace_root / f".tmp_osw_eval_{uuid4().hex}"
+    tmp_root.mkdir(parents=True, exist_ok=False)
+    try:
+        ref_root = tmp_root / "ref"
+        metrics_dir = ref_root / "desktop_env" / "evaluators" / "metrics"
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        (ref_root / "desktop_env" / "__init__.py").write_text("", encoding="utf-8")
+        (ref_root / "desktop_env" / "evaluators" / "__init__.py").write_text("", encoding="utf-8")
+        (metrics_dir / "__init__.py").write_text("", encoding="utf-8")
+        (metrics_dir / "frontend_case.py").write_text(
+            "import frontend\n"
+            "\n"
+            "def match_in_list(result, rules):\n"
+            "    return 0.0\n",
+            encoding="utf-8",
+        )
+        for name in (
+            "desktop_env.evaluators.metrics",
+            "desktop_env.evaluators.metrics.frontend_case",
+        ):
+            sys.modules.pop(name, None)
+        osworld_evaluator._FUNC_CACHE.clear()
+        monkeypatch.setattr(osworld_evaluator, "_reference_root", lambda: ref_root)
+        with pytest.raises(RuntimeError, match="conflicting `fitz` package"):
+            osworld_evaluator._load_callable(category="metrics", func_name="match_in_list")
+    finally:
+        shutil.rmtree(tmp_root, ignore_errors=True)

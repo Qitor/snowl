@@ -490,3 +490,51 @@
   - `examples/osworld-official/README.md` now includes:
     - `pip install -r snowl/benchmarks/osworld/requirements-eval-min.txt`
     - `python -m playwright install chromium`
+
+### 2026-03-06 (Round 19)
+
+#### Prompt Formatting Runtime Crash Fix
+- Reproduced runtime error right after sandbox prepare:
+  - message looked like `'"action_type"'` from `agent_runtime_error`.
+- Root cause:
+  - official prompt templates contain many JSON braces (`{...}`).
+  - code used `str.format(...)` to inject `{CLIENT_PASSWORD}`, which mistakenly treated JSON braces as format fields.
+- Fix:
+  - `examples/osworld-official/agent.py`
+  - replaced `.format(...)` with safe literal placeholder replacement via `_inject_client_password(...)`.
+- Regression test added:
+  - `tests/test_osworld_benchmark.py::test_osworld_official_prompt_injection_handles_json_braces`
+  - validates prompt injection works without breaking JSON braces.
+
+### 2026-03-06 (Round 20)
+
+#### Evaluator Import-Chain Robustness Fix
+- Problem observed on machine with evaluator deps installed:
+  - `osworld.evaluate` fell back with:
+    - `No module named 'frontend'`
+    - `Directory 'static/' does not exist`
+- Root cause:
+  - dynamic loader imported metric/getter modules via package path, which triggers:
+    - `desktop_env.evaluators.metrics.__init__`
+    - `desktop_env.evaluators.getters.__init__`
+  - those `__init__` files import *all* evaluator modules eagerly.
+  - unrelated modules (for unused metrics) can import `fitz`/other heavy deps and fail, even when current task only needs a simple metric/getter.
+
+#### Fix
+- Updated `snowl/benchmarks/osworld/evaluator.py` loader:
+  - switched to file-targeted module loading (`spec_from_file_location`) for the exact metric/getter file.
+  - installed namespace-package stubs for:
+    - `desktop_env`
+    - `desktop_env.evaluators`
+    - `desktop_env.evaluators.<category>`
+  - avoids executing category `__init__.py` during targeted function load.
+- Added clearer dependency-conflict hint:
+  - if import chain still raises `frontend/static` signature errors, evaluator now reports actionable message to remove conflicting `fitz` and keep `pymupdf`.
+- Added docs note:
+  - `examples/osworld-official/README.md` troubleshooting section now documents `fitz` vs `pymupdf` conflict fix.
+
+#### Regression Test
+- Added:
+  - `tests/test_osworld_evaluator.py::test_load_callable_bypasses_category_init`
+- Validates:
+  - loader can resolve and execute target metric function even when `metrics/__init__.py` intentionally raises.

@@ -285,6 +285,12 @@ def _resolve_system_prompt(observation_type: str) -> str:
     )
 
 
+def _inject_client_password(template: str, client_password: str) -> str:
+    # Use literal replacement instead of str.format because official prompts
+    # contain many JSON braces that are not format placeholders.
+    return str(template or "").replace("{CLIENT_PASSWORD}", str(client_password or ""))
+
+
 def _extract_actions_and_status(content: str) -> tuple[list[Any], bool | None, str | None]:
     text = str(content or "").strip()
     if not text:
@@ -392,7 +398,10 @@ class OSWorldOfficialAgent:
         final_score = 0.0
         action_history: list[Any] = []
         observation_type = _resolve_observation_type()
-        system_prompt_base = _resolve_system_prompt(observation_type).format(CLIENT_PASSWORD=self._client_password)
+        system_prompt_base = _inject_client_password(
+            _resolve_system_prompt(observation_type),
+            self._client_password,
+        )
         max_trajectory_length = max(0, int(os.getenv("SNOWL_OSWORLD_MAX_TRAJECTORY_LENGTH", "3")))
         prompt_user_history: list[str | list[dict[str, Any]]] = []
         prompt_assistant_history: list[str] = []

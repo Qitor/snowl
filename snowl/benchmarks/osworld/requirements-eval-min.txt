@@ -23,6 +23,7 @@ pdfplumber
 pillow
 playwright
 pydrive
+# NOTE: OSWorld imports `fitz` from PyMuPDF. Do NOT install the separate `fitz` package.
 pymupdf
 pypdf
 PyPDF2

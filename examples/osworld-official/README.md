@@ -13,11 +13,11 @@ Set env:
 
 ```bash
 export OPENAI_BASE_URL="https://api.siliconflow.cn/v1/" #"https://api.openai.com/v1"
-export OPENAI_API_KEY="sk-jqnjgheebknqwllsvpflxqsefgprdhailbkivzptkycpntzw"
+export OPENAI_API_KEY=""
 export OPENAI_MODEL="Qwen/Qwen3-8B" #"gpt-4o-mini"
 
 $env:OPENAI_BASE_URL="https://api.siliconflow.cn/v1/"
-$env:OPENAI_API_KEY="sk-jqnjgheebknqwllsvpflxqsefgprdhailbkivzptkycpntzw"
+$env:OPENAI_API_KEY=""
 $env:OPENAI_MODEL="Qwen/Qwen3-8B"
 
 ```
@@ -66,6 +66,13 @@ Or install the benchmark-scoped minimal dependency set:
 pip install -r snowl/benchmarks/osworld/requirements-eval-min.txt
 python -m playwright install chromium
 ```
+
+Troubleshooting:
+
+- If evaluator import errors mention `No module named 'frontend'` or `Directory 'static/' does not exist`, you likely installed the wrong `fitz` package.
+- Fix with:
+  - `pip uninstall -y fitz`
+  - `pip install -U pymupdf`
 
 You can check current evaluator import readiness:
 

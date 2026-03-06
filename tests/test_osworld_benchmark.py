@@ -258,3 +258,20 @@ def test_osworld_official_example_modules_importable() -> None:
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
         spec.loader.exec_module(module)
+
+
+def test_osworld_official_prompt_injection_handles_json_braces() -> None:
+    root = Path(__file__).resolve().parents[1]
+    path = root / "examples" / "osworld-official" / "agent.py"
+    module_name = "example_osw_agent_prompt_injection"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+
+    template = '{"action_type":"CLICK","parameters":{"x":1,"y":2}} -- {CLIENT_PASSWORD}'
+    rendered = module._inject_client_password(template, "pw123")
+    assert '{"action_type":"CLICK"' in rendered
+    assert "pw123" in rendered

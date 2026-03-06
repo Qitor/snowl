@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import importlib
+import importlib.util
 import re
 import sys
 import time
+import types
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -55,6 +56,45 @@ def _ensure_import_path() -> Path:
     return ref_root
 
 
+def _ensure_namespace_package(package_name: str, package_path: Path) -> types.ModuleType:
+    path_str = str(package_path.resolve())
+    existing = sys.modules.get(package_name)
+    if existing is None:
+        module = types.ModuleType(package_name)
+        module.__package__ = package_name
+        module.__file__ = str((package_path / "__init__.py").resolve())
+        module.__path__ = [path_str]  # type: ignore[attr-defined]
+        sys.modules[package_name] = module
+        return module
+    paths = list(getattr(existing, "__path__", []))
+    if path_str not in paths:
+        existing.__path__ = [path_str, *paths]  # type: ignore[attr-defined]
+    return existing
+
+
+def _load_module_from_file(*, module_name: str, module_file: Path) -> types.ModuleType:
+    cached = sys.modules.get(module_name)
+    if isinstance(cached, types.ModuleType):
+        return cached
+    spec = importlib.util.spec_from_file_location(module_name, str(module_file.resolve()))
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load spec for {module_name} from {module_file}.")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        sys.modules.pop(module_name, None)
+        message = str(exc)
+        if "No module named 'frontend'" in message or "Directory 'static/' does not exist" in message:
+            raise RuntimeError(
+                "OSWorld evaluator import failed due conflicting `fitz` package. "
+                "Please uninstall `fitz` and install `pymupdf`."
+            ) from exc
+        raise
+    return module
+
+
 def _load_callable(*, category: str, func_name: str) -> Callable[..., Any]:
     key = (category, func_name)
     cached = _FUNC_CACHE.get(key)
@@ -68,17 +108,24 @@ def _load_callable(*, category: str, func_name: str) -> Callable[..., Any]:
 
     pattern = re.compile(rf"^\s*def\s+{re.escape(func_name)}\s*\(", re.MULTILINE)
     target_module: str | None = None
+    target_file: Path | None = None
     for py_file in sorted(base.glob("*.py")):
         if py_file.name == "__init__.py":
             continue
         text = py_file.read_text(encoding="utf-8", errors="ignore")
         if pattern.search(text):
             target_module = f"desktop_env.evaluators.{category}.{py_file.stem}"
+            target_file = py_file
             break
-    if not target_module:
+    if not target_module or target_file is None:
         raise AttributeError(f"OSWorld {category} function not found: {func_name}")
 
-    module = importlib.import_module(target_module)
+    desktop_env_root = ref_root / "desktop_env"
+    evaluators_root = desktop_env_root / "evaluators"
+    _ensure_namespace_package("desktop_env", desktop_env_root)
+    _ensure_namespace_package("desktop_env.evaluators", evaluators_root)
+    _ensure_namespace_package(f"desktop_env.evaluators.{category}", base)
+    module = _load_module_from_file(module_name=target_module, module_file=target_file)
     fn = getattr(module, func_name, None)
     if not callable(fn):
         raise AttributeError(f"OSWorld {category} function not callable: {func_name}")
