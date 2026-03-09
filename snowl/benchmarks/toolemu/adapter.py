@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Mapping
 
-from snowl.benchmarks.base import BenchmarkInfo
-from snowl.core import EnvSpec, Task
+from snowl.benchmarks.base_adapter import BaseBenchmarkAdapter
+from snowl.benchmarks.utils import default_reference_path, matches_filters, read_json_array
+from snowl.core import EnvSpec
 from snowl.errors import SnowlValidationError
 
 
 def _default_dataset_path() -> str:
-    root = Path(__file__).resolve().parents[3]
-    return str(root / "references" / "ToolEmu" / "assets" / "all_cases.json")
+    return default_reference_path(
+        __file__,
+        "ToolEmu",
+        "assets",
+        "all_cases.json",
+    )
 
 
 def _case_split(case: Mapping[str, Any], default_split: str) -> str:
@@ -30,105 +33,81 @@ def _case_split(case: Mapping[str, Any], default_split: str) -> str:
 
 
 @dataclass(frozen=True)
-class ToolEmuBenchmarkAdapter:
+class ToolEmuBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
     dataset_path: str = _default_dataset_path()
     name: str = "toolemu"
     description: str = "ToolEmu benchmark adapter."
     default_split: str = "official"
 
-    @property
-    def info(self) -> BenchmarkInfo:
-        return BenchmarkInfo(name=self.name, description=self.description)
-
-    def _load_cases(self) -> list[dict[str, Any]]:
-        path = Path(self.dataset_path)
-        if not path.exists():
-            raise SnowlValidationError(f"ToolEmu dataset file not found: {path}")
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(data, list):
-            raise SnowlValidationError(f"ToolEmu dataset must be a JSON array: {path}")
+    def _iter_rows(self) -> list[dict[str, Any]]:
+        data = read_json_array(
+            self.dataset_path,
+            not_found_message="ToolEmu dataset file not found",
+            invalid_message="ToolEmu dataset must be a JSON array",
+        )
         rows: list[dict[str, Any]] = []
         for row in data:
             if isinstance(row, dict):
                 rows.append(dict(row))
         if not rows:
-            raise SnowlValidationError(f"No ToolEmu cases found in dataset: {path}")
+            raise SnowlValidationError(f"No ToolEmu cases found in dataset: {self.dataset_path}")
         return rows
 
-    def list_splits(self) -> list[str]:
-        splits: set[str] = set()
-        for case in self._load_cases():
-            splits.add(_case_split(case, self.default_split))
-        return sorted(splits) if splits else [self.default_split]
+    def _row_split(self, row: dict[str, Any], *, row_index: int) -> str:
+        _ = row_index
+        return _case_split(row, self.default_split)
 
-    def load_tasks(
-        self,
-        *,
-        split: str,
-        limit: int | None = None,
-        filters: dict[str, Any] | None = None,
-    ) -> list[Task]:
-        rows = self._load_cases()
-        filters = filters or {}
-        selected: list[dict[str, Any]] = []
-
-        for idx, case in enumerate(rows):
-            row_split = _case_split(case, self.default_split)
-            if row_split != split:
-                continue
-
-            toolkits = [str(x) for x in (case.get("Toolkits") or []) if str(x).strip()]
-            matched = True
-            for key, expected in filters.items():
-                if key == "toolkit":
-                    if str(expected) not in toolkits:
-                        matched = False
-                        break
-                    continue
-                if str(case.get(key, "")) != str(expected):
-                    matched = False
-                    break
-            if not matched:
-                continue
-
-            case_name = str(case.get("name") or "").strip() or f"{self.name}_{idx}"
-            user_instruction = str(case.get("User Instruction") or "").strip()
-            if not user_instruction:
-                continue
-            metadata = {
-                "name": case_name,
-                "split": row_split,
-                "toolkits": toolkits,
-                "underspecifications": dict(case.get("Underspecifications") or {}),
-                "expected_achievements": list(case.get("Expected Achievements") or []),
-                "potential_risky_outcomes": list(case.get("Potential Risky Outcomes") or []),
-                "potential_risky_actions": list(case.get("Potential Risky Actions") or []),
-                "case": dict(case),
-            }
-            selected.append(
-                {
-                    "id": f"toolemu-{case_name}",
-                    "input": user_instruction,
-                    "metadata": metadata,
-                }
-            )
-            if limit is not None and len(selected) >= limit:
-                break
-
-        if not selected:
-            raise SnowlValidationError(
-                f"No ToolEmu samples loaded for split='{split}' in {self.dataset_path}."
-            )
-
-        task = Task(
-            task_id=f"{self.name}:{split}",
-            env_spec=EnvSpec(env_type="local"),
-            sample_iter_factory=lambda: iter(selected),
-            metadata={
-                "benchmark": self.name,
-                "split": split,
-                "dataset_path": str(Path(self.dataset_path)),
-                "case_count": len(selected),
+    def _matches_filters(self, row: dict[str, Any], filters: dict[str, Any]) -> bool:
+        toolkits = [str(x) for x in (row.get("Toolkits") or []) if str(x).strip()]
+        return matches_filters(
+            filters=filters,
+            resolver=lambda key: toolkits if key == "toolkit" else row.get(key, ""),
+            stringify=True,
+            comparators={
+                "toolkit": lambda value, expected: str(expected) in [str(x) for x in (value or [])],
             },
         )
-        return [task]
+
+    def _row_to_sample(
+        self,
+        row: dict[str, Any],
+        *,
+        row_index: int,
+        row_split: str,
+        selected_count: int,
+    ) -> dict[str, Any] | None:
+        _ = selected_count
+        case_name = str(row.get("name") or "").strip() or f"{self.name}_{row_index - 1}"
+        user_instruction = str(row.get("User Instruction") or "").strip()
+        if not user_instruction:
+            return None
+        toolkits = [str(x) for x in (row.get("Toolkits") or []) if str(x).strip()]
+        metadata = {
+            "name": case_name,
+            "split": row_split,
+            "toolkits": toolkits,
+            "underspecifications": dict(row.get("Underspecifications") or {}),
+            "expected_achievements": list(row.get("Expected Achievements") or []),
+            "potential_risky_outcomes": list(row.get("Potential Risky Outcomes") or []),
+            "potential_risky_actions": list(row.get("Potential Risky Actions") or []),
+            "case": dict(row),
+        }
+        return {
+            "id": f"toolemu-{case_name}",
+            "input": user_instruction,
+            "metadata": metadata,
+        }
+
+    def _env_spec(self) -> EnvSpec:
+        return EnvSpec(env_type="local")
+
+    def _task_metadata(self, *, split: str, selected_count: int) -> dict[str, Any]:
+        return {
+            "benchmark": self.name,
+            "split": split,
+            "dataset_path": str(self.dataset_path),
+            "case_count": selected_count,
+        }
+
+    def _no_samples_error(self, split: str) -> str:
+        return f"No ToolEmu samples loaded for split='{split}' in {self.dataset_path}."

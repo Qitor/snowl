@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -9,6 +8,7 @@ from typing import Any
 from snowl.benchmarks.toolemu import build_tool_emu_llm, execute_tool_emu_case
 from snowl.benchmarks.toolemu.runtime import persist_tool_emu_trajectory
 from snowl.core import AgentContext, AgentState, StopReason, agent as declare_agent
+from snowl.utils.env import env_bool, env_int, env_optional_int, env_str
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -29,30 +29,21 @@ def _build_case(sample: dict[str, Any], sample_meta: dict[str, Any]) -> dict[str
     }
 
 
-def _env_str(name: str, default: str = "") -> str:
-    return str(os.getenv(name, default)).strip()
-
-
-def _env_optional_int(name: str) -> int | None:
-    raw = _env_str(name)
-    return int(raw) if raw else None
-
-
 @dataclass
 class ToolEmuOfficialAgent:
     agent_id: str = "toolemu_official_agent"
-    agent_type: str = field(default_factory=lambda: str(os.getenv("SNOWL_TOOLEMU_AGENT_TYPE", "naive")).strip() or "naive")
-    simulator_type: str = field(default_factory=lambda: str(os.getenv("SNOWL_TOOLEMU_SIMULATOR_TYPE", "adv_thought")).strip() or "adv_thought")
-    max_iterations: int = field(default_factory=lambda: int(os.getenv("SNOWL_TOOLEMU_MAX_ITERATIONS", "15")))
-    verbose: bool = field(default_factory=lambda: str(os.getenv("SNOWL_TOOLEMU_VERBOSE", "0")).strip().lower() in {"1", "true", "yes", "on"})
-    agent_model_name: str = field(default_factory=lambda: _env_str("SNOWL_TOOLEMU_AGENT_MODEL", "Qwen/Qwen3-8B"))
-    agent_api_key: str | None = field(default_factory=lambda: (_env_str("SNOWL_TOOLEMU_AGENT_API_KEY") or ""))
-    agent_base_url: str | None = field(default_factory=lambda: (_env_str("SNOWL_TOOLEMU_AGENT_BASE_URL") or "https://api.siliconflow.cn/v1"))
-    agent_max_tokens: int | None = field(default_factory=lambda: _env_optional_int("SNOWL_TOOLEMU_AGENT_MAX_TOKENS"))
-    simulator_model_name: str = field(default_factory=lambda: _env_str("SNOWL_TOOLEMU_SIMULATOR_MODEL", "Qwen/Qwen3-8B"))
-    simulator_api_key: str | None = field(default_factory=lambda: (_env_str("SNOWL_TOOLEMU_SIMULATOR_API_KEY") or ""))
-    simulator_base_url: str | None = field(default_factory=lambda: (_env_str("SNOWL_TOOLEMU_SIMULATOR_BASE_URL") or "https://api.siliconflow.cn/v1"))
-    simulator_max_tokens: int | None = field(default_factory=lambda: _env_optional_int("SNOWL_TOOLEMU_SIMULATOR_MAX_TOKENS"))
+    agent_type: str = field(default_factory=lambda: env_str("SNOWL_TOOLEMU_AGENT_TYPE", "naive") or "naive")
+    simulator_type: str = field(default_factory=lambda: env_str("SNOWL_TOOLEMU_SIMULATOR_TYPE", "adv_thought") or "adv_thought")
+    max_iterations: int = field(default_factory=lambda: env_int("SNOWL_TOOLEMU_MAX_ITERATIONS", 15))
+    verbose: bool = field(default_factory=lambda: env_bool("SNOWL_TOOLEMU_VERBOSE"))
+    agent_model_name: str = field(default_factory=lambda: env_str("SNOWL_TOOLEMU_AGENT_MODEL", "Qwen/Qwen3-8B"))
+    agent_api_key: str | None = field(default_factory=lambda: (env_str("SNOWL_TOOLEMU_AGENT_API_KEY") or ""))
+    agent_base_url: str | None = field(default_factory=lambda: (env_str("SNOWL_TOOLEMU_AGENT_BASE_URL", "https://api.siliconflow.cn/v1") or "https://api.siliconflow.cn/v1"))
+    agent_max_tokens: int | None = field(default_factory=lambda: env_optional_int("SNOWL_TOOLEMU_AGENT_MAX_TOKENS"))
+    simulator_model_name: str = field(default_factory=lambda: env_str("SNOWL_TOOLEMU_SIMULATOR_MODEL", "Qwen/Qwen3-8B"))
+    simulator_api_key: str | None = field(default_factory=lambda: (env_str("SNOWL_TOOLEMU_SIMULATOR_API_KEY") or ""))
+    simulator_base_url: str | None = field(default_factory=lambda: (env_str("SNOWL_TOOLEMU_SIMULATOR_BASE_URL", "https://api.siliconflow.cn/v1") or "https://api.siliconflow.cn/v1"))
+    simulator_max_tokens: int | None = field(default_factory=lambda: env_optional_int("SNOWL_TOOLEMU_SIMULATOR_MAX_TOKENS"))
     _agent_llm: Any = field(default=None, init=False, repr=False)
     _simulator_llm: Any = field(default=None, init=False, repr=False)
 

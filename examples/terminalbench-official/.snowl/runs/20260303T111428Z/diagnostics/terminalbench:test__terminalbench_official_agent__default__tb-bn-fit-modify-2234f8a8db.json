@@ -1,0 +1,14 @@
+{
+  "task_id": "terminalbench:test",
+  "agent_id": "terminalbench_official_agent",
+  "variant_id": "default",
+  "sample_id": "tb-bn-fit-modify-2234f8a8db",
+  "status": "error",
+  "sandbox": null,
+  "error": {
+    "code": "agent_runtime_error",
+    "message": "terminalbench docker compose up failed: permission denied while trying to connect to the Docker daemon socket at unix:///Users/morinop/.docker/run/docker.sock: Head \"http://%2FUsers%2Fmorinop%2F.docker%2Frun%2Fdocker.sock/_ping\": dial unix /Users/morinop/.docker/run/docker.sock: connect: operation not permitted",
+    "retryable": false,
+    "details": {}
+  }
+}

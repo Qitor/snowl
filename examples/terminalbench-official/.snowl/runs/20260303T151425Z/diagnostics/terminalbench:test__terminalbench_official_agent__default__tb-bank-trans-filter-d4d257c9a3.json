@@ -1,0 +1,14 @@
+{
+  "task_id": "terminalbench:test",
+  "agent_id": "terminalbench_official_agent",
+  "variant_id": "default",
+  "sample_id": "tb-bank-trans-filter-d4d257c9a3",
+  "status": "error",
+  "sandbox": null,
+  "error": {
+    "code": "container_runtime_error",
+    "message": "terminalbench docker compose up failed: failed to solve: process \"/bin/sh -c apt-get update && apt-get install -y     tmux curl asciinema     && rm -rf /var/lib/apt/lists/*\" did not complete successfully: exit code: 100",
+    "retryable": false,
+    "details": {}
+  }
+}

@@ -7,16 +7,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
-
-from snowl.benchmarks.base import BenchmarkInfo
-from snowl.core import EnvSpec, Task
+from snowl.benchmarks.base_adapter import BaseBenchmarkAdapter
+from snowl.benchmarks.utils import (
+    default_reference_path,
+    ensure_path_exists,
+    read_yaml_mapping,
+)
+from snowl.core import EnvSpec
 from snowl.errors import SnowlValidationError
 
 
 def _default_dataset_path() -> str:
-    root = Path(__file__).resolve().parents[3]
-    return str(root / "references" / "terminal-bench" / "original-tasks")
+    return default_reference_path(
+        __file__,
+        "terminal-bench",
+        "original-tasks",
+    )
+
 
 def _resolve_compose_file(task_dir: Path) -> Path | None:
     for name in ("docker-compose.yaml", "docker-compose.yml", "compose.yaml", "compose.yml"):
@@ -27,21 +34,18 @@ def _resolve_compose_file(task_dir: Path) -> Path | None:
 
 
 @dataclass(frozen=True)
-class TerminalBenchBenchmarkAdapter:
+class TerminalBenchBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
     dataset_path: str = _default_dataset_path()
     name: str = "terminalbench"
     description: str = "Terminal-Bench benchmark adapter."
     split_field: str = "split"
     default_split: str = "test"
 
-    @property
-    def info(self) -> BenchmarkInfo:
-        return BenchmarkInfo(name=self.name, description=self.description)
-
     def _task_dirs(self) -> list[Path]:
-        root = Path(self.dataset_path)
-        if not root.exists():
-            raise SnowlValidationError(f"TerminalBench dataset path not found: {root}")
+        root = ensure_path_exists(
+            self.dataset_path,
+            not_found_message="TerminalBench dataset path not found",
+        )
         out: list[Path] = []
         for child in sorted(root.iterdir()):
             if not child.is_dir():
@@ -52,104 +56,90 @@ class TerminalBenchBenchmarkAdapter:
             raise SnowlValidationError(f"No task directories with task.yaml found in {root}")
         return out
 
-    def _load_task_yaml(self, path: Path) -> dict[str, Any]:
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        if not isinstance(data, dict):
-            return {}
-        return data
-
-    def list_splits(self) -> list[str]:
-        splits: set[str] = set()
+    def _iter_rows(self) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
         for task_dir in self._task_dirs():
-            data = self._load_task_yaml(task_dir / "task.yaml")
-            split = str(data.get(self.split_field) or self.default_split).strip()
-            splits.add(split or self.default_split)
-        return sorted(splits) if splits else [self.default_split]
+            data = read_yaml_mapping(task_dir / "task.yaml")
+            rows.append({"task_dir": task_dir, "data": data})
+        return rows
 
-    def load_tasks(
+    def _row_split(self, row: dict[str, Any], *, row_index: int) -> str:
+        _ = row_index
+        data = dict(row.get("data") or {})
+        return str(data.get(self.split_field) or self.default_split)
+
+    def _row_filter_value(self, row: dict[str, Any], key: str) -> Any:
+        data = dict(row.get("data") or {})
+        task_dir = Path(row.get("task_dir"))
+        if key == "task_id":
+            return task_dir.name
+        if key == "difficulty":
+            return data.get("difficulty")
+        if key == "category":
+            return data.get("category")
+        if key == "parser_name":
+            return data.get("parser_name", "pytest")
+        return data.get(key)
+
+    def _row_to_sample(
         self,
+        row: dict[str, Any],
         *,
-        split: str,
-        limit: int | None = None,
-        filters: dict[str, Any] | None = None,
-    ) -> list[Task]:
-        filters = filters or {}
-        selected: list[dict[str, Any]] = []
-        for task_dir in self._task_dirs():
-            task_id = task_dir.name
-            data = self._load_task_yaml(task_dir / "task.yaml")
-            row_split = str(data.get(self.split_field) or self.default_split).strip() or self.default_split
-            if row_split != split:
-                continue
+        row_index: int,
+        row_split: str,
+        selected_count: int,
+    ) -> dict[str, Any] | None:
+        _ = (row_index, selected_count)
+        task_dir = Path(row.get("task_dir"))
+        data = dict(row.get("data") or {})
+        task_id = task_dir.name
+        instruction = str(data.get("instruction") or "").strip()
+        if not instruction:
+            return None
 
-            row = {
+        digest = hashlib.sha1(task_id.encode("utf-8")).hexdigest()[:10]
+        compose_path = _resolve_compose_file(task_dir)
+        sample = {
+            "id": f"tb-{task_id}-{digest}",
+            "input": instruction,
+            "metadata": {
                 "task_id": task_id,
+                "instruction": instruction,
+                "split": row_split,
                 "difficulty": data.get("difficulty"),
                 "category": data.get("category"),
-                "parser_name": data.get("parser_name", "pytest"),
-            }
-            matched = True
-            for key, expected in filters.items():
-                value = row.get(key, data.get(key))
-                if str(value) != str(expected):
-                    matched = False
-                    break
-            if not matched:
-                continue
-
-            instruction = str(data.get("instruction") or "").strip()
-            if not instruction:
-                continue
-
-            digest = hashlib.sha1(task_id.encode("utf-8")).hexdigest()[:10]
-            compose_path = _resolve_compose_file(task_dir)
-            sample = {
-                "id": f"tb-{task_id}-{digest}",
-                "input": instruction,
-                "metadata": {
-                    "task_id": task_id,
-                    "instruction": instruction,
-                    "split": row_split,
-                    "difficulty": data.get("difficulty"),
-                    "category": data.get("category"),
-                    "tags": list(data.get("tags") or []),
-                    "parser_name": str(data.get("parser_name", "pytest")),
-                    "max_agent_timeout_sec": data.get("max_agent_timeout_sec"),
-                    "max_test_timeout_sec": data.get("max_test_timeout_sec"),
-                    "task_root": str(task_dir),
-                    "task_yaml_path": str(task_dir / "task.yaml"),
-                    "run_tests_path": str(task_dir / "run-tests.sh"),
-                    "docker_compose_path": (str(compose_path) if compose_path is not None else ""),
-                    "tests_dir": str(task_dir / "tests"),
-                },
-            }
-            selected.append(sample)
-            if limit is not None and len(selected) >= limit:
-                break
-
-        if not selected:
-            raise SnowlValidationError(
-                f"No TerminalBench samples loaded for split='{split}' in {self.dataset_path}."
-            )
-
-        task = Task(
-            task_id=f"{self.name}:{split}",
-            env_spec=EnvSpec(
-                env_type="terminal",
-                provided_ops=(
-                    "process.run",
-                    "terminal.exec",
-                    "terminal.send_keys",
-                    "terminal.capture",
-                    "terminal.wait",
-                ),
-            ),
-            sample_iter_factory=lambda: iter(selected),
-            metadata={
-                "benchmark": self.name,
-                "split": split,
-                "dataset_path": str(Path(self.dataset_path)),
-                "task_count": len(selected),
+                "tags": list(data.get("tags") or []),
+                "parser_name": str(data.get("parser_name", "pytest")),
+                "max_agent_timeout_sec": data.get("max_agent_timeout_sec"),
+                "max_test_timeout_sec": data.get("max_test_timeout_sec"),
+                "task_root": str(task_dir),
+                "task_yaml_path": str(task_dir / "task.yaml"),
+                "run_tests_path": str(task_dir / "run-tests.sh"),
+                "docker_compose_path": (str(compose_path) if compose_path is not None else ""),
+                "tests_dir": str(task_dir / "tests"),
             },
+        }
+        return sample
+
+    def _env_spec(self) -> EnvSpec:
+        return EnvSpec(
+            env_type="terminal",
+            provided_ops=(
+                "process.run",
+                "terminal.exec",
+                "terminal.send_keys",
+                "terminal.capture",
+                "terminal.wait",
+            ),
         )
-        return [task]
+
+    def _task_metadata(self, *, split: str, selected_count: int) -> dict[str, Any]:
+        return {
+            "benchmark": self.name,
+            "split": split,
+            "dataset_path": str(Path(self.dataset_path)),
+            "task_count": selected_count,
+        }
+
+    def _no_samples_error(self, split: str) -> str:
+        return f"No TerminalBench samples loaded for split='{split}' in {self.dataset_path}."

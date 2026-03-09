@@ -5,10 +5,8 @@ from __future__ import annotations
 import os
 import re
 import shlex
-import subprocess
 import threading
 import time
-from queue import Empty, Queue
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -16,9 +14,11 @@ from typing import Any, Callable, Mapping
 import yaml
 
 from snowl.core import EnvSpec, validate_env_spec
+from snowl.envs.substrate import CommandRunner, ContainerBackend
 
 _BUILD_LIMIT_LOCK = threading.Lock()
 _BUILD_LIMIT_SEMAPHORE: threading.BoundedSemaphore | None = None
+_BUILD_SLOT_CONTEXT_FACTORY: Callable[[], Any] | None = None
 
 
 def set_compose_build_limit(limit: int | None) -> None:
@@ -28,6 +28,12 @@ def set_compose_build_limit(limit: int | None) -> None:
             _BUILD_LIMIT_SEMAPHORE = None
             return
         _BUILD_LIMIT_SEMAPHORE = threading.BoundedSemaphore(max(1, int(limit)))
+
+
+def set_compose_build_slot_factory(factory: Callable[[], Any] | None) -> None:
+    global _BUILD_SLOT_CONTEXT_FACTORY
+    with _BUILD_LIMIT_LOCK:
+        _BUILD_SLOT_CONTEXT_FACTORY = factory
 
 
 class _BuildSemaphoreContext:
@@ -66,6 +72,8 @@ class TerminalEnv:
     _compose_started: bool = False
     _tmux_session_name: str | None = None
     _tmux_session_ready: bool = False
+    _command_runner: CommandRunner | None = field(default=None, init=False, repr=False)
+    _container_backend: ContainerBackend | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         validate_env_spec(self.env_spec)
@@ -84,7 +92,17 @@ class TerminalEnv:
             base = str(self.compose_project or Path(self.workdir).name or "snowl-terminal")
             safe = re.sub(r"[^a-zA-Z0-9._-]+", "-", base).strip("-") or "snowl-terminal"
             self._tmux_session_name = f"{safe}-shell"
+        self._command_runner = CommandRunner(cwd=self.workdir)
+        self._container_backend = ContainerBackend(command_runner=self._command_runner)
         self._ensure_compose_env()
+
+    def _build_slot_context(self):
+        with _BUILD_LIMIT_LOCK:
+            factory = _BUILD_SLOT_CONTEXT_FACTORY
+            sem = _BUILD_LIMIT_SEMAPHORE
+        if factory is not None:
+            return factory()
+        return _BuildSemaphoreContext(sem)
 
     @property
     def env_id(self) -> str:
@@ -150,17 +168,10 @@ class TerminalEnv:
             if current is None or not str(current).strip():
                 self.compose_env[key] = value
 
-    def _compose_base_cmd(self) -> list[str]:
+    def _compose_identity(self) -> tuple[str, str]:
         if not self.compose_file:
             raise RuntimeError("compose_file is required when use_docker_compose=True")
-        return [
-            "docker",
-            "compose",
-            "-p",
-            str(self.compose_project),
-            "-f",
-            str(self.compose_file),
-        ]
+        return str(self.compose_project), str(self.compose_file)
 
     def _compose_exec_args(
         self,
@@ -284,7 +295,7 @@ class TerminalEnv:
         self._last_output = str(out.get("stdout") or "")
         return self._last_output
 
-    def _run_subprocess(
+    def _run_process(
         self,
         cmd: list[str],
         *,
@@ -292,109 +303,17 @@ class TerminalEnv:
         env: Mapping[str, str] | None = None,
         on_event: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
-        started = int(time.time() * 1000)
-        command_text = " ".join(str(x) for x in cmd)
-
-        def _emit(evt: dict[str, Any]) -> None:
-            if on_event is None:
-                return
-            try:
-                on_event(dict(evt))
-            except Exception:
-                return
-
-        _emit({"event": "runtime.env.command.start", "command_text": command_text})
-        proc = subprocess.Popen(
+        out = (self._command_runner or CommandRunner(cwd=self.workdir)).run(
             cmd,
+            timeout_seconds=timeout_seconds,
+            env=env,
+            on_event=on_event,
             cwd=self.workdir,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            bufsize=1,
-            env=dict(env or os.environ),
         )
-        stdout_parts: list[str] = []
-        stderr_parts: list[str] = []
-        q: Queue[tuple[str, str | None]] = Queue()
-
-        def _reader(stream: Any, stream_name: str) -> None:
-            try:
-                if stream is None:
-                    return
-                for line in iter(stream.readline, ""):
-                    q.put((stream_name, line))
-            finally:
-                try:
-                    if stream is not None:
-                        stream.close()
-                finally:
-                    q.put((stream_name, None))
-
-        t_out = threading.Thread(target=_reader, args=(proc.stdout, "stdout"), daemon=True)
-        t_err = threading.Thread(target=_reader, args=(proc.stderr, "stderr"), daemon=True)
-        t_out.start()
-        t_err.start()
-        done_streams = 0
-        timed_out = False
-        while done_streams < 2:
-            if timeout_seconds is not None and (time.time() * 1000 - started) > timeout_seconds * 1000:
-                timed_out = True
-                proc.kill()
-                _emit(
-                    {
-                        "event": "runtime.env.command.timeout",
-                        "command_text": command_text,
-                        "timeout_seconds": timeout_seconds,
-                    }
-                )
-                break
-            try:
-                stream_name, chunk = q.get(timeout=0.1)
-            except Empty:
-                if proc.poll() is not None and done_streams >= 2:
-                    break
-                continue
-            if chunk is None:
-                done_streams += 1
-                continue
-            if stream_name == "stdout":
-                stdout_parts.append(chunk)
-            else:
-                stderr_parts.append(chunk)
-            _emit(
-                {
-                    "event": f"runtime.env.command.{stream_name}",
-                    "command_text": command_text,
-                    "chunk": chunk.rstrip("\n"),
-                }
-            )
-
-        t_out.join(timeout=0.2)
-        t_err.join(timeout=0.2)
-        if timed_out:
-            exit_code = -9
-        else:
-            exit_code = int(proc.wait())
-        stdout_text = "".join(stdout_parts)
-        stderr_text = "".join(stderr_parts)
-        ended = int(time.time() * 1000)
-        out = {
-            "command": cmd,
-            "stdout": stdout_text,
-            "stderr": stderr_text,
-            "exit_code": exit_code,
-            "started_at_ms": started,
-            "ended_at_ms": ended,
-            "duration_ms": max(0, ended - started),
-        }
-        _emit(
-            {
-                "event": "runtime.env.command.finish",
-                "command_text": command_text,
-                "exit_code": exit_code,
-                "duration_ms": out["duration_ms"],
-            }
-        )
+        if bool(out.get("timed_out")):
+            raise TimeoutError(f"Command timed out after {float(timeout_seconds or 0.0)} seconds")
+        stdout_text = str(out.get("stdout") or "")
+        stderr_text = str(out.get("stderr") or "")
         self._last_output = stdout_text + ((("\n" + stderr_text) if stderr_text else ""))
         self.history.append(out)
         return out
@@ -409,29 +328,36 @@ class TerminalEnv:
             out = {"event": "terminal.compose.up", "skipped": True}
             self.history.append(out)
             return out
-        base = self._compose_base_cmd()
+        project, compose_file = self._compose_identity()
+        backend = self._container_backend or ContainerBackend(
+            command_runner=self._command_runner or CommandRunner(cwd=self.workdir)
+        )
         merged_env = {**os.environ, **self.compose_env}
         build_out: dict[str, Any] | None = None
 
         build_enabled = self.compose_build if build is None else bool(build)
         if build_enabled:
-            with _BuildSemaphoreContext(_BUILD_LIMIT_SEMAPHORE):
-                build_out = self._run_subprocess(
-                    [*base, "build"],
+            with self._build_slot_context():
+                build_out = backend.compose_build(
+                    project=project,
+                    compose_file=compose_file,
                     timeout_seconds=1800.0,
                     env=merged_env,
                     on_event=on_event,
                 )
+                self.history.append(build_out)
             build_out["event"] = "terminal.compose.build"
             if build_out["exit_code"] != 0:
                 return build_out
 
-        up_out = self._run_subprocess(
-            [*base, "up", "-d"],
+        up_out = backend.compose_up(
+            project=project,
+            compose_file=compose_file,
             timeout_seconds=600.0,
             env=merged_env,
             on_event=on_event,
         )
+        self.history.append(up_out)
         up_out["event"] = "terminal.compose.up"
         if build_out is not None:
             up_out["build"] = build_out
@@ -443,14 +369,19 @@ class TerminalEnv:
             out = {"event": "terminal.compose.down", "skipped": True}
             self.history.append(out)
             return out
-        base = self._compose_base_cmd()
+        project, compose_file = self._compose_identity()
+        backend = self._container_backend or ContainerBackend(
+            command_runner=self._command_runner or CommandRunner(cwd=self.workdir)
+        )
         merged_env = {**os.environ, **self.compose_env}
-        down_out = self._run_subprocess(
-            [*base, "down"],
+        down_out = backend.compose_down(
+            project=project,
+            compose_file=compose_file,
             timeout_seconds=120.0,
             env=merged_env,
             on_event=on_event,
         )
+        self.history.append(down_out)
         down_out["event"] = "terminal.compose.down"
         self._compose_started = False
         self._tmux_session_ready = False
@@ -472,11 +403,22 @@ class TerminalEnv:
             if up_out.get("exit_code", 1) != 0:
                 return up_out
 
-        base = self._compose_base_cmd()
+        project, compose_file = self._compose_identity()
+        backend = self._container_backend or ContainerBackend(
+            command_runner=self._command_runner or CommandRunner(cwd=self.workdir)
+        )
         target = service or self.compose_service or "client"
-        cmd = [*base, "exec", "-T", target, "bash", "-lc", command]
         merged_env = {**os.environ, **self.compose_env}
-        out = self._run_subprocess(cmd, timeout_seconds=timeout_seconds, env=merged_env, on_event=on_event)
+        out = backend.compose_exec(
+            project=project,
+            compose_file=compose_file,
+            service=target,
+            command=command,
+            timeout_seconds=timeout_seconds,
+            env=merged_env,
+            on_event=on_event,
+        )
+        self.history.append(out)
         out["event"] = "terminal.compose.exec"
         out["service"] = target
         out["command_text"] = command
@@ -518,27 +460,11 @@ class TerminalEnv:
     ) -> dict[str, Any]:
         if self.use_docker_compose:
             return self.compose_exec(command, timeout_seconds=timeout_seconds)
-        started = int(time.time() * 1000)
-        proc = subprocess.run(
-            command,
-            shell=True,
-            cwd=self.workdir,
-            text=True,
-            capture_output=True,
-            timeout=timeout_seconds,
+        out = self._run_process(
+            ["bash", "-lc", command],
+            timeout_seconds=timeout_seconds,
         )
-        ended = int(time.time() * 1000)
-        out = {
-            "command": command,
-            "stdout": proc.stdout,
-            "stderr": proc.stderr,
-            "exit_code": int(proc.returncode),
-            "started_at_ms": started,
-            "ended_at_ms": ended,
-            "duration_ms": max(0, ended - started),
-        }
-        self._last_output = (proc.stdout or "") + ((("\n" + proc.stderr) if proc.stderr else ""))
-        self.history.append(out)
+        out["command"] = command
         return out
 
     def send_keys(

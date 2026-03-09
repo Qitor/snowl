@@ -1,6 +1,7 @@
 """Benchmark adapters and registry."""
 
 from snowl.benchmarks.base import BenchmarkAdapter, BenchmarkInfo, validate_benchmark_adapter
+from snowl.benchmarks.base_adapter import BaseBenchmarkAdapter
 from snowl.benchmarks.agentsafetybench import AgentSafetyBenchBenchmarkAdapter
 from snowl.benchmarks.conformance import ConformanceReport, run_conformance
 from snowl.benchmarks.csv_adapter import CsvBenchmarkAdapter
@@ -19,6 +20,7 @@ from snowl.benchmarks.registry import (
 __all__ = [
     "BenchmarkAdapter",
     "BenchmarkInfo",
+    "BaseBenchmarkAdapter",
     "BenchmarkRegistry",
     "AgentSafetyBenchBenchmarkAdapter",
     "ConformanceReport",

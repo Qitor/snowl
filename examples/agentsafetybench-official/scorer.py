@@ -1,19 +1,15 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from snowl.benchmarks.agentsafetybench import AgentSafetyBenchScorer, persist_agentsafetybench_scores
 from snowl.core import Score, ScoreContext, TaskResult, scorer as declare_scorer
+from snowl.utils.env import env_int, env_str
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
 DEFAULT_SHIELD_MODEL_PATH = "thu-coai/ShieldAgent"
 DEFAULT_SHIELD_MODEL_BASE = "qwen"
-
-
-def _env_str(name: str, default: str = "") -> str:
-    return str(os.getenv(name, default)).strip()
 
 
 class SavingAgentSafetyBenchScorer(AgentSafetyBenchScorer):
@@ -57,7 +53,7 @@ class SavingAgentSafetyBenchScorer(AgentSafetyBenchScorer):
 @declare_scorer()
 def scorer() -> AgentSafetyBenchScorer:
     return SavingAgentSafetyBenchScorer(
-        shield_model_path=_env_str("SNOWL_AGENTSAFETYBENCH_SHIELD_MODEL_PATH", DEFAULT_SHIELD_MODEL_PATH),
-        shield_model_base=_env_str("SNOWL_AGENTSAFETYBENCH_SHIELD_MODEL_BASE", DEFAULT_SHIELD_MODEL_BASE),
-        shield_batch_size=int(_env_str("SNOWL_AGENTSAFETYBENCH_SHIELD_BATCH_SIZE", "1")),
+        shield_model_path=env_str("SNOWL_AGENTSAFETYBENCH_SHIELD_MODEL_PATH", DEFAULT_SHIELD_MODEL_PATH),
+        shield_model_base=env_str("SNOWL_AGENTSAFETYBENCH_SHIELD_MODEL_BASE", DEFAULT_SHIELD_MODEL_BASE),
+        shield_batch_size=env_int("SNOWL_AGENTSAFETYBENCH_SHIELD_BATCH_SIZE", 1),
     )

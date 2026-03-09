@@ -9,7 +9,9 @@ import inspect
 import json
 import hashlib
 import os
+import re
 import sys
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,10 +41,11 @@ from snowl.core import (
 )
 from snowl.core.declarations import Declaration, get_declaration, has_declaration
 from snowl.errors import SnowlValidationError
-from snowl.envs import BoundedSandboxRuntime, WarmPoolSandboxRuntime
-from snowl.envs.terminal_env import set_compose_build_limit
+from snowl.envs import WarmPoolSandboxRuntime
+from snowl.envs.terminal_env import set_compose_build_slot_factory
 from snowl.model import OpenAICompatibleChatClient
 from snowl.runtime import TrialOutcome, TrialRequest, execute_trial
+from snowl.runtime.resource_scheduler import ResourceScheduler
 from snowl.ui.contracts import TaskMonitor, normalize_ui_event
 from snowl.ui.input import StdinInputPump
 
@@ -673,6 +676,64 @@ def _prepare_run_artifacts_dir(*, base_dir: Path, run_id: str) -> Path:
     return out_dir
 
 
+def _sanitize_id_token(value: str, *, default: str) -> str:
+    token = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(value or "")).strip("-").lower()
+    return token or default
+
+
+def _default_experiment_id(*, base_dir: Path, started_ms: int) -> str:
+    ts = datetime.fromtimestamp(started_ms / 1000.0, tz=timezone.utc).strftime("%Y%m%dT%H")
+    project = _sanitize_id_token(base_dir.name, default="project")
+    digest = hashlib.sha1(str(base_dir).encode("utf-8")).hexdigest()[:8]
+    return f"{project}-{ts}-{digest}"
+
+
+def _benchmark_name_for_task(task: Task) -> str:
+    metadata = getattr(task, "metadata", {}) or {}
+    if not isinstance(metadata, dict):
+        return "custom"
+    value = str(metadata.get("benchmark") or metadata.get("benchmark_name") or "").strip().lower()
+    return value or "custom"
+
+
+class _LiveEventsWriter:
+    """Append-only live events writer with stable event ids."""
+
+    def __init__(self, *, path: Path, run_id: str) -> None:
+        self._path = path
+        self._run_id = run_id
+        self._lock = threading.Lock()
+        self._event_index = 0
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._fh = self._path.open("a", encoding="utf-8")
+
+    def append(self, row: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            self._event_index += 1
+            idx = self._event_index
+            event_id = str(row.get("event_id") or f"{self._run_id}:{idx}")
+            event_row = {
+                "schema_version": RESULT_SCHEMA_VERSION,
+                "run_id": self._run_id,
+                "event_index": idx,
+                "event_id": event_id,
+                **dict(row),
+            }
+            event_row["event_index"] = idx
+            event_row["event_id"] = event_id
+            event_row["run_id"] = self._run_id
+            self._fh.write(json.dumps(event_row, ensure_ascii=False) + "\n")
+            self._fh.flush()
+            return event_row
+
+    def close(self) -> None:
+        with self._lock:
+            try:
+                self._fh.close()
+            except Exception:
+                pass
+
+
 def _write_artifacts(
     *,
     base_dir: Path,
@@ -685,6 +746,8 @@ def _write_artifacts(
     run_log_lines: list[str] | None = None,
     event_rows: list[dict[str, Any]] | None = None,
     profiling: dict[str, Any] | None = None,
+    experiment_id: str | None = None,
+    event_stream_mode: str = "batch_write",
 ) -> Path:
     now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     if out_dir is None:
@@ -744,12 +807,19 @@ def _write_artifacts(
     events_jsonl_path = out_dir / "events.jsonl"
     with events_jsonl_path.open("w", encoding="utf-8") as f:
         for idx, row in enumerate(event_rows or [], start=1):
+            row_dict = dict(row)
+            event_index = int(row_dict.get("event_index") or idx)
+            event_id = str(row_dict.get("event_id") or f"{run_id}:{event_index}")
             event_row = {
                 "schema_version": RESULT_SCHEMA_VERSION,
                 "run_id": run_id,
-                "event_index": idx,
-                **dict(row),
+                "event_index": event_index,
+                "event_id": event_id,
+                **row_dict,
             }
+            event_row["run_id"] = run_id
+            event_row["event_index"] = event_index
+            event_row["event_id"] = event_id
             f.write(json.dumps(event_row, ensure_ascii=False) + "\n")
 
     metrics_wide_path = out_dir / "metrics_wide.csv"
@@ -832,9 +902,11 @@ def _write_artifacts(
                 "result_schema_uri": RESULT_SCHEMA_URI,
                 "aggregate_schema_uri": AGGREGATE_SCHEMA_URI,
                 "run_id": run_id,
+                "experiment_id": experiment_id,
                 "created_at_utc": now,
                 "rerun_command": rerun_command,
                 "diagnostics_count": len(diagnostics_index),
+                "event_stream_mode": event_stream_mode,
                 "research_exports": {
                     "trials_jsonl": "trials.jsonl",
                     "events_jsonl": "events.jsonl",
@@ -884,6 +956,7 @@ def _build_rerun_command(
     task_filter: list[str] | None,
     agent_filter: list[str] | None,
     variant_filter: list[str] | None = None,
+    experiment_id: str | None = None,
 ) -> str:
     cmd = ["snowl", "eval", str(base_dir)]
     if task_filter:
@@ -892,6 +965,8 @@ def _build_rerun_command(
         cmd.extend(["--agent", ",".join(agent_filter)])
     if variant_filter:
         cmd.extend(["--variant", ",".join(variant_filter)])
+    if experiment_id:
+        cmd.extend(["--experiment-id", str(experiment_id)])
     return " ".join(cmd)
 
 
@@ -918,12 +993,207 @@ def _is_docker_like_task(task: Task) -> bool:
     return False
 
 
+def _pick_event_value(event: dict[str, Any], key: str) -> Any:
+    if key in event and event.get(key) is not None:
+        return event.get(key)
+    payload = event.get("payload")
+    if isinstance(payload, dict):
+        if key in payload and payload.get(key) is not None:
+            return payload.get(key)
+        nested = payload.get("payload")
+        if isinstance(nested, dict):
+            return nested.get(key)
+    return None
+
+
+def _enrich_event_row(
+    raw_event: dict[str, Any],
+    *,
+    run_id: str,
+    experiment_id: str,
+    trial: PlanTrial | None,
+    benchmark_hint: str | None,
+) -> dict[str, Any]:
+    row = dict(raw_event)
+    task_id = str(
+        row.get("task_id")
+        or (trial.task_id if trial is not None else "")
+        or _pick_event_value(row, "task_id")
+        or ""
+    ).strip()
+    agent_id = str(
+        row.get("agent_id")
+        or (trial.agent_id if trial is not None else "")
+        or _pick_event_value(row, "agent_id")
+        or ""
+    ).strip()
+    variant_id = str(
+        row.get("variant_id")
+        or (trial.variant_id if trial is not None else "default")
+        or _pick_event_value(row, "variant_id")
+        or "default"
+    ).strip() or "default"
+    sample_id_raw = (
+        row.get("sample_id")
+        or (trial.sample_id if trial is not None else None)
+        or _pick_event_value(row, "sample_id")
+    )
+    sample_id = (str(sample_id_raw).strip() if sample_id_raw is not None else "")
+    model = str(
+        row.get("model")
+        or (trial.model if trial is not None else "")
+        or _pick_event_value(row, "model")
+        or ""
+    ).strip()
+    benchmark = str(
+        row.get("benchmark")
+        or (trial.task.metadata.get("benchmark") if trial is not None and isinstance(trial.task.metadata, dict) else "")
+        or _pick_event_value(row, "benchmark")
+        or benchmark_hint
+        or "custom"
+    ).strip().lower() or "custom"
+    ts_raw = row.get("ts_ms")
+    ts_ms = int(ts_raw) if isinstance(ts_raw, (int, float)) else int(datetime.now(timezone.utc).timestamp() * 1000)
+
+    trial_key = row.get("trial_key")
+    if not isinstance(trial_key, str) or not trial_key.strip():
+        if trial is not None:
+            trial_key = _trial_key(trial)
+        elif task_id and agent_id:
+            sample_token = sample_id or "-"
+            trial_key = f"{task_id}::{agent_id}::{variant_id}::{sample_token}"
+        else:
+            trial_key = ""
+
+    row.update(
+        {
+            "run_id": run_id,
+            "experiment_id": experiment_id,
+            "trial_key": trial_key,
+            "benchmark": benchmark,
+            "task_id": task_id or None,
+            "agent_id": agent_id or None,
+            "variant_id": variant_id,
+            "model": model or None,
+            "sample_id": sample_id or None,
+            "ts_ms": ts_ms,
+        }
+    )
+    return row
+
+
+def _derive_pretask_events(event: dict[str, Any]) -> list[dict[str, Any]]:
+    name = str(event.get("event", "")).strip()
+    if not name or name.startswith("pretask."):
+        return []
+
+    exit_code = _pick_event_value(event, "exit_code")
+    command_text = str(_pick_event_value(event, "command_text") or "")
+    command_text_l = command_text.lower()
+    ready = _pick_event_value(event, "ready")
+    code = str(_pick_event_value(event, "code") or "")
+
+    def _status_from_exit(default_running: str = "running") -> str:
+        if isinstance(exit_code, int):
+            return "success" if exit_code == 0 else "failed"
+        return default_running
+
+    def _mk(stage_event: str, *, status: str, source: str) -> dict[str, Any]:
+        out = {
+            "event": stage_event,
+            "phase": "env",
+            "status": status,
+            "message": status,
+            "source_event": source,
+        }
+        for key in (
+            "task_id",
+            "agent_id",
+            "variant_id",
+            "sample_id",
+            "trial_key",
+            "model",
+            "benchmark",
+            "project",
+            "compose_file",
+            "command_text",
+            "exit_code",
+            "duration_ms",
+            "ts_ms",
+            "run_id",
+            "experiment_id",
+        ):
+            value = _pick_event_value(event, key)
+            if value is not None:
+                out[key] = value
+        return out
+
+    out: list[dict[str, Any]] = []
+
+    if name.startswith("runtime.env.preflight."):
+        status = "failed" if name.endswith(".error") else ("success" if name.endswith(".finish") or name.endswith(".hit") else "running")
+        out.append(_mk("pretask.preflight", status=status, source=name))
+        return out
+
+    if "container.build" in name:
+        out.append(_mk("pretask.build", status=_status_from_exit(), source=name))
+        return out
+
+    if name in {"runtime.env.command.start", "runtime.env.command.finish", "runtime.env.command.timeout"}:
+        is_build = (" compose " in command_text_l and " build" in command_text_l) or command_text_l.startswith("docker compose") and " build" in command_text_l
+        is_start = (
+            (" compose " in command_text_l and " up" in command_text_l)
+            or command_text_l.startswith("docker run")
+            or (" compose " in command_text_l and " exec" in command_text_l and "tmux" in command_text_l)
+        )
+        if is_build:
+            status = "running" if name.endswith(".start") else ("timeout" if name.endswith(".timeout") else _status_from_exit())
+            out.append(_mk("pretask.build", status=status, source=name))
+        if is_start:
+            status = "running" if name.endswith(".start") else ("timeout" if name.endswith(".timeout") else _status_from_exit())
+            out.append(_mk("pretask.start", status=status, source=name))
+        return out
+
+    if "container.starting" in name:
+        out.append(_mk("pretask.start", status="running", source=name))
+        return out
+
+    if "container.started" in name:
+        if isinstance(exit_code, int) and exit_code != 0:
+            status = "failed"
+        elif ready is False:
+            status = "failed"
+        else:
+            status = "success"
+        out.append(_mk("pretask.start", status=status, source=name))
+        return out
+
+    if "visual_probe" in name or name == "gui.container.wait":
+        out.append(_mk("pretask.ready_probe", status="running", source=name))
+        return out
+
+    if "visual_ready" in name or name == "gui.container.ready":
+        out.append(_mk("pretask.ready", status="success", source=name))
+        return out
+
+    if name == "runtime.trial.error" and code == "container_runtime_error":
+        out.append(_mk("pretask.failed", status="failed", source=name))
+        return out
+
+    if "container.retry" in name:
+        out.append(_mk("pretask.start", status="retry", source=name))
+        return out
+
+    return out
+
+
 def _interaction_equivalent_command(
     base_dir: Path,
     *,
     task_filter: list[str] | None,
     agent_filter: list[str] | None,
     variant_filter: list[str] | None,
+    experiment_id: str | None,
     controller: Any | None,
 ) -> str:
     extra: list[str] = []
@@ -939,6 +1209,8 @@ def _interaction_equivalent_command(
         cmd.extend(["--agent", ",".join(agent_filter)])
     if variant_filter:
         cmd.extend(["--variant", ",".join(variant_filter)])
+    if experiment_id:
+        cmd.extend(["--experiment-id", str(experiment_id)])
     cmd.extend(extra)
     return " ".join(cmd)
 
@@ -1052,6 +1324,7 @@ async def run_eval_with_components(
     max_sandboxes: int | None = None,
     max_builds: int | None = None,
     max_model_calls: int | None = None,
+    experiment_id: str | None = None,
 ) -> EvalRunResult:
     tasks = _select_by_id(tasks, task_filter, lambda t: t.task_id)
     agents = _select_by_id(agents, agent_filter, lambda a: getattr(a, "agent_id"))
@@ -1077,14 +1350,24 @@ async def run_eval_with_components(
         # noisy startup races and make env debugging deterministic.
         max_trials = 1
 
-    set_compose_build_limit(max_builds)
-    OpenAICompatibleChatClient.set_global_model_call_limit(max_model_calls)
+    scheduler = ResourceScheduler(
+        max_trials=max_trials,
+        max_sandboxes=max_sandboxes,
+        max_builds=max_builds,
+        max_model_calls=max_model_calls,
+    )
+    set_compose_build_slot_factory(scheduler.build_slot)
+    OpenAICompatibleChatClient.set_global_model_call_slot_factory(scheduler.model_call_slot)
 
     run_started = int(datetime.now(timezone.utc).timestamp() * 1000)
     run_id = datetime.now(timezone.utc).strftime("run-%Y%m%dT%H%M%SZ")
+    if not experiment_id:
+        experiment_id = _default_experiment_id(base_dir=base_dir, started_ms=run_started)
     artifacts_dir_live = _prepare_run_artifacts_dir(base_dir=base_dir, run_id=run_id)
     live_run_log_path = artifacts_dir_live / "run.log"
     live_run_log_path.touch(exist_ok=True)
+    live_events_path = artifacts_dir_live / "events.jsonl"
+    event_writer = _LiveEventsWriter(path=live_events_path, run_id=run_id)
     plan = _build_plan(tasks, agents)
     if renderer:
         bench_name = None
@@ -1147,6 +1430,8 @@ async def run_eval_with_components(
     run_log_lines: list[str] = []
     event_rows: list[dict[str, Any]] = []
     task_monitor = TaskMonitor()
+    benchmark_names = sorted({_benchmark_name_for_task(task) for task in tasks})
+    benchmark_hint = benchmark_names[0] if len(benchmark_names) == 1 else "mixed"
 
     def _log(message: str) -> None:
         ts = datetime.now(timezone.utc).isoformat()
@@ -1158,8 +1443,28 @@ async def run_eval_with_components(
         except Exception:
             pass
 
-    def _record_event(row: dict[str, Any]) -> None:
-        event_rows.append(dict(row))
+    def _record_event(row: dict[str, Any], *, trial: PlanTrial | None = None) -> dict[str, Any]:
+        enriched = _enrich_event_row(
+            row,
+            run_id=run_id,
+            experiment_id=str(experiment_id),
+            trial=trial,
+            benchmark_hint=benchmark_hint,
+        )
+        persisted = event_writer.append(enriched)
+        event_rows.append(dict(persisted))
+        if trial is not None:
+            for synthetic in _derive_pretask_events(persisted):
+                synthetic_enriched = _enrich_event_row(
+                    synthetic,
+                    run_id=run_id,
+                    experiment_id=str(experiment_id),
+                    trial=trial,
+                    benchmark_hint=benchmark_hint,
+                )
+                persisted_synth = event_writer.append(synthetic_enriched)
+                event_rows.append(dict(persisted_synth))
+        return persisted
 
     model_profile_evt = normalize_ui_event(
         {
@@ -1246,23 +1551,21 @@ async def run_eval_with_components(
 
     total = len(executable_trials) + len(outcomes)
     checkpoint["meta"] = {
+        "run_id": run_id,
+        "experiment_id": experiment_id,
         "task_ids": plan.task_ids,
         "agent_ids": plan.agent_ids,
         "variant_ids": plan.variant_ids,
         "mode": plan.mode,
-        "controls": {
-            "max_trials": max_trials,
-            "max_sandboxes": max_sandboxes,
-            "max_builds": max_builds,
-            "max_model_calls": max_model_calls,
-        },
+        "benchmark": benchmark_hint,
+        "controls": scheduler.controls(),
     }
     if resume:
         _save_checkpoint(base_dir, checkpoint_key, checkpoint)
 
     has_sandbox_tasks = any(getattr(t.env_spec, "sandbox_spec", None) is not None for t in tasks)
     shared_sandbox_runtime = (
-        BoundedSandboxRuntime(WarmPoolSandboxRuntime(), max_sandboxes)
+        scheduler.wrap_sandbox_runtime(WarmPoolSandboxRuntime())
         if has_sandbox_tasks
         else None
     )
@@ -1335,8 +1638,8 @@ async def run_eval_with_components(
             )
             task_monitor.apply_event(normalized)
             evt = normalized.to_dict()
-            _record_event(evt)
-            _log(f"event {json.dumps(evt, ensure_ascii=False)}")
+            persisted_evt = _record_event(evt, trial=trial)
+            _log(f"event {json.dumps(persisted_evt, ensure_ascii=False)}")
             if renderer and hasattr(renderer, "render_runtime_event"):
                 renderer.render_runtime_event(evt)
 
@@ -1365,8 +1668,6 @@ async def run_eval_with_components(
                 _save_checkpoint(base_dir, checkpoint_key, checkpoint)
         return trial_index, trial, outcome
 
-    sem = asyncio.Semaphore(max(1, int(max_trials)))
-
     async def _bounded_run(trial_index: int, trial: PlanTrial) -> tuple[int, PlanTrial, TrialOutcome]:
         if interaction_controller is not None:
             _drain_interaction_inputs(
@@ -1385,7 +1686,7 @@ async def run_eval_with_components(
                     event_sink=_record_event,
                 )
                 await asyncio.sleep(0.05)
-        async with sem:
+        async with scheduler.trial_slot():
             return await _run_one(trial_index, trial)
 
     interaction_stop = asyncio.Event()
@@ -1476,18 +1777,19 @@ async def run_eval_with_components(
         task_filter,
         agent_filter,
         variant_filter,
+        experiment_id=str(experiment_id),
     )
     run_ended = int(datetime.now(timezone.utc).timestamp() * 1000)
     profiling = {
+        "run": {
+            "run_id": run_id,
+            "experiment_id": experiment_id,
+            "benchmark": benchmark_hint,
+        },
         "phase_timing_ms": {
             "run_total": max(0, run_ended - run_started),
         },
-        "controls": {
-            "max_trials": max_trials,
-            "max_sandboxes": max_sandboxes,
-            "max_builds": max_builds,
-            "max_model_calls": max_model_calls,
-        },
+        "controls": scheduler.controls(),
         "throughput": {
             "trial_count": len(executable_trials),
             "trials_per_sec": (
@@ -1526,6 +1828,7 @@ async def run_eval_with_components(
                 task_filter=task_filter,
                 agent_filter=agent_filter,
                 variant_filter=variant_filter,
+                experiment_id=str(experiment_id),
                 controller=interaction_controller,
             ),
         },
@@ -1547,6 +1850,7 @@ async def run_eval_with_components(
         ],
     }
     _log(f"summary {json.dumps(summary.__dict__, ensure_ascii=False)}")
+    event_writer.close()
     artifacts_dir = _write_artifacts(
         base_dir=base_dir,
         run_id=run_id,
@@ -1558,6 +1862,8 @@ async def run_eval_with_components(
         run_log_lines=run_log_lines,
         event_rows=event_rows,
         profiling=profiling,
+        experiment_id=str(experiment_id),
+        event_stream_mode="live_append",
     )
 
     if renderer:
@@ -1587,6 +1893,7 @@ async def run_eval(
     max_sandboxes: int | None = None,
     max_builds: int | None = None,
     max_model_calls: int | None = None,
+    experiment_id: str | None = None,
 ) -> EvalRunResult:
     base = Path(path).resolve()
     base_dir = base if base.is_dir() else base.parent
@@ -1601,7 +1908,13 @@ async def run_eval(
         agent_filter=agent_filter,
         variant_filter=variant_filter,
         renderer=renderer,
-        rerun_command=_build_rerun_command(base_dir, task_filter, agent_filter, variant_filter),
+        rerun_command=_build_rerun_command(
+            base_dir,
+            task_filter,
+            agent_filter,
+            variant_filter,
+            experiment_id=experiment_id,
+        ),
         checkpoint_key=checkpoint_key,
         resume=resume,
         rerun_failed_only=rerun_failed_only,
@@ -1610,4 +1923,5 @@ async def run_eval(
         max_sandboxes=max_sandboxes,
         max_builds=max_builds,
         max_model_calls=max_model_calls,
+        experiment_id=experiment_id,
     )

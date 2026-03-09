@@ -1,0 +1,425 @@
+{
+  "phase_timing_ms": {
+    "run_total": 12970
+  },
+  "controls": {
+    "max_trials": 1,
+    "max_sandboxes": 4,
+    "max_builds": 2,
+    "max_model_calls": 8
+  },
+  "throughput": {
+    "trial_count": 25,
+    "trials_per_sec": 1.9275250578257517
+  },
+  "failure_diagnostics": {
+    "error": 25,
+    "limit_exceeded": 0,
+    "cancelled": 0
+  },
+  "interaction": {
+    "controller_state": {
+      "paused": false,
+      "only_failed_focus": false,
+      "group_by": "none",
+      "compare_sort": "metric",
+      "compact_mode": false,
+      "task_filter": [],
+      "agent_filter": [],
+      "variant_filter": [],
+      "rerun_failed_requested": false
+    },
+    "actions": [],
+    "equivalent_cli": "snowl eval /Users/morinop/coding/snowl_v2/examples/terminalbench-official"
+  },
+  "task_monitor": [
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": null,
+      "status": "queued",
+      "step_count": 0,
+      "duration_ms": null,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": null,
+      "scorer_metrics": {}
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-3d-model-format-legacy-540ecc10e8",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 757,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-accelerate-maximal-square-06d74ebf9f",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 510,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-acl-permissions-inheritance-1301ee6820",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 510,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-adaptive-rejection-sampler-d73e90a96e",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 517,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-add-benchmark-lm-eval-harness-0f508e5cb2",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 515,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-aimo-airline-departures-d13186fa06",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 510,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-amuse-install-0c8c8f9956",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 509,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-analyze-access-logs-b32b3c2616",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 507,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-ancient-puzzle-1b2bb87af2",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 510,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-assign-seats-0b2d08d4db",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 507,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-attention-mil-1b8bf019cd",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 504,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-audio-synth-stft-peaks-36216c9fae",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 503,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-bank-trans-filter-d4d257c9a3",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 508,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-blind-maze-explorer-5x5-ce985e4121",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 509,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-blind-maze-explorer-algorithm-e4c2e59169",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 508,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-bn-fit-modify-2234f8a8db",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 507,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-break-filter-js-from-html-abd9f039c8",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 508,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-broken-networking-996f461310",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 506,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-broken-python-641fc29075",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 512,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-build-cython-ext-b04c56e716",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 505,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-build-initramfs-qemu-6bea4081e1",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 504,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-build-linux-kernel-qemu-0ba1f8ad86",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 511,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-build-pmars-94a11e922b",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 505,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-build-pov-ray-6f560ad8bc",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 506,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    },
+    {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "variant_id": "default",
+      "sample_id": "tb-build-stp-f113b54fff",
+      "status": "error",
+      "step_count": 0,
+      "duration_ms": 508,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": "error",
+      "scorer_metrics": {
+        "accuracy": 0.0
+      }
+    }
+  ]
+}

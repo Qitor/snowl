@@ -53,6 +53,7 @@ async def run_benchmark(
     max_sandboxes: int | None = None,
     max_builds: int | None = None,
     max_model_calls: int | None = None,
+    experiment_id: str | None = None,
 ) -> EvalRunResult:
     registry = get_default_benchmark_registry()
     adapter_kwargs = _parse_adapter_kv(benchmark_args)
@@ -81,6 +82,7 @@ async def run_benchmark(
             *(["--task", ",".join(task_filter)] if task_filter else []),
             *(["--agent", ",".join(agent_filter)] if agent_filter else []),
             *(["--variant", ",".join(variant_filter)] if variant_filter else []),
+            *(["--experiment-id", str(experiment_id)] if experiment_id else []),
         ]
     )
 
@@ -99,6 +101,7 @@ async def run_benchmark(
         max_sandboxes=max_sandboxes,
         max_builds=max_builds,
         max_model_calls=max_model_calls,
+        experiment_id=experiment_id,
     )
 
 

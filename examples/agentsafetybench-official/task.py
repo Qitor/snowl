@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from snowl.benchmarks.agentsafetybench import AgentSafetyBenchBenchmarkAdapter
+from snowl.benchmarks.example_task import env_task_limit, env_task_split, load_single_task
 from snowl.core import Task, task as declare_task
 
 
@@ -14,7 +14,8 @@ DATASET_PATH = ROOT / "references" / "Agent-SafetyBench" / "data" / "released_da
 @declare_task()
 def task() -> Task:
     adapter = AgentSafetyBenchBenchmarkAdapter(dataset_path=str(DATASET_PATH))
-    split = str(os.getenv("SNOWL_AGENTSAFETYBENCH_SPLIT", "official")).strip() or "official"
-    raw_limit = str(os.getenv("SNOWL_AGENTSAFETYBENCH_LIMIT", "")).strip()
-    limit = int(raw_limit) if raw_limit else None
-    return adapter.load_tasks(split=split, limit=limit)[0]
+    return load_single_task(
+        adapter,
+        split=env_task_split("SNOWL_AGENTSAFETYBENCH_SPLIT", "official"),
+        limit=env_task_limit("SNOWL_AGENTSAFETYBENCH_LIMIT"),
+    )

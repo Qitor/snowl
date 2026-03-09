@@ -1,0 +1,1302 @@
+[
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-3d-model-format-legacy-540ecc10e8",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719542,
+        "ended_at_ms": 1772497719542,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-accelerate-maximal-square-06d74ebf9f",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719543,
+        "ended_at_ms": 1772497719543,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-acl-permissions-inheritance-1301ee6820",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719543,
+        "ended_at_ms": 1772497719543,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-adaptive-rejection-sampler-d73e90a96e",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719543,
+        "ended_at_ms": 1772497719543,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-add-benchmark-lm-eval-harness-0f508e5cb2",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719543,
+        "ended_at_ms": 1772497719543,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-aimo-airline-departures-d13186fa06",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719543,
+        "ended_at_ms": 1772497719543,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-amuse-install-0c8c8f9956",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719543,
+        "ended_at_ms": 1772497719543,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-analyze-access-logs-b32b3c2616",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719543,
+        "ended_at_ms": 1772497719543,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-ancient-puzzle-1b2bb87af2",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719543,
+        "ended_at_ms": 1772497719543,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-assign-seats-0b2d08d4db",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719543,
+        "ended_at_ms": 1772497719543,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-attention-mil-1b8bf019cd",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719543,
+        "ended_at_ms": 1772497719543,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-audio-synth-stft-peaks-36216c9fae",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719543,
+        "ended_at_ms": 1772497719543,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-bank-trans-filter-d4d257c9a3",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719543,
+        "ended_at_ms": 1772497719543,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-blind-maze-explorer-5x5-ce985e4121",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719543,
+        "ended_at_ms": 1772497719543,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-blind-maze-explorer-algorithm-e4c2e59169",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719543,
+        "ended_at_ms": 1772497719543,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-bn-fit-modify-2234f8a8db",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719544,
+        "ended_at_ms": 1772497719544,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-break-filter-js-from-html-abd9f039c8",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719544,
+        "ended_at_ms": 1772497719544,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-broken-networking-996f461310",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719544,
+        "ended_at_ms": 1772497719544,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-broken-python-641fc29075",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719544,
+        "ended_at_ms": 1772497719544,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-build-cython-ext-b04c56e716",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719544,
+        "ended_at_ms": 1772497719544,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-build-initramfs-qemu-6bea4081e1",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719544,
+        "ended_at_ms": 1772497719544,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-build-linux-kernel-qemu-0ba1f8ad86",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719544,
+        "ended_at_ms": 1772497719544,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-build-pmars-94a11e922b",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719544,
+        "ended_at_ms": 1772497719544,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-build-pov-ray-6f560ad8bc",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719544,
+        "ended_at_ms": 1772497719544,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  },
+  {
+    "schema_version": "v1",
+    "schema_uri": "snowl://schemas/results/v1",
+    "task_result": {
+      "task_id": "terminalbench:test",
+      "agent_id": "terminalbench_official_agent",
+      "sample_id": "tb-build-stp-f113b54fff",
+      "seed": null,
+      "status": "error",
+      "final_output": {
+        "message": {},
+        "content": null
+      },
+      "timing": {
+        "started_at_ms": 1772497719544,
+        "ended_at_ms": 1772497719544,
+        "duration_ms": 0
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": null
+      },
+      "error": {
+        "code": "agent_runtime_error",
+        "message": "Missing OpenAI-compatible API key. Set OPENAI_API_KEY or pass --api-key.",
+        "retryable": false,
+        "details": {}
+      },
+      "artifacts": [],
+      "payload": {
+        "stop_reason": "error"
+      }
+    },
+    "scores": {
+      "accuracy": {
+        "value": 0.0,
+        "explanation": "No parser results found in task_result payload/trace/output.",
+        "metadata": {
+          "parser_name": "pytest",
+          "parsed_tests": 0
+        }
+      }
+    },
+    "trace": {
+      "trace_events": [],
+      "actions": [],
+      "observations": [],
+      "stop_reason": "error"
+    }
+  }
+]

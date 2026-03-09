@@ -1,0 +1,11 @@
+{
+  "mode": "single",
+  "task_ids": [
+    "terminalbench:test"
+  ],
+  "agent_ids": [
+    "terminalbench_official_agent"
+  ],
+  "sample_count": 25,
+  "trial_count": 25
+}

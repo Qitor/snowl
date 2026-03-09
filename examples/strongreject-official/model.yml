@@ -1,0 +1,4 @@
+openai_compatible:
+  base_url: https://api.siliconflow.cn/v1
+  api_key: sk-irodedqyvgqjdilarnwmrixfwigoxvaenmcfnjmfvbaxrkxm
+  model: Qwen/Qwen2.5-7B-Instruct
