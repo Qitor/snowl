@@ -24,7 +24,15 @@ from snowl.core import StopReason
 class A:
     agent_id = "a1"
     async def run(self, state, context, tools=None):
-        state.output = {"message": {"role":"assistant", "content":"ok"}, "usage": {"input_tokens":1, "output_tokens":1, "total_tokens":2}, "trace_events": []}
+        state.output = {
+            "message": {"role":"assistant", "content":"ok"},
+            "traj": [
+                {"role": "user", "content": "prompt"},
+                {"role": "assistant", "content": "ok"},
+            ],
+            "usage": {"input_tokens":1, "output_tokens":1, "total_tokens":2},
+            "trace_events": [],
+        }
         state.stop_reason = StopReason.COMPLETED
         return state
 
@@ -59,6 +67,10 @@ scorer = S()
     outcomes = json.loads((out_dir / "outcomes.json").read_text(encoding="utf-8"))
     assert outcomes[0]["schema_version"] == RESULT_SCHEMA_VERSION
     assert outcomes[0]["schema_uri"] == RESULT_SCHEMA_URI
+    assert outcomes[0]["task_result"]["final_output"]["traj"] == [
+        {"role": "user", "content": "prompt"},
+        {"role": "assistant", "content": "ok"},
+    ]
     assert (out_dir / "run.log").exists()
     log_text = (out_dir / "run.log").read_text(encoding="utf-8")
     assert "trial_start" in log_text
