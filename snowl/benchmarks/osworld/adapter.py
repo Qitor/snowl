@@ -104,6 +104,7 @@ class OSWorldBenchmarkAdapter:
                 metadata = {
                     "domain": domain,
                     "example_id": example_id,
+                    "osworld_task_id": str(example.get("id") or example_id),
                     "split": row_split,
                     "instruction": instruction,
                     "snapshot": example.get("snapshot"),
@@ -114,6 +115,7 @@ class OSWorldBenchmarkAdapter:
                     "evaluator": example.get("evaluator"),
                     "source": example.get("source"),
                     "example_path": str(file_path),
+                    "task_config": dict(example),
                 }
                 selected.append(
                     {

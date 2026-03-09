@@ -31,6 +31,13 @@ class MetricOnlyScorer:
         return {"latency": Score(value=0.5)}
 
 
+class ExplodingScorer:
+    scorer_id = "explode"
+
+    def score(self, task_result: TaskResult, trace, context: ScoreContext):
+        raise RuntimeError("boom")
+
+
 def _task() -> Task:
     return Task(
         task_id="task-1",
@@ -202,5 +209,104 @@ def test_execute_trial_max_steps_limit_via_agent_override() -> None:
         out = await execute_trial(req)
         assert out.task_result.status.value == "limit_exceeded"
         assert out.task_result.payload.get("stop_reason") == "max_steps"
+
+    asyncio.run(_run())
+
+
+def test_execute_trial_artifacts_passthrough() -> None:
+    class ArtifactAgent:
+        agent_id = "artifact-agent"
+
+        async def run(self, state, context, tools=None):
+            from snowl.core import StopReason
+
+            state.output = {
+                "message": {"role": "assistant", "content": "ok"},
+                "artifacts": [
+                    {
+                        "name": "recording_mp4",
+                        "uri": "C:/tmp/recording.mp4",
+                        "media_type": "video/mp4",
+                    }
+                ],
+            }
+            state.stop_reason = StopReason.COMPLETED
+            return state
+
+    req = TrialRequest(
+        task=_task(),
+        agent=ArtifactAgent(),
+        scorer=PassScorer(),
+        sample={"id": "s1", "input": "hello"},
+    )
+
+    async def _run() -> None:
+        out = await execute_trial(req)
+        assert out.task_result.status.value == "success"
+        assert len(out.task_result.artifacts) == 1
+        assert out.task_result.artifacts[0].name == "recording_mp4"
+        assert out.task_result.artifacts[0].uri == "C:/tmp/recording.mp4"
+
+    asyncio.run(_run())
+
+
+def test_execute_trial_artifacts_preserved_when_incorrect() -> None:
+    class ArtifactAgent:
+        agent_id = "artifact-agent"
+
+        async def run(self, state, context, tools=None):
+            from snowl.core import StopReason
+
+            state.output = {
+                "message": {"role": "assistant", "content": "not ok"},
+                "artifacts": [{"name": "recording_mp4", "uri": "C:/tmp/recording.mp4"}],
+            }
+            state.stop_reason = StopReason.COMPLETED
+            return state
+
+    req = TrialRequest(
+        task=_task(),
+        agent=ArtifactAgent(),
+        scorer=FailScorer(),
+        sample={"id": "s1", "input": "hello"},
+    )
+
+    async def _run() -> None:
+        out = await execute_trial(req)
+        assert out.task_result.status.value == "incorrect"
+        assert len(out.task_result.artifacts) == 1
+        assert out.task_result.artifacts[0].name == "recording_mp4"
+
+    asyncio.run(_run())
+
+
+def test_execute_trial_artifacts_preserved_when_scorer_errors() -> None:
+    class ArtifactAgent:
+        agent_id = "artifact-agent"
+
+        async def run(self, state, context, tools=None):
+            from snowl.core import StopReason
+
+            state.output = {
+                "message": {"role": "assistant", "content": "ok"},
+                "artifacts": [{"name": "recording_mp4", "uri": "C:/tmp/recording.mp4"}],
+            }
+            state.stop_reason = StopReason.COMPLETED
+            return state
+
+    req = TrialRequest(
+        task=_task(),
+        agent=ArtifactAgent(),
+        scorer=ExplodingScorer(),
+        sample={"id": "s1", "input": "hello"},
+    )
+
+    async def _run() -> None:
+        out = await execute_trial(req)
+        assert out.task_result.status.value == "error"
+        assert out.task_result.error is not None
+        assert out.task_result.error.code == "scorer_error"
+        assert len(out.task_result.artifacts) == 1
+        assert out.task_result.artifacts[0].name == "recording_mp4"
 
     asyncio.run(_run())

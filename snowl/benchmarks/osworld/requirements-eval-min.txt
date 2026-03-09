@@ -1,0 +1,40 @@
+# Minimal third-party dependencies required by Snowl OSWorld evaluator
+# (derived from the metric/getter modules referenced by OSWorld task JSONs).
+#
+# Install:
+#   pip install -r snowl/benchmarks/osworld/requirements-eval-min.txt
+#   python -m playwright install chromium
+
+beautifulsoup4
+borb
+easyocr
+fastdtw
+formulas
+imagehash
+librosa
+lxml
+mutagen
+numpy
+odfpy
+opencv-python-headless
+openpyxl
+pandas
+pdfplumber
+pillow
+playwright
+pydrive
+# NOTE: OSWorld imports `fitz` from PyMuPDF. Do NOT install the separate `fitz` package.
+pymupdf
+pypdf
+PyPDF2
+pyacoustid
+python-docx
+python-pptx
+pytz
+pyyaml
+rapidfuzz
+requests
+scikit-image
+scipy
+tldextract
+xmltodict

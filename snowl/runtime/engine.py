@@ -11,7 +11,7 @@ from snowl.core.agent import Agent, AgentContext, AgentState, StopReason, valida
 from snowl.core.env import ensure_tool_ops_compatible, validate_env_spec
 from snowl.core.scorer import ScoreContext, Scorer, validate_scorer, validate_scores
 from snowl.core.task import Task, validate_task
-from snowl.core.task_result import ErrorInfo, TaskResult, TaskStatus, Timing, Usage
+from snowl.core.task_result import ArtifactRef, ErrorInfo, TaskResult, TaskStatus, Timing, Usage
 from snowl.core.tool import ToolSpec, resolve_tool_spec
 from snowl.envs.sandbox_runtime import SandboxRuntime, WarmPoolSandboxRuntime
 from snowl.errors import SnowlValidationError
@@ -346,6 +346,22 @@ async def execute_trial(request: TrialRequest) -> TrialOutcome:
         total_tokens=int(usage_data.get("total_tokens", 0) or 0),
         estimated_cost_usd=None,
     )
+    artifacts: list[ArtifactRef] = []
+    for item in output.get("artifacts", []) or []:
+        if not isinstance(item, Mapping):
+            continue
+        name = str(item.get("name") or "").strip()
+        uri = str(item.get("uri") or "").strip()
+        if not name or not uri:
+            continue
+        media_type = item.get("media_type")
+        artifacts.append(
+            ArtifactRef(
+                name=name,
+                uri=uri,
+                media_type=(str(media_type) if media_type is not None else None),
+            )
+        )
 
     if request.limits.token_limit is not None and usage.total_tokens > request.limits.token_limit:
         status = TaskStatus.LIMIT_EXCEEDED
@@ -387,6 +403,7 @@ async def execute_trial(request: TrialRequest) -> TrialOutcome:
         ),
         usage=usage,
         error=error,
+        artifacts=artifacts,
         payload={
             "stop_reason": state.stop_reason.value if state.stop_reason else None,
             "variant_id": variant_id,
@@ -409,6 +426,7 @@ async def execute_trial(request: TrialRequest) -> TrialOutcome:
             timing=task_result.timing,
             usage=task_result.usage,
             error=task_result.error,
+            artifacts=task_result.artifacts,
             payload={
                 **task_result.payload,
                 "sandbox": {
@@ -500,6 +518,7 @@ async def execute_trial(request: TrialRequest) -> TrialOutcome:
             timing=task_result.timing,
             usage=task_result.usage,
             error=ErrorInfo(code="scorer_error", message=str(exc), retryable=False),
+            artifacts=task_result.artifacts,
             payload=task_result.payload,
         )
         _emit(
@@ -534,6 +553,7 @@ async def execute_trial(request: TrialRequest) -> TrialOutcome:
             timing=task_result.timing,
             usage=task_result.usage,
             error=task_result.error,
+            artifacts=task_result.artifacts,
             payload=task_result.payload,
         )
     _emit(
