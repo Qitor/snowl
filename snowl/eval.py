@@ -716,10 +716,12 @@ class _LiveEventsWriter:
                 "schema_version": RESULT_SCHEMA_VERSION,
                 "run_id": self._run_id,
                 "event_index": idx,
+                "seq": idx,
                 "event_id": event_id,
                 **dict(row),
             }
             event_row["event_index"] = idx
+            event_row["seq"] = idx
             event_row["event_id"] = event_id
             event_row["run_id"] = self._run_id
             self._fh.write(json.dumps(event_row, ensure_ascii=False) + "\n")
@@ -814,11 +816,13 @@ def _write_artifacts(
                 "schema_version": RESULT_SCHEMA_VERSION,
                 "run_id": run_id,
                 "event_index": event_index,
+                "seq": event_index,
                 "event_id": event_id,
                 **row_dict,
             }
             event_row["run_id"] = run_id
             event_row["event_index"] = event_index
+            event_row["seq"] = event_index
             event_row["event_id"] = event_id
             f.write(json.dumps(event_row, ensure_ascii=False) + "\n")
 

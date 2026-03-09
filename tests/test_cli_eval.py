@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-import sys
 
 from snowl.cli import main
 
@@ -207,6 +206,8 @@ scorer = S()
 
 
 def test_cli_web_monitor_missing_deps_returns_2(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setitem(sys.modules, "uvicorn", None)
+    import shutil
+
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
     rc = main(["web", "monitor", "--project", str(tmp_path)])
     assert rc == 2

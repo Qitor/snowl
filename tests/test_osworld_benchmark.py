@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
-from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -78,11 +77,41 @@ def test_gui_env_real_container_contract(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     posts: list[tuple[str, object]] = []
 
-    def fake_subprocess_run(cmd, capture_output=None, text=None, **kwargs):  # type: ignore[no-untyped-def]
-        calls.append(("run", " ".join(cmd)))
-        if cmd[:3] == ["docker", "run", "-d"]:
-            return SimpleNamespace(returncode=0, stdout="container-id-123\n", stderr="")
-        return SimpleNamespace(returncode=0, stdout="ok\n", stderr="")
+    class _Stream:
+        def __init__(self, text: str) -> None:
+            self._lines = text.splitlines(keepends=True)
+            self._idx = 0
+
+        def readline(self) -> str:  # type: ignore[no-untyped-def]
+            if self._idx >= len(self._lines):
+                return ""
+            value = self._lines[self._idx]
+            self._idx += 1
+            return value
+
+        def close(self) -> None:
+            return None
+
+    class _FakePopen:
+        def __init__(self, cmd, **kwargs):  # type: ignore[no-untyped-def]
+            _ = kwargs
+            calls.append(("run", " ".join(cmd)))
+            if cmd[:3] == ["docker", "run", "-d"]:
+                stdout_text = "container-id-123\n"
+            else:
+                stdout_text = "ok\n"
+            self.returncode = 0
+            self.stdout = _Stream(stdout_text)
+            self.stderr = _Stream("")
+
+        def poll(self):  # type: ignore[no-untyped-def]
+            return self.returncode
+
+        def wait(self):  # type: ignore[no-untyped-def]
+            return self.returncode
+
+        def kill(self) -> None:
+            self.returncode = -9
 
     class FakeResp:
         def __init__(
@@ -119,7 +148,7 @@ def test_gui_env_real_container_contract(monkeypatch) -> None:
             return FakeResp(200, content=b"mp4")
         return FakeResp(200, text="{\"status\":\"ok\"}")
 
-    monkeypatch.setattr("subprocess.run", fake_subprocess_run)
+    monkeypatch.setattr("subprocess.Popen", lambda cmd, **kwargs: _FakePopen(cmd, **kwargs))
     monkeypatch.setattr("requests.get", fake_get)
     monkeypatch.setattr("requests.post", fake_post)
 

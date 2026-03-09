@@ -35,8 +35,11 @@ class ResourceScheduler:
             max_model_calls=_normalize_limit(max_model_calls),
         )
         self._trial_sem: asyncio.Semaphore | None = None
+        self._trial_loop: asyncio.AbstractEventLoop | None = None
         self._sandbox_sem: asyncio.Semaphore | None = None
+        self._sandbox_loop: asyncio.AbstractEventLoop | None = None
         self._model_call_sem: asyncio.Semaphore | None = None
+        self._model_call_loop: asyncio.AbstractEventLoop | None = None
         self._build_sem: threading.BoundedSemaphore | None = (
             threading.BoundedSemaphore(self._limits.max_builds)
             if self._limits.max_builds is not None
@@ -100,22 +103,28 @@ class ResourceScheduler:
     def _get_trial_sem(self) -> asyncio.Semaphore | None:
         if self._limits.max_trials is None:
             return None
-        if self._trial_sem is None:
+        loop = asyncio.get_running_loop()
+        if self._trial_sem is None or self._trial_loop is not loop:
             self._trial_sem = asyncio.Semaphore(self._limits.max_trials)
+            self._trial_loop = loop
         return self._trial_sem
 
     def _get_sandbox_sem(self) -> asyncio.Semaphore | None:
         if self._limits.max_sandboxes is None:
             return None
-        if self._sandbox_sem is None:
+        loop = asyncio.get_running_loop()
+        if self._sandbox_sem is None or self._sandbox_loop is not loop:
             self._sandbox_sem = asyncio.Semaphore(self._limits.max_sandboxes)
+            self._sandbox_loop = loop
         return self._sandbox_sem
 
     def _get_model_call_sem(self) -> asyncio.Semaphore | None:
         if self._limits.max_model_calls is None:
             return None
-        if self._model_call_sem is None:
+        loop = asyncio.get_running_loop()
+        if self._model_call_sem is None or self._model_call_loop is not loop:
             self._model_call_sem = asyncio.Semaphore(self._limits.max_model_calls)
+            self._model_call_loop = loop
         return self._model_call_sem
 
 

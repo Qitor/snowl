@@ -65,11 +65,14 @@ def test_eval_manifest_and_events_include_experiment_and_event_id(tmp_path: Path
     assert lines
     assert all("event_id" in row for row in lines)
     assert all("experiment_id" in row for row in lines)
+    assert all("seq" in row for row in lines)
     assert {row["experiment_id"] for row in lines} == {"exp-demo"}
 
     indexes = [int(row["event_index"]) for row in lines]
+    seqs = [int(row["seq"]) for row in lines]
     assert indexes == sorted(indexes)
     assert indexes[0] == 1
+    assert seqs == indexes
 
 
 def test_pretask_event_normalization_from_container_and_command_events() -> None:

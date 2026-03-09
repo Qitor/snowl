@@ -109,7 +109,7 @@ class GuiEnv:
         out = {
             "event": "gui.container.start",
             "command": list(started.get("command") or []),
-            "exit_code": int(started.get("exit_code", 1) or 1),
+            "exit_code": int(started.get("exit_code", 1) if started.get("exit_code") is not None else 1),
             "stdout": str(started.get("stdout") or "").strip(),
             "stderr": str(started.get("stderr") or "").strip(),
             "started_at_ms": int(started.get("started_at_ms", 0) or 0),
@@ -144,7 +144,7 @@ class GuiEnv:
         out = {
             "event": "gui.container.stop",
             "container_id": self.container_id,
-            "exit_code": int(stopped.get("exit_code", 1) or 1),
+            "exit_code": int(stopped.get("exit_code", 1) if stopped.get("exit_code") is not None else 1),
             "stdout": str(stopped.get("stdout") or "").strip(),
             "stderr": str(stopped.get("stderr") or "").strip(),
         }
@@ -177,7 +177,7 @@ class GuiEnv:
             "event": "gui.container.logs",
             "container_id": self.container_id,
             "command": list(logs_out.get("command") or []),
-            "exit_code": int(logs_out.get("exit_code", 1) or 1),
+            "exit_code": int(logs_out.get("exit_code", 1) if logs_out.get("exit_code") is not None else 1),
             "stdout": str(logs_out.get("stdout") or "").strip(),
             "stderr": str(logs_out.get("stderr") or "").strip(),
         }

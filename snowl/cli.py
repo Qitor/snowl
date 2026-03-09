@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 from pathlib import Path
+import shutil
+import subprocess
 
 from snowl.bench import check_benchmark_conformance, list_benchmarks, run_benchmark
 from snowl.eval import run_eval
@@ -281,26 +284,42 @@ def _cmd_web_monitor(
     port: int,
     poll_interval_sec: float,
 ) -> int:
-    try:
-        import uvicorn  # type: ignore[import-not-found]
-    except Exception:
-        print("Web monitor requires uvicorn. Install with: pip install uvicorn fastapi")
+    app_dir = Path(__file__).resolve().parent.parent / "webui"
+    if not (app_dir / "package.json").exists():
+        print(f"Web monitor app not found: {app_dir}")
+        print("Expected Next.js app at ./webui.")
         return 2
-    try:
-        from snowl.web.app import create_app
-    except Exception as exc:
-        print(f"Web monitor unavailable: {exc}")
-        print("Install required deps with: pip install uvicorn fastapi")
+    if shutil.which("npm") is None:
+        print("Web monitor requires Node.js + npm.")
+        print("Install Node.js LTS, then run: cd webui && npm install")
         return 2
-    app = create_app(
-        project_dir=Path(project),
-        poll_interval_sec=float(poll_interval_sec),
-    )
+    if not (app_dir / "node_modules").exists():
+        print("Web monitor dependencies are missing.")
+        print("Install with: cd webui && npm install")
+        return 2
+    env = dict(os.environ)
+    env["SNOWL_PROJECT_DIR"] = str(Path(project).resolve())
+    env["SNOWL_POLL_INTERVAL_SEC"] = str(float(poll_interval_sec))
+    cmd = [
+        "npm",
+        "run",
+        "dev",
+        "--",
+        "--hostname",
+        str(host),
+        "--port",
+        str(int(port)),
+    ]
     try:
-        uvicorn.run(app, host=host, port=int(port), log_level="info")
+        completed = subprocess.run(
+            cmd,
+            cwd=str(app_dir),
+            env=env,
+            check=False,
+        )
+        return int(completed.returncode)
     except KeyboardInterrupt:
         return 130
-    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
