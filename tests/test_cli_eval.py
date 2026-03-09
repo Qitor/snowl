@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 from snowl.cli import main
@@ -157,3 +158,56 @@ def test_close_renderer_calls_close_method() -> None:
     r = _R()
     _close_renderer(r)
     assert r.closed is True
+
+
+def test_cli_eval_experiment_id_written_to_manifest(tmp_path: Path) -> None:
+    (tmp_path / "task.py").write_text(
+        """
+from snowl.core import EnvSpec, Task
+task = Task(task_id="t1", env_spec=EnvSpec(env_type="local"), sample_iter_factory=lambda: iter([{"id":"s1","input":"x"}]))
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "agent.py").write_text(
+        """
+from snowl.core import StopReason
+class A:
+    agent_id = "a1"
+    async def run(self, state, context, tools=None):
+        _ = (context, tools)
+        state.output = {"message":{"role":"assistant","content":"ok"}, "usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}, "trace_events":[]}
+        state.stop_reason = StopReason.COMPLETED
+        return state
+agent = A()
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "scorer.py").write_text(
+        """
+from snowl.core import Score
+class S:
+    scorer_id = "s1"
+    def score(self, task_result, trace, context):
+        _ = (task_result, trace, context)
+        return {"accuracy": Score(value=1.0)}
+scorer = S()
+""",
+        encoding="utf-8",
+    )
+
+    rc = main(["eval", str(tmp_path), "--no-ui", "--experiment-id", "exp-cli"])
+    assert rc == 0
+
+    runs_root = tmp_path / ".snowl" / "runs"
+    run_dirs = sorted([p for p in runs_root.iterdir() if p.is_dir() and p.name != "by_run_id"])
+    assert run_dirs
+    manifest = json.loads((run_dirs[-1] / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["experiment_id"] == "exp-cli"
+
+
+def test_cli_web_monitor_missing_deps_returns_2(monkeypatch, tmp_path: Path) -> None:
+    import shutil
+
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    rc = main(["web", "monitor", "--project", str(tmp_path)])
+    assert rc == 2

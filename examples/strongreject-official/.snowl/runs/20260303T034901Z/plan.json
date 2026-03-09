@@ -1,0 +1,14 @@
+{
+  "mode": "single",
+  "task_ids": [
+    "strongreject:test"
+  ],
+  "agent_ids": [
+    "chatagent_1_qwen_qwen2_5_7b_instruct"
+  ],
+  "variant_ids": [
+    "default"
+  ],
+  "sample_count": 50,
+  "trial_count": 50
+}

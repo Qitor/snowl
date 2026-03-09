@@ -81,6 +81,36 @@ def test_bench_list_cli(tmp_path: Path) -> None:
     assert rc == 0
 
 
+def test_bench_run_experiment_id_written_to_manifest(tmp_path: Path) -> None:
+    _write_project(tmp_path)
+    dataset = tmp_path / "bench.jsonl"
+    _write_jsonl(dataset)
+
+    rc = main(
+        [
+            "bench",
+            "run",
+            "jsonl",
+            "--project",
+            str(tmp_path),
+            "--split",
+            "test",
+            "--adapter-arg",
+            f"dataset_path={dataset}",
+            "--no-ui",
+            "--experiment-id",
+            "exp-bench",
+        ]
+    )
+    assert rc == 0
+    runs_root = tmp_path / ".snowl" / "runs"
+    run_dirs = sorted([p for p in runs_root.iterdir() if p.is_dir() and p.name != "by_run_id"])
+    assert run_dirs
+    manifest = json.loads((run_dirs[-1] / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["experiment_id"] == "exp-bench"
+    assert "--experiment-id exp-bench" in manifest["rerun_command"]
+
+
 def test_bench_run_keyboard_interrupt_prints_log_path(tmp_path: Path, monkeypatch, capsys) -> None:
     _write_project(tmp_path)
     runs = tmp_path / ".snowl" / "runs" / "run-20260303T110500Z"

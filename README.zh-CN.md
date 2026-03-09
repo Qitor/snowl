@@ -339,6 +339,8 @@ Runtime 分层：
   - 跑 adapter 一致性检查
 - `snowl examples check [examples_dir]`
   - 检查 examples 布局规范
+- `snowl web monitor --project <path>`
+  - 启动基于 Next.js 的 Web 观测台（SSE 实时流 + experiment 聚合）
 
 常用参数：
 

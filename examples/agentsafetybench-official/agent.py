@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -12,6 +11,7 @@ from snowl.benchmarks.agentsafetybench import (
     persist_agentsafetybench_trajectory,
 )
 from snowl.core import AgentContext, AgentState, StopReason, agent as declare_agent
+from snowl.utils.env import env_bool, env_float, env_int, env_str
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -23,25 +23,16 @@ DEFAULT_MAX_TOKENS = 8192
 DEFAULT_MAX_ROUNDS = 10
 
 
-def _env_str(name: str, default: str = "") -> str:
-    return str(os.getenv(name, default)).strip()
-
-
-def _env_optional_int(name: str) -> int | None:
-    raw = _env_str(name)
-    return int(raw) if raw else None
-
-
 @dataclass
 class AgentSafetyBenchOfficialAgent:
     agent_id: str = "agentsafetybench_official_agent"
-    model_name: str = field(default_factory=lambda: _env_str("SNOWL_AGENTSAFETYBENCH_MODEL", DEFAULT_MODEL_NAME))
-    api_key: str | None = field(default_factory=lambda: (_env_str("SNOWL_AGENTSAFETYBENCH_API_KEY") or DEFAULT_API_KEY))
-    base_url: str | None = field(default_factory=lambda: (_env_str("SNOWL_AGENTSAFETYBENCH_BASE_URL") or DEFAULT_BASE_URL))
-    temperature: float = field(default_factory=lambda: float(_env_str("SNOWL_AGENTSAFETYBENCH_TEMPERATURE", str(DEFAULT_TEMPERATURE))))
-    max_tokens: int = field(default_factory=lambda: int(_env_str("SNOWL_AGENTSAFETYBENCH_MAX_TOKENS", str(DEFAULT_MAX_TOKENS))))
-    max_rounds: int = field(default_factory=lambda: int(_env_str("SNOWL_AGENTSAFETYBENCH_MAX_ROUNDS", str(DEFAULT_MAX_ROUNDS))))
-    allow_empty: bool = field(default_factory=lambda: _env_str("SNOWL_AGENTSAFETYBENCH_ALLOW_EMPTY", "0").lower() in {"1", "true", "yes", "on"})
+    model_name: str = field(default_factory=lambda: env_str("SNOWL_AGENTSAFETYBENCH_MODEL", DEFAULT_MODEL_NAME))
+    api_key: str | None = field(default_factory=lambda: (env_str("SNOWL_AGENTSAFETYBENCH_API_KEY") or DEFAULT_API_KEY))
+    base_url: str | None = field(default_factory=lambda: (env_str("SNOWL_AGENTSAFETYBENCH_BASE_URL", DEFAULT_BASE_URL) or DEFAULT_BASE_URL))
+    temperature: float = field(default_factory=lambda: env_float("SNOWL_AGENTSAFETYBENCH_TEMPERATURE", DEFAULT_TEMPERATURE))
+    max_tokens: int = field(default_factory=lambda: env_int("SNOWL_AGENTSAFETYBENCH_MAX_TOKENS", DEFAULT_MAX_TOKENS))
+    max_rounds: int = field(default_factory=lambda: env_int("SNOWL_AGENTSAFETYBENCH_MAX_ROUNDS", DEFAULT_MAX_ROUNDS))
+    allow_empty: bool = field(default_factory=lambda: env_bool("SNOWL_AGENTSAFETYBENCH_ALLOW_EMPTY"))
     _agent_api: Any = field(default=None, init=False, repr=False)
 
     def _ensure_agent_api(self) -> Any:

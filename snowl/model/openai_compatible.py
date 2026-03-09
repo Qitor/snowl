@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 import httpx
 
@@ -100,6 +100,7 @@ class OpenAICompatibleChatClient:
 
     _global_model_call_limit: int | None = None
     _global_model_call_semaphore: asyncio.Semaphore | None = None
+    _global_model_call_slot_factory: Callable[[], Any] | None = None
 
     def __init__(
         self,
@@ -124,8 +125,20 @@ class OpenAICompatibleChatClient:
     def set_global_model_call_limit(cls, limit: int | None) -> None:
         cls._global_model_call_limit = None if limit is None else max(1, int(limit))
         cls._global_model_call_semaphore = None
+        cls._global_model_call_slot_factory = None
+
+    @classmethod
+    def set_global_model_call_slot_factory(
+        cls,
+        factory: Callable[[], Any] | None,
+    ) -> None:
+        cls._global_model_call_slot_factory = factory
+        cls._global_model_call_limit = None
+        cls._global_model_call_semaphore = None
 
     async def _acquire_model_slot(self):
+        if self.__class__._global_model_call_slot_factory is not None:
+            return self.__class__._global_model_call_slot_factory()
         if self._global_model_call_limit is None:
             return _NullAsyncContext()
         if self.__class__._global_model_call_semaphore is None:

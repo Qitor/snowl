@@ -1,0 +1,20 @@
+{
+  "phase_timing_ms": {
+    "run_total": 3
+  },
+  "controls": {
+    "max_trials": 1,
+    "max_sandboxes": 1,
+    "max_builds": 1,
+    "max_model_calls": 4
+  },
+  "throughput": {
+    "trial_count": 25,
+    "trials_per_sec": 8333.333333333334
+  },
+  "failure_diagnostics": {
+    "error": 25,
+    "limit_exceeded": 0,
+    "cancelled": 0
+  }
+}

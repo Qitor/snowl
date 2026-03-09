@@ -1,0 +1,8 @@
+{
+  "schema_version": "v1",
+  "result_schema_uri": "snowl://schemas/results/v1",
+  "aggregate_schema_uri": "snowl://schemas/aggregate/v1",
+  "created_at_utc": "20260303T002853Z",
+  "rerun_command": "snowl eval /Users/morinop/coding/snowl_v2/examples/terminalbench-official",
+  "diagnostics_count": 0
+}

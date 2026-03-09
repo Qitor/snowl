@@ -315,6 +315,7 @@ Main commands:
 - `snowl bench list`: list adapters
 - `snowl bench check <benchmark>`: adapter conformance checks
 - `snowl examples check [examples_dir]`: validate example layout
+- `snowl web monitor --project <path>`: start Next.js-based Web observability UI (SSE + experiment aggregation)
 
 Useful eval flags:
 

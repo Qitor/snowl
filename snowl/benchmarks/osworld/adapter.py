@@ -2,23 +2,29 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from snowl.benchmarks.base import BenchmarkInfo
-from snowl.core import EnvSpec, SandboxSpec, Task
-from snowl.errors import SnowlValidationError
+from snowl.benchmarks.base_adapter import BaseBenchmarkAdapter
+from snowl.benchmarks.utils import (
+    default_reference_path,
+    ensure_path_exists,
+    read_json_object,
+)
+from snowl.core import EnvSpec, SandboxSpec
 
 
 def _default_dataset_path() -> str:
-    root = Path(__file__).resolve().parents[3]
-    return str(root / "references" / "OSWorld" / "evaluation_examples")
+    return default_reference_path(
+        __file__,
+        "OSWorld",
+        "evaluation_examples",
+    )
 
 
 @dataclass(frozen=True)
-class OSWorldBenchmarkAdapter:
+class OSWorldBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
     dataset_path: str = _default_dataset_path()
     name: str = "osworld"
     description: str = "OSWorld benchmark adapter."
@@ -26,24 +32,19 @@ class OSWorldBenchmarkAdapter:
     default_split: str = "test"
     test_all_meta_path: str = "test_all.json"
 
-    @property
-    def info(self) -> BenchmarkInfo:
-        return BenchmarkInfo(name=self.name, description=self.description)
-
     def _dataset_root(self) -> Path:
-        root = Path(self.dataset_path)
-        if not root.exists():
-            raise SnowlValidationError(f"OSWorld dataset path not found: {root}")
-        return root
+        return ensure_path_exists(
+            self.dataset_path,
+            not_found_message="OSWorld dataset path not found",
+        )
 
     def _test_all(self) -> dict[str, list[str]]:
         root = self._dataset_root()
-        path = root / self.test_all_meta_path
-        if not path.exists():
-            raise SnowlValidationError(f"OSWorld test_all file not found: {path}")
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise SnowlValidationError(f"OSWorld test_all format invalid: {path}")
+        data = read_json_object(
+            root / self.test_all_meta_path,
+            not_found_message="OSWorld test_all file not found",
+            invalid_message="OSWorld test_all format invalid",
+        )
         out: dict[str, list[str]] = {}
         for domain, ids in data.items():
             if not isinstance(ids, list):
@@ -51,116 +52,111 @@ class OSWorldBenchmarkAdapter:
             out[str(domain)] = [str(x) for x in ids]
         return out
 
-    def list_splits(self) -> list[str]:
-        splits: set[str] = set()
+    def _iter_rows(self) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
         root = self._dataset_root()
         for domain, ids in self._test_all().items():
             for example_id in ids:
                 file_path = root / "examples" / domain / f"{example_id}.json"
                 if not file_path.exists():
                     continue
-                example = json.loads(file_path.read_text(encoding="utf-8"))
-                split = str(example.get(self.split_field) or self.default_split).strip()
-                splits.add(split or self.default_split)
-        return sorted(splits) if splits else [self.default_split]
-
-    def load_tasks(
-        self,
-        *,
-        split: str,
-        limit: int | None = None,
-        filters: dict[str, Any] | None = None,
-    ) -> list[Task]:
-        filters = filters or {}
-        root = self._dataset_root()
-        selected: list[dict[str, Any]] = []
-
-        for domain, ids in self._test_all().items():
-            for example_id in ids:
-                file_path = root / "examples" / domain / f"{example_id}.json"
-                if not file_path.exists():
-                    continue
-                example = json.loads(file_path.read_text(encoding="utf-8"))
-                row_split = str(example.get(self.split_field) or self.default_split).strip() or self.default_split
-                if row_split != split:
-                    continue
-                matched = True
-                for key, expected in filters.items():
-                    if key == "domain":
-                        value = domain
-                    elif key == "example_id":
-                        value = example_id
-                    else:
-                        value = example.get(key)
-                    if str(value) != str(expected):
-                        matched = False
-                        break
-                if not matched:
-                    continue
-
-                instruction = str(example.get("instruction") or "").strip()
-                if not instruction:
-                    continue
-                metadata = {
-                    "domain": domain,
-                    "example_id": example_id,
-                    "osworld_task_id": str(example.get("id") or example_id),
-                    "split": row_split,
-                    "instruction": instruction,
-                    "snapshot": example.get("snapshot"),
-                    "proxy": bool(example.get("proxy", False)),
-                    "related_apps": list(example.get("related_apps") or []),
-                    "config": list(example.get("config") or []),
-                    "trajectory": list(example.get("trajectory") or []),
-                    "evaluator": example.get("evaluator"),
-                    "source": example.get("source"),
-                    "example_path": str(file_path),
-                    "task_config": dict(example),
-                }
-                selected.append(
+                example = read_json_object(
+                    file_path,
+                    not_found_message="OSWorld example file not found",
+                    invalid_message="OSWorld example format invalid",
+                )
+                rows.append(
                     {
-                        "id": f"osw-{domain}-{example_id}",
-                        "input": instruction,
-                        "metadata": metadata,
+                        "domain": domain,
+                        "example_id": example_id,
+                        "file_path": file_path,
+                        "example": example,
                     }
                 )
-                if limit is not None and len(selected) >= limit:
-                    break
-            if limit is not None and len(selected) >= limit:
-                break
+        return rows
 
-        if not selected:
-            raise SnowlValidationError(
-                f"No OSWorld samples loaded for split='{split}' in {root}."
-            )
+    def _row_split(self, row: dict[str, Any], *, row_index: int) -> str:
+        _ = row_index
+        example = dict(row.get("example") or {})
+        return str(example.get(self.split_field) or self.default_split)
 
-        task = Task(
-            task_id=f"{self.name}:{split}",
-            env_spec=EnvSpec(
-                env_type="gui",
-                provided_ops=(
-                    "gui.action",
-                    "gui.click",
-                    "gui.type",
-                    "gui.key",
-                    "gui.scroll",
-                    "gui.observe",
-                    "gui.wait",
-                    "gui.terminate",
-                ),
-                sandbox_spec=SandboxSpec(
-                    provider="docker",
-                    image="happysixd/osworld-docker",
-                    metadata={"benchmark": "osworld"},
-                ),
+    def _row_filter_value(self, row: dict[str, Any], key: str) -> Any:
+        if key == "domain":
+            return row.get("domain")
+        if key == "example_id":
+            return row.get("example_id")
+        example = dict(row.get("example") or {})
+        return example.get(key)
+
+    def _row_to_sample(
+        self,
+        row: dict[str, Any],
+        *,
+        row_index: int,
+        row_split: str,
+        selected_count: int,
+    ) -> dict[str, Any] | None:
+        _ = (row_index, selected_count)
+        domain = str(row.get("domain"))
+        example_id = str(row.get("example_id"))
+        file_path = row.get("file_path")
+        example = dict(row.get("example") or {})
+
+        instruction = str(example.get("instruction") or "").strip()
+        if not instruction:
+            return None
+
+        metadata = {
+            "domain": domain,
+            "example_id": example_id,
+            "osworld_task_id": str(example.get("id") or example_id),
+            "split": row_split,
+            "instruction": instruction,
+            "snapshot": example.get("snapshot"),
+            "proxy": bool(example.get("proxy", False)),
+            "related_apps": list(example.get("related_apps") or []),
+            "config": list(example.get("config") or []),
+            "trajectory": list(example.get("trajectory") or []),
+            "evaluator": example.get("evaluator"),
+            "source": example.get("source"),
+            "example_path": str(file_path),
+            "task_config": dict(example),
+        }
+        return {
+            "id": f"osw-{domain}-{example_id}",
+            "input": instruction,
+            "metadata": metadata,
+        }
+
+    def _env_spec(self) -> EnvSpec:
+        return EnvSpec(
+            env_type="gui",
+            provided_ops=(
+                "gui.action",
+                "gui.click",
+                "gui.type",
+                "gui.key",
+                "gui.scroll",
+                "gui.observe",
+                "gui.wait",
+                "gui.terminate",
             ),
-            sample_iter_factory=lambda: iter(selected),
-            metadata={
-                "benchmark": self.name,
-                "split": split,
-                "dataset_path": str(root),
-                "test_all_meta_path": str(root / self.test_all_meta_path),
-            },
+            sandbox_spec=SandboxSpec(
+                provider="docker",
+                image="happysixd/osworld-docker",
+                metadata={"benchmark": "osworld"},
+            ),
         )
-        return [task]
 
+    def _task_metadata(self, *, split: str, selected_count: int) -> dict[str, Any]:
+        _ = selected_count
+        root = self._dataset_root()
+        return {
+            "benchmark": self.name,
+            "split": split,
+            "dataset_path": str(root),
+            "test_all_meta_path": str(root / self.test_all_meta_path),
+        }
+
+    def _no_samples_error(self, split: str) -> str:
+        return f"No OSWorld samples loaded for split='{split}' in {self._dataset_root()}."

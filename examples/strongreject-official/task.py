@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from snowl.benchmarks.example_task import load_single_task
 from snowl.benchmarks.strongreject import StrongRejectBenchmarkAdapter
 from snowl.core import Task, task as declare_task
 
@@ -13,7 +14,7 @@ AIM_PATH = ROOT / "references" / "strongreject" / "strongreject" / "AIM.txt"
 @declare_task()
 def task() -> Task:
     adapter = StrongRejectBenchmarkAdapter(dataset_path=str(DATASET_PATH))
-    base_task = adapter.load_tasks(split="test", limit=50)[0]
+    base_task = load_single_task(adapter, split="test", limit=50)
     aim_template = AIM_PATH.read_text(encoding="utf-8")
 
     def _aim_wrapped_samples():

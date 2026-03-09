@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 from pathlib import Path
+import shutil
+import subprocess
 
 from snowl.bench import check_benchmark_conformance, list_benchmarks, run_benchmark
 from snowl.eval import run_eval
@@ -94,6 +97,7 @@ def _cmd_eval(
     ui_theme: str | None,
     ui_mode: str | None,
     ui_no_banner: bool,
+    experiment_id: str | None,
 ) -> int:
     renderer = None
     if not no_ui:
@@ -130,6 +134,7 @@ def _cmd_eval(
                 max_sandboxes=max_sandboxes,
                 max_builds=max_builds,
                 max_model_calls=max_model_calls,
+                experiment_id=experiment_id,
             )
         )
     except KeyboardInterrupt:
@@ -207,6 +212,7 @@ def _cmd_bench_run(
     ui_theme: str | None,
     ui_mode: str | None,
     ui_no_banner: bool,
+    experiment_id: str | None,
 ) -> int:
     renderer = None
     if not no_ui:
@@ -238,6 +244,7 @@ def _cmd_bench_run(
                 max_sandboxes=max_sandboxes,
                 max_builds=max_builds,
                 max_model_calls=max_model_calls,
+                experiment_id=experiment_id,
             )
         )
     except KeyboardInterrupt:
@@ -270,6 +277,51 @@ def _cmd_examples_check(path: str) -> int:
     return 0 if report.ok else 1
 
 
+def _cmd_web_monitor(
+    *,
+    project: str,
+    host: str,
+    port: int,
+    poll_interval_sec: float,
+) -> int:
+    app_dir = Path(__file__).resolve().parent.parent / "webui"
+    if not (app_dir / "package.json").exists():
+        print(f"Web monitor app not found: {app_dir}")
+        print("Expected Next.js app at ./webui.")
+        return 2
+    if shutil.which("npm") is None:
+        print("Web monitor requires Node.js + npm.")
+        print("Install Node.js LTS, then run: cd webui && npm install")
+        return 2
+    if not (app_dir / "node_modules").exists():
+        print("Web monitor dependencies are missing.")
+        print("Install with: cd webui && npm install")
+        return 2
+    env = dict(os.environ)
+    env["SNOWL_PROJECT_DIR"] = str(Path(project).resolve())
+    env["SNOWL_POLL_INTERVAL_SEC"] = str(float(poll_interval_sec))
+    cmd = [
+        "npm",
+        "run",
+        "dev",
+        "--",
+        "--hostname",
+        str(host),
+        "--port",
+        str(int(port)),
+    ]
+    try:
+        completed = subprocess.run(
+            cmd,
+            cwd=str(app_dir),
+            env=env,
+            check=False,
+        )
+        return int(completed.returncode)
+    except KeyboardInterrupt:
+        return 130
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="snowl")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -296,6 +348,11 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser.add_argument("--max-sandboxes", type=int, default=None, help="Max concurrent sandboxes.")
     eval_parser.add_argument("--max-builds", type=int, default=None, help="Max concurrent container builds.")
     eval_parser.add_argument("--max-model-calls", type=int, default=None, help="Max concurrent model API calls.")
+    eval_parser.add_argument(
+        "--experiment-id",
+        default=None,
+        help="Optional experiment id for cross-run aggregation.",
+    )
     eval_parser.add_argument("--ui-refresh-ms", type=int, default=None, help="UI refresh interval in milliseconds.")
     eval_parser.add_argument("--ui-max-events", type=int, default=None, help="UI event buffer max entries.")
     eval_parser.add_argument("--ui-max-failures", type=int, default=None, help="UI failure buffer max entries.")
@@ -350,6 +407,11 @@ def build_parser() -> argparse.ArgumentParser:
     bench_run.add_argument("--max-sandboxes", type=int, default=None, help="Max concurrent sandboxes.")
     bench_run.add_argument("--max-builds", type=int, default=None, help="Max concurrent container builds.")
     bench_run.add_argument("--max-model-calls", type=int, default=None, help="Max concurrent model API calls.")
+    bench_run.add_argument(
+        "--experiment-id",
+        default=None,
+        help="Optional experiment id for cross-run aggregation.",
+    )
     bench_run.add_argument("--ui-refresh-ms", type=int, default=None, help="UI refresh interval in milliseconds.")
     bench_run.add_argument("--ui-max-events", type=int, default=None, help="UI event buffer max entries.")
     bench_run.add_argument("--ui-max-failures", type=int, default=None, help="UI failure buffer max entries.")
@@ -388,6 +450,19 @@ def build_parser() -> argparse.ArgumentParser:
     examples_check = examples_sub.add_parser("check", help="Validate examples folder layout.")
     examples_check.add_argument("path", nargs="?", default="examples", help="Examples root path.")
 
+    web_parser = sub.add_parser("web", help="Web monitor commands.")
+    web_sub = web_parser.add_subparsers(dest="web_command", required=True)
+    web_monitor = web_sub.add_parser("monitor", help="Start local web monitor (SSE).")
+    web_monitor.add_argument("--project", default=".", help="Project root path.")
+    web_monitor.add_argument("--host", default="127.0.0.1", help="Bind host.")
+    web_monitor.add_argument("--port", type=int, default=8765, help="Bind port.")
+    web_monitor.add_argument(
+        "--poll-interval-sec",
+        type=float,
+        default=0.5,
+        help="Background run discovery poll interval.",
+    )
+
     return parser
 
 
@@ -418,6 +493,7 @@ def main(argv: list[str] | None = None) -> int:
             ui_theme=args.ui_theme,
             ui_mode=args.ui_mode,
             ui_no_banner=args.ui_no_banner,
+            experiment_id=args.experiment_id,
         )
 
     if args.command == "bench":
@@ -447,6 +523,7 @@ def main(argv: list[str] | None = None) -> int:
                 ui_theme=args.ui_theme,
                 ui_mode=args.ui_mode,
                 ui_no_banner=args.ui_no_banner,
+                experiment_id=args.experiment_id,
             )
         if args.bench_command == "check":
             return _cmd_bench_check(args.benchmark, adapter_arg=args.adapter_arg)
@@ -454,6 +531,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "examples":
         if args.examples_command == "check":
             return _cmd_examples_check(str(Path(args.path)))
+
+    if args.command == "web":
+        if args.web_command == "monitor":
+            return _cmd_web_monitor(
+                project=str(Path(args.project)),
+                host=str(args.host),
+                port=int(args.port),
+                poll_interval_sec=float(args.poll_interval_sec),
+            )
 
     parser.print_help()
     return 2

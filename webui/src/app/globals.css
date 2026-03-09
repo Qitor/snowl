@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 165 50% 98%;
+  --foreground: 170 30% 14%;
+  --card: 0 0% 100%;
+  --card-foreground: 170 30% 14%;
+  --primary: 170 82% 34%;
+  --primary-foreground: 170 20% 96%;
+  --secondary: 200 65% 95%;
+  --secondary-foreground: 204 60% 28%;
+  --muted: 170 18% 93%;
+  --muted-foreground: 170 12% 40%;
+  --border: 168 28% 84%;
+  --input: 168 28% 84%;
+  --ring: 170 82% 34%;
+  --success: 150 65% 32%;
+  --warning: 37 90% 42%;
+  --danger: 6 72% 46%;
+  --radius: 0.8rem;
+}
+
+* {
+  @apply border-border;
+}
+
+body {
+  @apply bg-background text-foreground antialiased;
+  background-image:
+    radial-gradient(circle at 0% 0%, rgba(8, 145, 178, 0.16), transparent 35%),
+    radial-gradient(circle at 100% 0%, rgba(22, 163, 74, 0.13), transparent 30%),
+    linear-gradient(170deg, rgba(244, 255, 250, 0.8), rgba(239, 250, 255, 0.8));
+  min-height: 100vh;
+}
+
+.scroll-shadow {
+  mask-image: linear-gradient(to bottom, transparent, black 6%, black 94%, transparent);
+}

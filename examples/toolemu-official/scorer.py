@@ -1,24 +1,15 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from snowl.benchmarks.toolemu import ToolEmuScorer, build_tool_emu_llm
 from snowl.benchmarks.toolemu.runtime import persist_tool_emu_scores
 from snowl.core import scorer as declare_scorer
 from snowl.core import Score, ScoreContext, TaskResult
+from snowl.utils.env import env_optional_int, env_str
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
-
-
-def _env_str(name: str, default: str = "") -> str:
-    return str(os.getenv(name, default)).strip()
-
-
-def _env_optional_int(name: str) -> int | None:
-    raw = _env_str(name)
-    return int(raw) if raw else None
 
 
 class SavingToolEmuScorer(ToolEmuScorer):
@@ -59,9 +50,12 @@ class SavingToolEmuScorer(ToolEmuScorer):
 def scorer() -> ToolEmuScorer:
     evaluator_llm = build_tool_emu_llm(
         "evaluator",
-        model_name=_env_str("SNOWL_TOOLEMU_EVALUATOR_MODEL", "Qwen/Qwen3-8B"),
-        openai_api_key=(_env_str("SNOWL_TOOLEMU_EVALUATOR_API_KEY") or ""),
-        openai_api_base=(_env_str("SNOWL_TOOLEMU_EVALUATOR_BASE_URL") or "https://api.siliconflow.cn/v1"),
-        max_tokens=_env_optional_int("SNOWL_TOOLEMU_EVALUATOR_MAX_TOKENS"),
+        model_name=env_str("SNOWL_TOOLEMU_EVALUATOR_MODEL", "Qwen/Qwen3-8B"),
+        openai_api_key=(env_str("SNOWL_TOOLEMU_EVALUATOR_API_KEY") or ""),
+        openai_api_base=(
+            env_str("SNOWL_TOOLEMU_EVALUATOR_BASE_URL", "https://api.siliconflow.cn/v1")
+            or "https://api.siliconflow.cn/v1"
+        ),
+        max_tokens=env_optional_int("SNOWL_TOOLEMU_EVALUATOR_MAX_TOKENS"),
     )
     return SavingToolEmuScorer(evaluator_llm=evaluator_llm)
