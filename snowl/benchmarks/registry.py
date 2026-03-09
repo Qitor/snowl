@@ -6,11 +6,13 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from snowl.benchmarks.base import BenchmarkAdapter, BenchmarkInfo
+from snowl.benchmarks.agentsafetybench import AgentSafetyBenchBenchmarkAdapter
 from snowl.benchmarks.csv_adapter import CsvBenchmarkAdapter
 from snowl.benchmarks.jsonl_adapter import JsonlBenchmarkAdapter
 from snowl.benchmarks.osworld import OSWorldBenchmarkAdapter
 from snowl.benchmarks.strongreject import StrongRejectBenchmarkAdapter
 from snowl.benchmarks.terminalbench import TerminalBenchBenchmarkAdapter
+from snowl.benchmarks.toolemu import ToolEmuBenchmarkAdapter
 from snowl.errors import SnowlValidationError
 
 
@@ -53,6 +55,11 @@ def get_default_benchmark_registry() -> BenchmarkRegistry:
 def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> BenchmarkRegistry:
     registry = registry or get_default_benchmark_registry()
     registry.register(
+        name="agentsafetybench",
+        info=BenchmarkInfo(name="agentsafetybench", description="Agent-SafetyBench benchmark adapter."),
+        factory=lambda **kwargs: AgentSafetyBenchBenchmarkAdapter(**kwargs),
+    )
+    registry.register(
         name="jsonl",
         info=BenchmarkInfo(name="jsonl", description="Generic JSONL benchmark adapter."),
         factory=lambda **kwargs: JsonlBenchmarkAdapter(**kwargs),
@@ -76,6 +83,11 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
         name="osworld",
         info=BenchmarkInfo(name="osworld", description="OSWorld benchmark adapter."),
         factory=lambda **kwargs: OSWorldBenchmarkAdapter(**kwargs),
+    )
+    registry.register(
+        name="toolemu",
+        info=BenchmarkInfo(name="toolemu", description="ToolEmu benchmark adapter."),
+        factory=lambda **kwargs: ToolEmuBenchmarkAdapter(**kwargs),
     )
     return registry
 
