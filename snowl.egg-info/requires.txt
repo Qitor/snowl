@@ -1,9 +1,0 @@
-httpx>=0.25
-PyYAML>=6.0
-requests>=2.31
-rich>=13.7
-
-[dev]
-pytest>=8.0
-build>=1.0.0
-twine>=5.0.0

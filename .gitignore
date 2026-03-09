@@ -23,6 +23,10 @@ dist/
 *.egg-info/
 .eggs/
 pip-wheel-metadata/
+webui/.next/
+webui/node_modules/
+node_modules/
+.cache/
 
 # Virtual environments
 .venv/
