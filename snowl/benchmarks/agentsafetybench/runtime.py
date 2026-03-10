@@ -43,15 +43,16 @@ def _ensure_agentsafetybench_importable() -> None:
             sys.path.insert(0, candidate_str)
 
 
-def resolve_agentsafetybench_output_dir(project_dir: str | Path) -> Path:
-    explicit = str(os.getenv("SNOWL_AGENTSAFETYBENCH_OUTPUT_DIR", "")).strip()
-    if explicit:
-        root = Path(explicit)
+def resolve_agentsafetybench_output_dir(
+    project_dir: str | Path,
+    *,
+    output_dir: str | Path | None = None,
+    run_stamp: str | None = None,
+) -> Path:
+    if output_dir is not None:
+        root = Path(output_dir)
     else:
-        stamp = os.getenv("SNOWL_AGENTSAFETYBENCH_RUN_STAMP", "").strip()
-        if not stamp:
-            stamp = datetime.now(timezone.utc).strftime("run-%Y%m%dT%H%M%SZ")
-            os.environ["SNOWL_AGENTSAFETYBENCH_RUN_STAMP"] = stamp
+        stamp = str(run_stamp or "").strip() or datetime.now(timezone.utc).strftime("run-%Y%m%dT%H%M%SZ")
         root = Path(project_dir) / "outputs" / stamp
     root.mkdir(parents=True, exist_ok=True)
     (root / "trajectories").mkdir(parents=True, exist_ok=True)
@@ -65,8 +66,10 @@ def persist_agentsafetybench_trajectory(
     sample_id: str | None,
     case_id: Any,
     record: Mapping[str, Any],
+    output_dir: str | Path | None = None,
+    run_stamp: str | None = None,
 ) -> dict[str, str]:
-    out_dir = resolve_agentsafetybench_output_dir(project_dir)
+    out_dir = resolve_agentsafetybench_output_dir(project_dir, output_dir=output_dir, run_stamp=run_stamp)
     token = _safe_token(sample_id or str(case_id), "sample")
     json_path = out_dir / "trajectories" / f"{token}.json"
     with json_path.open("w", encoding="utf-8") as handle:
@@ -88,8 +91,10 @@ def persist_agentsafetybench_scores(
     sample_id: str | None,
     case_id: Any,
     scores: Mapping[str, Any],
+    output_dir: str | Path | None = None,
+    run_stamp: str | None = None,
 ) -> dict[str, str]:
-    out_dir = resolve_agentsafetybench_output_dir(project_dir)
+    out_dir = resolve_agentsafetybench_output_dir(project_dir, output_dir=output_dir, run_stamp=run_stamp)
     token = _safe_token(sample_id or str(case_id), "sample")
     json_path = out_dir / "scores" / f"{token}.json"
     with json_path.open("w", encoding="utf-8") as handle:

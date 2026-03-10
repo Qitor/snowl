@@ -1,14 +1,15 @@
 # toolemu-official
 
-Official-style ToolEmu example using Snowl's project-level model matrix authoring.
+Official-style ToolEmu example using Snowl's YAML-first multi-model authoring.
 
+Files:
+
+- `project.yml`: provider, tested models, judge model, eval code paths, runtime budgets, toolemu settings
 - `task.py`: loads ToolEmu cases from `references/ToolEmu/assets/all_cases.json`
-- `agent.py`: builds one tested ToolEmu agent per `agent_matrix.models` entry
+- `agent.py`: builds one tested ToolEmu agent per model entry
 - `scorer.py`: uses `judge.model` as the evaluator/support model
 
-## Setup
-
-Install ToolEmu and PromptCoder into the same environment as `snowl`:
+Setup:
 
 ```bash
 git clone https://github.com/ryoungj/ToolEmu.git
@@ -20,53 +21,23 @@ cd ../ToolEmu
 pip install -e .
 ```
 
-## Model authoring
-
-`model.yml` declares:
-
-```yaml
-provider:
-  kind: openai_compatible
-  base_url: https://api.openai.com/v1
-  api_key: sk-...
-  timeout: 30
-  max_retries: 2
-
-agent_matrix:
-  models:
-    - id: gpt4o_mini
-      model: gpt-4o-mini
-    - id: qwen3_32b
-      model: Qwen/Qwen3-32B
-
-judge:
-  model: gpt-4.1-mini
-```
-
-Semantics:
-
-- `agent_matrix.models` = tested ToolEmu agent models
-- `judge.model` = shared support model for simulator/evaluator roles
-
-## Run
+Run:
 
 ```bash
-snowl eval examples/toolemu-official
+snowl eval examples/toolemu-official/project.yml
 ```
 
 Benchmark mode:
 
 ```bash
-snowl bench run toolemu --project examples/toolemu-official --split official
+snowl bench run toolemu --project examples/toolemu-official/project.yml --split official
 ```
 
-Optional runtime knobs:
+Settings live in `project.yml` under `benchmarks.toolemu`, for example:
 
-```bash
-export SNOWL_TOOLEMU_SPLIT="official"
-export SNOWL_TOOLEMU_LIMIT=5
-export SNOWL_TOOLEMU_AGENT_TYPE="naive"
-export SNOWL_TOOLEMU_SIMULATOR_TYPE="adv_thought"
-export SNOWL_TOOLEMU_MAX_ITERATIONS=15
-export SNOWL_TOOLEMU_OUTPUT_DIR="/absolute/path/to/output_dir"
-```
+- `agent_type`
+- `simulator_type`
+- `max_iterations`
+- `verbose`
+
+`agent_matrix.models` are the tested models. `judge.model` is the shared simulator/evaluator support model.

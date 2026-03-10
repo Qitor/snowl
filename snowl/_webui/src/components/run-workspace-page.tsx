@@ -138,8 +138,9 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
   const [selectedTrialKey, setSelectedTrialKey] = useState("");
   const [taskSearch, setTaskSearch] = useState("");
   const [taskStatusFilter, setTaskStatusFilter] = useState("all");
+  const [taskAttentionOnly, setTaskAttentionOnly] = useState(false);
   const [runtimeSearch, setRuntimeSearch] = useState("");
-  const [runtimeEventFilter, setRuntimeEventFilter] = useState("all");
+  const [runtimeEventFilter, setRuntimeEventFilter] = useState("attention");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTrialKey, setDrawerTrialKey] = useState("");
 
@@ -202,6 +203,11 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
   const topIdentities = runSummary?.agents.slice(0, 8) || [];
   const selectedModels = runSummary?.models || runSnapshot?.models || [];
   const selectedVariantCount = runSummary?.variant_count || runSnapshot?.variant_count || 0;
+  const plannedTrials = Number(runSnapshot?.planned_trials || runSnapshot?.plan?.trial_count || progress.total || 0);
+  const plannedTaskCount = Number(runSnapshot?.planned_tasks || (Array.isArray(runSnapshot?.plan?.task_ids) ? runSnapshot?.plan?.task_ids.length : 0));
+  const scoredTrials = Number(runSummary?.scored_trials || runSnapshot?.scored_trials || 0);
+  const attentionTaskCount = Number(runSnapshot?.attention_task_count || 0);
+  const currentRunStatus = runSnapshot?.status || runSummary?.status || "running";
 
   const identityLookup = useMemo(() => {
     const byFull = new Map<string, IdentityOption>();
@@ -250,6 +256,13 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
   const filteredTaskRows = useMemo(() => {
     const q = taskSearch.trim().toLowerCase();
     return taskRows.filter((row) => {
+      const isAttention =
+        row.status === "error" ||
+        ((row.status === "running" || row.status === "scoring") && row.durationMs >= 45_000) ||
+        (currentRunStatus === "running" && row.status === "queued" && events.length > 0);
+      if (taskAttentionOnly && !isAttention) {
+        return false;
+      }
       if (taskStatusFilter !== "all" && row.status !== taskStatusFilter) {
         return false;
       }
@@ -265,8 +278,27 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
       }
       const haystack = `${row.trialKey} ${row.displayId} ${row.model || ""} ${row.taskId} ${row.agentId} ${row.variantId} ${row.sampleId} ${row.status}`.toLowerCase();
       return haystack.includes(q);
+    }).sort((lhs, rhs) => {
+      const rank = (row: EnrichedTaskRow) => {
+        if (row.status === "error") return 0;
+        if (row.status === "running" || row.status === "scoring") return 1;
+        if (row.status === "queued") return 2;
+        return 3;
+      };
+      const diff = rank(lhs) - rank(rhs);
+      if (diff !== 0) {
+        return diff;
+      }
+      const lhsDuration = Number(lhs.durationMs || 0);
+      const rhsDuration = Number(rhs.durationMs || 0);
+      if (lhs.status === "running" || lhs.status === "scoring" || rhs.status === "running" || rhs.status === "scoring") {
+        if (rhsDuration !== lhsDuration) {
+          return rhsDuration - lhsDuration;
+        }
+      }
+      return lhs.trialKey.localeCompare(rhs.trialKey);
     });
-  }, [taskRows, taskSearch, taskStatusFilter, identityFilter]);
+  }, [taskRows, taskSearch, taskStatusFilter, identityFilter, taskAttentionOnly, currentRunStatus, events.length]);
 
   const filteredRuntimeEvents = useMemo(() => {
     const q = runtimeSearch.trim().toLowerCase();
@@ -284,10 +316,26 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
         identityLookup.byAgentVariant.get(eventIdentityPrefix)?.display_id ||
         makeDisplayId({ agent_id: agentId, variant_id: variantId, model });
 
+      if (runtimeEventFilter === "all" && eventName === "ui.heartbeat") {
+        return false;
+      }
       if (identityFilter !== "all" && eventIdentityKey !== identityFilter && eventIdentityPrefix !== normalizedIdentityPrefix) {
         return false;
       }
       if (runtimeEventFilter !== "all") {
+        if (runtimeEventFilter === "attention") {
+          const hasError =
+            eventName.includes("error") ||
+            eventName.includes("failed") ||
+            eventName.startsWith("pretask.") ||
+            eventName.startsWith("runtime.env.") ||
+            message.includes("error") ||
+            message.includes("failed") ||
+            message.includes("timeout");
+          if (!hasError) {
+            return false;
+          }
+        }
         if (runtimeEventFilter === "pretask" && !eventName.startsWith("pretask.")) {
           return false;
         }
@@ -340,8 +388,15 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
 
   const runTitle = runSnapshot?.run_id || runSummary?.run_id || runId;
   const benchmark = runSnapshot?.benchmark || runSummary?.benchmark || "-";
-  const status = runSnapshot?.status || runSummary?.status || "running";
+  const status = currentRunStatus;
   const updatedAt = runSnapshot?.updated_at_ms;
+
+  useEffect(() => {
+    if (!runSnapshot?.status && !runSummary?.status) {
+      return;
+    }
+    setActiveTab(status === "running" ? "tasks" : "overview");
+  }, [status, runId, runSnapshot?.status, runSummary?.status]);
 
   const runMetadataCard = (
     <Card className="rounded-[28px] border-white/80 bg-white/92 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
@@ -384,11 +439,13 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
 
   const taskMonitorCard = (
     <Card className="rounded-[28px] border-white/80 bg-white/92 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
-      <CardHeader>
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <CardTitle className="text-3xl tracking-tight">Tasks</CardTitle>
-            <CardDescription className="text-base leading-7">先筛选模型与状态，再进入具体 trial 细节，避免在大 run 里迷路。</CardDescription>
+        <CardHeader>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <CardTitle className="text-3xl tracking-tight">Tasks</CardTitle>
+            <CardDescription className="text-base leading-7">
+              当前计划 {plannedTrials} 个 trials / {plannedTaskCount || "-"} 个 tasks{attentionTaskCount > 0 ? `，其中 ${attentionTaskCount} 个需要优先关注` : ""}，先筛选模型与状态，再进入具体 trial 细节。
+            </CardDescription>
           </div>
           <Button size="sm" variant="outline" onClick={() => snapshotQuery.refetch()}>
             <RefreshCw className="mr-1 h-4 w-4" />
@@ -397,7 +454,7 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="grid gap-2 rounded-[24px] border bg-muted/20 p-3 md:grid-cols-[minmax(0,1fr)_240px_220px_auto]">
+        <div className="sticky top-3 z-10 grid gap-2 rounded-[24px] border bg-white/95 p-3 shadow-sm backdrop-blur md:grid-cols-[minmax(0,1fr)_240px_220px_auto_auto]">
           <Input
             value={taskSearch}
             onChange={(event) => setTaskSearch(event.target.value)}
@@ -420,9 +477,18 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
             <option value="all">all status</option>
             <option value="queued">queued</option>
             <option value="running">running</option>
+            <option value="scoring">scoring</option>
             <option value="success">success</option>
             <option value="error">error</option>
           </Select>
+          <Button
+            type="button"
+            variant={taskAttentionOnly ? "default" : "outline"}
+            className="h-11 rounded-xl"
+            onClick={() => setTaskAttentionOnly((value) => !value)}
+          >
+            {taskAttentionOnly ? "Attention only on" : "Attention only"}
+          </Button>
           <div className="flex items-center rounded-xl border bg-white px-3 text-sm text-muted-foreground">
             matched {filteredTaskRows.length}/{taskRows.length}
           </div>
@@ -437,22 +503,27 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
                   ? "danger"
                   : row.status === "running"
                     ? "warning"
+                    : row.status === "scoring"
+                    ? "warning"
                     : "outline") as "success" | "danger" | "warning" | "outline";
+              const longRunning = (row.status === "running" || row.status === "scoring") && row.durationMs >= 45_000;
               return (
                 <div
                   key={`${row.trialKey}-${item.index}`}
                   ref={taskVirtualizer.measureElement}
                   data-index={item.index}
-                  className={`absolute left-0 top-0 w-full border-b px-5 py-4 ${item.index % 2 === 0 ? "bg-white/70" : "bg-slate-50/55"}`}
+                  className={`absolute left-0 top-0 w-full border-b px-5 py-4 ${row.status === "error" ? "bg-rose-50/80" : longRunning ? "bg-amber-50/80" : item.index % 2 === 0 ? "bg-white/70" : "bg-slate-50/55"}`}
                   style={{ transform: `translateY(${item.start}px)` }}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1 space-y-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="font-semibold text-lg leading-7">{row.displayId}</div>
-                        <Badge variant={statusVariant}>{row.status}</Badge>
-                        {row.model ? <Badge variant="outline">{row.model}</Badge> : null}
-                      </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="font-semibold text-lg leading-7">{row.displayId}</div>
+                          <Badge variant={statusVariant}>{row.status}</Badge>
+                          {row.model ? <Badge variant="outline">{row.model}</Badge> : null}
+                          {longRunning ? <Badge variant="warning">long-running</Badge> : null}
+                          {row.status === "scoring" ? <Badge variant="outline">in scorer</Badge> : null}
+                        </div>
                       <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground md:text-base">
                         <span className="font-[family-name:var(--font-mono)]">task={row.taskId}</span>
                         <span className="font-[family-name:var(--font-mono)]">variant={row.variantId}</span>
@@ -526,6 +597,7 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
             onChange={(event) => setRuntimeEventFilter(event.target.value)}
             className="h-11 rounded-xl bg-white text-base"
           >
+            <option value="attention">attention only</option>
             <option value="all">all events</option>
             <option value="pretask">pretask.*</option>
             <option value="trial">trial/task</option>
@@ -708,9 +780,12 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
               <p className="mt-3 font-[family-name:var(--font-mono)] text-base break-all text-muted-foreground md:text-lg">{runTitle}</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Badge variant={status === "running" ? "warning" : "success"}>{status}</Badge>
+              <Badge variant={status === "running" ? "warning" : status === "cancelled" || progress.failed > 0 ? "danger" : "success"}>{status}</Badge>
               <Badge variant="outline">{benchmark}</Badge>
               <Badge variant="outline">variants {selectedVariantCount}</Badge>
+              {status === "running" && runSnapshot?.stalled ? <Badge variant="danger">no recent progress</Badge> : null}
+              {runSnapshot?.heartbeat_only ? <Badge variant="warning">heartbeat only</Badge> : null}
+              {attentionTaskCount > 0 ? <Badge variant="warning">{attentionTaskCount} tasks need attention</Badge> : null}
               {selectedModels.map((model) => (
                 <Badge key={model} variant="outline" className="max-w-[320px] truncate">
                   {model}
@@ -726,7 +801,7 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
               </div>
               <Badge variant={connected ? "success" : "warning"}>{connected ? "SSE connected" : "SSE reconnecting"}</Badge>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
               <div className="rounded-2xl border bg-muted/25 p-3">
                 <div className="text-sm text-muted-foreground">Events</div>
                 <div className="mt-2 text-3xl font-semibold">{events.length}</div>
@@ -734,6 +809,14 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
               <div className="rounded-2xl border bg-muted/25 p-3">
                 <div className="text-sm text-muted-foreground">Updated</div>
                 <div className="mt-2 text-base font-semibold">{formatDateTime(updatedAt)}</div>
+              </div>
+              <div className="rounded-2xl border bg-muted/25 p-3">
+                <div className="text-sm text-muted-foreground">Planned trials</div>
+                <div className="mt-2 text-3xl font-semibold">{plannedTrials}</div>
+              </div>
+              <div className="rounded-2xl border bg-muted/25 p-3">
+                <div className="text-sm text-muted-foreground">Visible tasks</div>
+                <div className="mt-2 text-3xl font-semibold">{runSnapshot?.visible_task_rows || taskRows.length}</div>
               </div>
             </div>
           </div>
@@ -747,7 +830,7 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
               <div>
                 <CardTitle className="text-3xl tracking-tight">Workspace</CardTitle>
                 <CardDescription className="text-base leading-7">
-                  updated={formatDateTime(updatedAt)} {runSummary?.experiment_id ? `| experiment=${runSummary.experiment_id}` : ""}
+                  updated={formatDateTime(updatedAt)} | planned={plannedTrials} trials{runSummary?.experiment_id ? ` | experiment=${runSummary.experiment_id}` : ""}
                 </CardDescription>
               </div>
               <div className="flex items-center gap-2">
@@ -764,9 +847,9 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
             </div>
             <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-3">
               {[
-                { key: "overview", label: "Overview", hint: "整体进度与模型分布" },
-                { key: "tasks", label: "Tasks", hint: `${taskRows.length} task rows` },
-                { key: "runtime", label: "Runtime Logs", hint: `${events.length} live events` },
+                { key: "overview", label: "Overview", hint: "整体进度、模型分布与总量" },
+                { key: "tasks", label: "Tasks", hint: `${filteredTaskRows.length}/${taskRows.length} task rows` },
+                { key: "runtime", label: "Runtime Logs", hint: `${runtimeEventFilter === "attention" ? "attention-first · " : ""}${filteredRuntimeEvents.length}/${events.length} live events` },
               ].map((tab) => {
                 const active = activeTab === tab.key;
                 return (
@@ -794,10 +877,12 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
             <Card className="rounded-[28px] border-white/80 bg-white/92 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
               <CardHeader>
                 <CardTitle className="text-3xl tracking-tight">Run Summary</CardTitle>
-                <CardDescription className="text-base leading-7">先看整体进度，再进入模型排名与任务矩阵，形成清晰的单 run 心智。</CardDescription>
+                <CardDescription className="text-base leading-7">
+                  Live summary based on scored trials. 整体进度和模型统计现在共用同一条运行中数据链。
+                </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="grid gap-3 md:grid-cols-5">
+                <div className="grid gap-3 md:grid-cols-6">
                   <div className="rounded-[24px] border bg-[linear-gradient(180deg,rgba(240,253,250,0.95),rgba(255,255,255,0.92))] p-4">
                     <div className="text-base text-muted-foreground">Overall Progress</div>
                     <div className="mt-2 text-4xl font-semibold">{formatPercent(completionRate)}</div>
@@ -821,6 +906,13 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
                     <div className="text-base text-muted-foreground">Variant Count</div>
                     <div className="mt-2 text-4xl font-semibold">{selectedVariantCount}</div>
                   </div>
+                  <div className="rounded-[24px] border bg-[linear-gradient(180deg,rgba(245,243,255,0.95),rgba(255,255,255,0.92))] p-4">
+                    <div className="text-base text-muted-foreground">Scored Trials</div>
+                    <div className="mt-2 text-4xl font-semibold">{scoredTrials}</div>
+                    <div className="mt-1 text-sm text-muted-foreground">
+                      {scoredTrials}/{plannedTrials || progress.total}
+                    </div>
+                  </div>
                 </div>
 
                 <div className="mt-5">
@@ -829,7 +921,11 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
                     Model Ranking
                   </div>
                   <div className="grid gap-2 md:grid-cols-2">
-                    {topIdentities.length === 0 ? (
+                    {scoredTrials === 0 ? (
+                      <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                        Waiting for first scored trial. 首个 scorer 结果到达后，这里的模型分数会开始实时波动。
+                      </div>
+                    ) : topIdentities.length === 0 ? (
                       <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">暂无 ranking 数据。</div>
                     ) : (
                       topIdentities.map((agent) => (
@@ -841,6 +937,9 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
                           <div className="mt-2 flex items-center justify-between text-base">
                             <span className="text-muted-foreground">rank score</span>
                             <span className="font-semibold">{agent.rank_score.toFixed(4)}</span>
+                          </div>
+                          <div className="mt-1 text-sm text-muted-foreground">
+                            score based on {Number(agent.scored_trials || 0)} scored trials
                           </div>
                         </div>
                       ))
@@ -854,9 +953,11 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
               <CardHeader>
                 <CardTitle className="text-3xl tracking-tight">Task Matrix</CardTitle>
                 <CardDescription className="text-base leading-7">
-                  {view === "variant-first"
-                    ? "按模型横向对比每个 task 的结果。"
-                    : "按 task 反向查看不同模型的表现差异。"}
+                  {scoredTrials === 0
+                    ? "Waiting for first scored trial. 当前矩阵会在第一个 scorer 结果出现后开始刷新。"
+                    : view === "variant-first"
+                      ? "按模型横向对比每个 task 的当前平均结果。"
+                      : "按 task 反向查看不同模型的当前平均表现。"}
                 </CardDescription>
               </CardHeader>
               <CardContent>

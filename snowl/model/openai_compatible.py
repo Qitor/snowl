@@ -20,6 +20,7 @@ class OpenAICompatibleConfig:
     model: str
     timeout: float = 30.0
     max_retries: int = 2
+    provider_id: str = "default"
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,7 @@ def load_openai_compatible_config(
         raise SnowlValidationError("'max_retries' must be >= 0.")
 
     return OpenAICompatibleConfig(
+        provider_id=str(cli_overrides.get("provider_id") or env.get("OPENAI_PROVIDER_ID") or "default").strip() or "default",
         base_url=base_url,
         api_key=api_key,
         model=model,
@@ -101,6 +103,7 @@ class OpenAICompatibleChatClient:
     _global_model_call_limit: int | None = None
     _global_model_call_semaphore: asyncio.Semaphore | None = None
     _global_model_call_slot_factory: Callable[[], Any] | None = None
+    _global_model_call_slot_resolver: Callable[[OpenAICompatibleConfig], Any] | None = None
 
     def __init__(
         self,
@@ -126,6 +129,7 @@ class OpenAICompatibleChatClient:
         cls._global_model_call_limit = None if limit is None else max(1, int(limit))
         cls._global_model_call_semaphore = None
         cls._global_model_call_slot_factory = None
+        cls._global_model_call_slot_resolver = None
 
     @classmethod
     def set_global_model_call_slot_factory(
@@ -135,8 +139,21 @@ class OpenAICompatibleChatClient:
         cls._global_model_call_slot_factory = factory
         cls._global_model_call_limit = None
         cls._global_model_call_semaphore = None
+        cls._global_model_call_slot_resolver = None
+
+    @classmethod
+    def set_global_model_call_slot_resolver(
+        cls,
+        resolver: Callable[[OpenAICompatibleConfig], Any] | None,
+    ) -> None:
+        cls._global_model_call_slot_resolver = resolver
+        cls._global_model_call_slot_factory = None
+        cls._global_model_call_limit = None
+        cls._global_model_call_semaphore = None
 
     async def _acquire_model_slot(self):
+        if self.__class__._global_model_call_slot_resolver is not None:
+            return self.__class__._global_model_call_slot_resolver(self._config)
         if self.__class__._global_model_call_slot_factory is not None:
             return self.__class__._global_model_call_slot_factory()
         if self._global_model_call_limit is None:

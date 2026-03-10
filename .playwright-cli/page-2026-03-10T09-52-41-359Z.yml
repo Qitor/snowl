@@ -1,0 +1,64 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - generic [ref=e7]:
+            - img [ref=e8]
+            - text: Run Gallery
+          - generic [ref=e10]:
+            - heading "Snowl Experiment Board" [level=1] [ref=e11]
+            - paragraph [ref=e12]: 先挑中这一次评测运行，再进入对应 workspace 看多模型结果、任务状态和实时日志。
+          - generic [ref=e13]: project=/Users/morinop/coding/snowl_v2/examples/strongreject-official
+        - generic [ref=e14]:
+          - generic [ref=e15]: monitor connected
+          - link "历史对比" [ref=e16] [cursor=pointer]:
+            - /url: /compare
+      - generic [ref=e17]:
+        - generic [ref=e18]:
+          - generic [ref=e19]:
+            - generic [ref=e20]:
+              - generic [ref=e21]: Running Now
+              - generic [ref=e22]: "0"
+            - img [ref=e24]
+          - generic [ref=e27]: 当前仍在进行中的评测
+        - generic [ref=e28]:
+          - generic [ref=e29]:
+            - generic [ref=e30]:
+              - generic [ref=e31]: Recent Complete
+              - generic [ref=e32]: "0"
+            - img [ref=e34]
+          - generic [ref=e37]: 已顺利完成的 runs
+        - generic [ref=e38]:
+          - generic [ref=e39]:
+            - generic [ref=e40]:
+              - generic [ref=e41]: Needs Attention
+              - generic [ref=e42]: "0"
+            - img [ref=e44]
+          - generic [ref=e46]: 包含错误或失败 trial
+        - generic [ref=e47]:
+          - generic [ref=e48]:
+            - generic [ref=e49]:
+              - generic [ref=e50]: Benchmarks
+              - generic [ref=e51]: "0"
+            - img [ref=e53]
+          - generic [ref=e55]: 当前项目下的 benchmark 种类
+    - generic [ref=e56]:
+      - generic [ref=e58]:
+        - generic [ref=e59]:
+          - generic [ref=e60]:
+            - heading "Run Gallery" [level=3] [ref=e61]
+            - paragraph [ref=e62]: 用 benchmark tabs 先收窄范围，再按状态过滤，快速锁定你想看的那次运行。
+          - generic [ref=e63]:
+            - button "Running" [ref=e64] [cursor=pointer]
+            - button "Needs attention" [ref=e65] [cursor=pointer]
+            - button "Completed" [ref=e66] [cursor=pointer]
+            - button "All" [ref=e67] [cursor=pointer]
+        - button "All benchmarks 0" [ref=e69] [cursor=pointer]:
+          - img [ref=e70]
+          - text: All benchmarks
+          - generic [ref=e72]: "0"
+      - generic [ref=e74]:
+        - heading "暂无符合条件的 runs" [level=3] [ref=e75]
+        - paragraph [ref=e76]: "试试切换 benchmark tabs 或状态筛选。监控目录仍然是 `/Users/morinop/coding/snowl_v2/examples/strongreject-official/.snowl/runs`。"
+  - alert [ref=e77]

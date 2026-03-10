@@ -42,8 +42,9 @@ from snowl.core.declarations import Declaration, get_declaration, has_declaratio
 from snowl.errors import SnowlValidationError
 from snowl.envs import WarmPoolSandboxRuntime
 from snowl.envs.terminal_env import set_compose_build_slot_factory
-from snowl.model import OpenAICompatibleChatClient, apply_project_judge_env, load_project_model_matrix
-from snowl.runtime import TrialOutcome, TrialRequest, execute_trial
+from snowl.model import OpenAICompatibleChatClient
+from snowl.project_config import ProjectCodeConfig, ProjectConfig, find_project_file, load_project_config
+from snowl.runtime import TrialOutcome, TrialRequest, execute_trial, execute_agent_phase, score_trial_phase
 from snowl.runtime.resource_scheduler import ResourceScheduler
 from snowl.ui.contracts import TaskMonitor, normalize_ui_event
 from snowl.ui.input import StdinInputPump
@@ -130,28 +131,36 @@ class ProjectComponents:
     tool_specs: list[ToolSpec]
 
 
-def _apply_model_config_env(base_dir: Path) -> dict[str, str]:
-    for name in ("model.yml", "model.yaml"):
-        if (base_dir / name).exists():
-            return apply_project_judge_env(base_dir)
-    return {}
+def _maybe_load_project_config(path: Path) -> ProjectConfig | None:
+    project_file = find_project_file(path)
+    if project_file is None:
+        return None
+    return load_project_config(project_file)
 
 
-def _build_initial_model_profile(base_dir: Path) -> dict[str, Any]:
-    for name in ("model.yml", "model.yaml"):
-        if not (base_dir / name).exists():
-            continue
-        matrix = load_project_model_matrix(base_dir)
-        model_label = matrix.models[0].model if len(matrix.models) == 1 else f"{len(matrix.models)} agent models"
+def _resolve_project_entry(path: str | Path) -> tuple[Path, ProjectConfig | None, ProjectCodeConfig | None]:
+    resolved = Path(path).resolve()
+    config = _maybe_load_project_config(resolved)
+    if config is not None:
+        return config.root_dir, config, config.eval.code
+    base_dir = resolved if resolved.is_dir() else resolved.parent
+    return base_dir, None, None
+
+
+def _build_initial_model_profile(path: Path) -> dict[str, Any]:
+    config = _maybe_load_project_config(path)
+    if config is not None:
+        model_label = config.models[0].model if len(config.models) == 1 else f"{len(config.models)} agent models"
         return {
+            "provider_id": config.provider.id,
             "model": model_label,
-            "base_url": matrix.provider.base_url,
-            "models": [entry.model for entry in matrix.models],
-            "judge_model": matrix.judge.model if matrix.judge is not None else None,
+            "base_url": config.provider.base_url,
+            "models": [entry.model for entry in config.models],
+            "judge_model": config.judge.model if config.judge is not None else None,
         }
     return {
-        "model": os.getenv("OPENAI_MODEL", ""),
-        "base_url": os.getenv("OPENAI_BASE_URL", ""),
+        "model": "",
+        "base_url": "",
     }
 
 
@@ -620,6 +629,92 @@ def _summarize(outcomes: list[TrialOutcome]) -> EvalSummary:
     )
 
 
+def _write_json_file(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _trial_models(plan: EvalPlan) -> dict[str, str | None]:
+    return {_trial_key(trial): trial.model for trial in plan.trials}
+
+
+def _task_monitor_rows(task_monitor: TaskMonitor, *, model_by_trial_key: dict[str, str | None] | None = None) -> list[dict[str, Any]]:
+    return [
+        {
+            "task_id": state.task_id,
+            "agent_id": state.agent_id,
+            "variant_id": state.variant_id,
+            "sample_id": state.sample_id,
+            "model": (model_by_trial_key or {}).get(state.key),
+            "status": state.status.value,
+            "step_count": state.step_count,
+            "duration_ms": state.duration_ms,
+            "latest_action": state.latest_action,
+            "latest_observation": state.latest_observation,
+            "latest_message": state.latest_message,
+            "scorer_metrics": dict(state.scorer_metrics),
+        }
+        for state in task_monitor.list_states()
+    ]
+
+
+def _write_live_run_metadata(
+    *,
+    out_dir: Path,
+    run_id: str,
+    experiment_id: str,
+    benchmark: str,
+    plan: EvalPlan,
+    task_monitor: TaskMonitor,
+    controls: dict[str, Any],
+    trial_count: int,
+    event_stream_mode: str,
+) -> None:
+    model_by_trial_key = _trial_models(plan)
+    _write_json_file(
+        out_dir / "plan.json",
+        {
+            "mode": plan.mode,
+            "task_ids": plan.task_ids,
+            "agent_ids": plan.agent_ids,
+            "variant_ids": plan.variant_ids,
+            "sample_count": plan.sample_count,
+            "trial_count": trial_count,
+        },
+    )
+    _write_json_file(
+        out_dir / "manifest.json",
+        {
+            "schema_version": RESULT_SCHEMA_VERSION,
+            "result_schema_uri": RESULT_SCHEMA_URI,
+            "aggregate_schema_uri": AGGREGATE_SCHEMA_URI,
+            "run_id": run_id,
+            "experiment_id": experiment_id,
+            "benchmark": benchmark,
+            "event_stream_mode": event_stream_mode,
+            "status": "running",
+            "research_exports": {
+                "events_jsonl": "events.jsonl",
+            },
+        },
+    )
+    _write_json_file(
+        out_dir / "profiling.json",
+        {
+            "run": {
+                "run_id": run_id,
+                "experiment_id": experiment_id,
+                "benchmark": benchmark,
+            },
+            "controls": controls,
+            "throughput": {
+                "trial_count": trial_count,
+            },
+            "task_monitor": _task_monitor_rows(task_monitor, model_by_trial_key=model_by_trial_key),
+        },
+    )
+
+
 def _to_serializable_outcome(outcome: TrialOutcome) -> dict[str, Any]:
     scores = {
         k: {
@@ -900,6 +995,7 @@ def _write_artifacts(
                 "aggregate_schema_uri": AGGREGATE_SCHEMA_URI,
                 "run_id": run_id,
                 "experiment_id": experiment_id,
+                "benchmark": profiling.get("run", {}).get("benchmark") if isinstance(profiling, dict) else None,
                 "created_at_utc": now,
                 "rerun_command": rerun_command,
                 "diagnostics_count": len(diagnostics_index),
@@ -949,13 +1045,13 @@ def _write_artifacts(
 
 
 def _build_rerun_command(
-    base_dir: Path,
+    entry_path: Path,
     task_filter: list[str] | None,
     agent_filter: list[str] | None,
     variant_filter: list[str] | None = None,
     experiment_id: str | None = None,
 ) -> str:
-    cmd = ["snowl", "eval", str(base_dir)]
+    cmd = ["snowl", "eval", str(entry_path)]
     if task_filter:
         cmd.extend(["--task", ",".join(task_filter)])
     if agent_filter:
@@ -1185,7 +1281,7 @@ def _derive_pretask_events(event: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _interaction_equivalent_command(
-    base_dir: Path,
+    entry_path: Path,
     *,
     task_filter: list[str] | None,
     agent_filter: list[str] | None,
@@ -1199,7 +1295,7 @@ def _interaction_equivalent_command(
             extra = list(controller.to_cli_flags())
         except Exception:
             extra = []
-    cmd = ["snowl", "eval", str(base_dir)]
+    cmd = ["snowl", "eval", str(entry_path)]
     if task_filter:
         cmd.extend(["--task", ",".join(task_filter)])
     if agent_filter:
@@ -1251,14 +1347,12 @@ def load_project_components(
     *,
     require_task_file: bool = True,
 ) -> ProjectComponents:
-    base = Path(path).resolve()
-    base_dir = base if base.is_dir() else base.parent
-    _apply_model_config_env(base_dir)
+    base_dir, _config, code = _resolve_project_entry(path)
 
-    task_file = base_dir / "task.py"
-    agent_file = base_dir / "agent.py"
-    scorer_file = base_dir / "scorer.py"
-    tool_file = base_dir / "tool.py"
+    task_file = code.task_module if code is not None else (base_dir / "task.py")
+    agent_file = code.agent_module if code is not None else (base_dir / "agent.py")
+    scorer_file = code.scorer_module if code is not None else (base_dir / "scorer.py")
+    tool_file = code.tool_module if code is not None else (base_dir / "tool.py")
 
     required = [agent_file, scorer_file]
     if require_task_file:
@@ -1272,7 +1366,7 @@ def load_project_components(
 
     tool_registry = get_default_tool_registry()
     tool_registry.clear()
-    if tool_file.exists():
+    if tool_file is not None and tool_file.exists():
         tool_module = _load_module("snowl_user_tool", tool_file)
         _discover_tools(tool_module)
 
@@ -1301,8 +1395,103 @@ def load_project_components(
     )
 
 
+def _available_memory_gb() -> float | None:
+    try:
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        avail_pages = os.sysconf("SC_AVPHYS_PAGES")
+        return float(page_size * avail_pages) / (1024.0**3)
+    except Exception:
+        return None
+
+
+def _auto_container_slots(*, benchmark: str, cpu_count: int | None = None, mem_gb: float | None = None) -> int:
+    cpu = max(1, int(cpu_count or os.cpu_count() or 1))
+    memory = mem_gb if mem_gb is not None else _available_memory_gb()
+    benchmark_key = str(benchmark or "").strip().lower()
+    if benchmark_key in {"", "custom", "strongreject", "toolemu", "agentsafetybench"}:
+        return 0
+    if benchmark_key == "terminalbench":
+        by_cpu = max(1, min(4, cpu // 2))
+        if memory is None:
+            return by_cpu
+        return max(1, min(by_cpu, int(memory // 6) or 1))
+    if benchmark_key == "osworld":
+        by_cpu = max(1, min(2, cpu // 4 or 1))
+        if memory is None:
+            return by_cpu
+        return max(1, min(by_cpu, int(memory // 10) or 1))
+    return max(1, min(2, cpu // 2 or 1))
+
+
+def _resolve_runtime_budgets(
+    *,
+    tasks: list[Task],
+    project_config: ProjectConfig | None,
+    interaction_controller: Any | None,
+    max_running_trials: int | None,
+    max_container_slots: int | None,
+    max_builds: int | None,
+    max_scoring_tasks: int | None,
+    provider_budgets: dict[str, int] | None,
+) -> dict[str, Any]:
+    runtime_cfg = project_config.runtime if project_config is not None else None
+    explicit_running = max_running_trials is not None
+    benchmark_names = sorted({_benchmark_name_for_task(task) for task in tasks})
+    benchmark_hint = benchmark_names[0] if len(benchmark_names) == 1 else "mixed"
+
+    if max_running_trials is None:
+        max_running_trials = runtime_cfg.max_running_trials if runtime_cfg is not None else None
+    if max_builds is None:
+        max_builds = runtime_cfg.max_builds if runtime_cfg is not None else None
+    if max_scoring_tasks is None:
+        max_scoring_tasks = runtime_cfg.max_scoring_tasks if runtime_cfg is not None else None
+    if provider_budgets is None:
+        provider_budgets = dict(runtime_cfg.provider_budgets) if runtime_cfg is not None else {}
+
+    auto_container = False
+    if max_container_slots is None:
+        raw = runtime_cfg.max_container_slots if runtime_cfg is not None else "auto"
+        if isinstance(raw, str) and raw.strip().lower() == "auto":
+            auto_container = True
+            max_container_slots = _auto_container_slots(benchmark=benchmark_hint)
+        elif raw is None:
+            auto_container = True
+            max_container_slots = _auto_container_slots(benchmark=benchmark_hint)
+        else:
+            max_container_slots = int(raw)
+
+    if max_running_trials is None:
+        max_running_trials = min(8, max(1, int(os.cpu_count() or 4)))
+    if max_builds is None:
+        max_builds = 2
+    if max_scoring_tasks is None:
+        max_scoring_tasks = max_running_trials
+
+    if interaction_controller is not None:
+        max_running_trials = 1
+    docker_like = any(_is_docker_like_task(t) for t in tasks)
+    if docker_like and not explicit_running:
+        max_running_trials = 1
+
+    if project_config is not None and project_config.provider.id not in provider_budgets:
+        provider_budgets[project_config.provider.id] = max(max_running_trials, max_scoring_tasks)
+    if not provider_budgets:
+        provider_budgets["default"] = max(max_running_trials, max_scoring_tasks)
+
+    return {
+        "max_running_trials": max_running_trials,
+        "max_container_slots": max_container_slots,
+        "max_builds": max_builds,
+        "max_scoring_tasks": max_scoring_tasks,
+        "provider_budgets": provider_budgets,
+        "auto_container_slots": max_container_slots if auto_container else None,
+        "docker_like": docker_like,
+    }
+
+
 async def run_eval_with_components(
     *,
+    entry_path: Path,
     base_dir: Path,
     tasks: list[Task],
     agents: list[Agent],
@@ -1317,10 +1506,15 @@ async def run_eval_with_components(
     resume: bool = False,
     rerun_failed_only: bool = False,
     interaction_controller: Any | None = None,
+    max_running_trials: int | None = None,
+    max_container_slots: int | None = None,
+    max_builds: int | None = None,
+    max_scoring_tasks: int | None = None,
+    provider_budgets: dict[str, int] | None = None,
     max_trials: int | None = None,
     max_sandboxes: int | None = None,
-    max_builds: int | None = None,
     max_model_calls: int | None = None,
+    project_config: ProjectConfig | None = None,
     experiment_id: str | None = None,
     on_run_bootstrap: Callable[[EvalRunBootstrap], None] | None = None,
 ) -> EvalRunResult:
@@ -1333,29 +1527,35 @@ async def run_eval_with_components(
     if not agents:
         raise SnowlValidationError("Agent/variant filter matched zero agents.")
 
-    # Runtime limits (explicit args override env defaults).
-    max_trials_explicit = max_trials is not None
-    max_trials = max_trials or int(os.getenv("SNOWL_MAX_TRIALS", "1"))
-    max_sandboxes = max_sandboxes or int(os.getenv("SNOWL_MAX_SANDBOXES", "4"))
-    max_builds = max_builds or int(os.getenv("SNOWL_MAX_BUILDS", "2"))
-    max_model_calls = max_model_calls or int(os.getenv("SNOWL_MAX_MODEL_CALLS", "8"))
-    if interaction_controller is not None:
-        # Interactive mode keeps sequential semantics for pause/resume UX.
-        max_trials = 1
-    docker_like = any(_is_docker_like_task(t) for t in tasks)
-    if docker_like and not max_trials_explicit:
-        # Docker/container heavy runs default to serialized execution to reduce
-        # noisy startup races and make env debugging deterministic.
-        max_trials = 1
+    if max_running_trials is None:
+        max_running_trials = max_trials
+    if max_container_slots is None:
+        max_container_slots = max_sandboxes
+    if provider_budgets is None and max_model_calls is not None:
+        provider_budgets = {"default": max_model_calls}
 
-    scheduler = ResourceScheduler(
-        max_trials=max_trials,
-        max_sandboxes=max_sandboxes,
+    budgets = _resolve_runtime_budgets(
+        tasks=tasks,
+        project_config=project_config,
+        interaction_controller=interaction_controller,
+        max_running_trials=max_running_trials,
+        max_container_slots=max_container_slots,
         max_builds=max_builds,
-        max_model_calls=max_model_calls,
+        max_scoring_tasks=max_scoring_tasks,
+        provider_budgets=provider_budgets,
+    )
+    docker_like = bool(budgets["docker_like"])
+    scheduler = ResourceScheduler(
+        max_running_trials=budgets["max_running_trials"],
+        max_container_slots=budgets["max_container_slots"],
+        max_builds=budgets["max_builds"],
+        max_scoring_tasks=budgets["max_scoring_tasks"],
+        provider_budgets=budgets["provider_budgets"],
     )
     set_compose_build_slot_factory(scheduler.build_slot)
-    OpenAICompatibleChatClient.set_global_model_call_slot_factory(scheduler.model_call_slot)
+    OpenAICompatibleChatClient.set_global_model_call_slot_resolver(
+        lambda config: scheduler.provider_slot(getattr(config, "provider_id", "default"))
+    )
 
     run_started = int(datetime.now(timezone.utc).timestamp() * 1000)
     run_id = datetime.now(timezone.utc).strftime("run-%Y%m%dT%H%M%SZ")
@@ -1387,9 +1587,9 @@ async def run_eval_with_components(
             renderer.render_runtime_event(
                 normalize_ui_event(
                     {
-                        "event": "runtime.control.max_trials",
+                        "event": "runtime.control.max_running_trials",
                         "message": "docker_default_serial",
-                        "max_trials": max_trials,
+                        "max_running_trials": budgets["max_running_trials"],
                     },
                     run_id=run_id,
                     ts_ms=int(datetime.now(timezone.utc).timestamp() * 1000),
@@ -1430,21 +1630,6 @@ async def run_eval_with_components(
     task_monitor = TaskMonitor()
     benchmark_names = sorted({_benchmark_name_for_task(task) for task in tasks})
     benchmark_hint = benchmark_names[0] if len(benchmark_names) == 1 else "mixed"
-    if on_run_bootstrap is not None:
-        on_run_bootstrap(
-            EvalRunBootstrap(
-                run_id=run_id,
-                experiment_id=str(experiment_id),
-                benchmark=benchmark_hint,
-                artifacts_dir=str(artifacts_dir_live),
-                log_path=str(live_run_log_path),
-                task_count=len(plan.task_ids),
-                agent_count=len(plan.agent_ids),
-                variant_count=len(plan.variant_ids),
-                sample_count=plan.sample_count,
-                total_trials=len(plan.trials),
-            )
-        )
 
     def _log(message: str) -> None:
         ts = datetime.now(timezone.utc).isoformat()
@@ -1479,7 +1664,7 @@ async def run_eval_with_components(
                 event_rows.append(dict(persisted_synth))
         return persisted
 
-    model_profile = _build_initial_model_profile(base_dir)
+    model_profile = _build_initial_model_profile(entry_path)
     model_profile_evt = normalize_ui_event(
         {
             "event": "runtime.model.profile",
@@ -1554,6 +1739,32 @@ async def run_eval_with_components(
         )
 
     total = len(executable_trials) + len(outcomes)
+    _write_live_run_metadata(
+        out_dir=artifacts_dir_live,
+        run_id=run_id,
+        experiment_id=str(experiment_id),
+        benchmark=benchmark_hint,
+        plan=plan,
+        task_monitor=task_monitor,
+        controls=scheduler.controls(),
+        trial_count=total,
+        event_stream_mode="live_append",
+    )
+    if on_run_bootstrap is not None:
+        on_run_bootstrap(
+            EvalRunBootstrap(
+                run_id=run_id,
+                experiment_id=str(experiment_id),
+                benchmark=benchmark_hint,
+                artifacts_dir=str(artifacts_dir_live),
+                log_path=str(live_run_log_path),
+                task_count=len(plan.task_ids),
+                agent_count=len(plan.agent_ids),
+                variant_count=len(plan.variant_ids),
+                sample_count=plan.sample_count,
+                total_trials=total,
+            )
+        )
     checkpoint["meta"] = {
         "run_id": run_id,
         "experiment_id": experiment_id,
@@ -1656,7 +1867,10 @@ async def run_eval_with_components(
             sandbox_runtime=shared_sandbox_runtime,
             on_event=_on_runtime_event,
         )
-        outcome = await execute_trial(request)
+        async with scheduler.running_trial_slot():
+            partial = await execute_agent_phase(request)
+        async with scheduler.scoring_slot():
+            outcome = await score_trial_phase(request, partial)
 
         if resume:
             async with checkpoint_lock:
@@ -1690,8 +1904,7 @@ async def run_eval_with_components(
                     event_sink=_record_event,
                 )
                 await asyncio.sleep(0.05)
-        async with scheduler.trial_slot():
-            return await _run_one(trial_index, trial)
+        return await _run_one(trial_index, trial)
 
     interaction_stop = asyncio.Event()
 
@@ -1777,13 +1990,14 @@ async def run_eval_with_components(
 
     summary = _summarize(outcomes)
     rerun_cmd = rerun_command or _build_rerun_command(
-        base_dir,
+        entry_path,
         task_filter,
         agent_filter,
         variant_filter,
         experiment_id=str(experiment_id),
     )
     run_ended = int(datetime.now(timezone.utc).timestamp() * 1000)
+    scheduler_stats = scheduler.stats_snapshot()
     profiling = {
         "run": {
             "run_id": run_id,
@@ -1794,6 +2008,10 @@ async def run_eval_with_components(
             "run_total": max(0, run_ended - run_started),
         },
         "controls": scheduler.controls(),
+        "scheduler": {
+            **scheduler_stats,
+            "auto_container_slots": budgets["auto_container_slots"],
+        },
         "throughput": {
             "trial_count": len(executable_trials),
             "trials_per_sec": (
@@ -1828,7 +2046,7 @@ async def run_eval_with_components(
                 else []
             ),
             "equivalent_cli": _interaction_equivalent_command(
-                base_dir,
+                entry_path,
                 task_filter=task_filter,
                 agent_filter=agent_filter,
                 variant_filter=variant_filter,
@@ -1836,22 +2054,7 @@ async def run_eval_with_components(
                 controller=interaction_controller,
             ),
         },
-        "task_monitor": [
-            {
-                "task_id": s.task_id,
-                "agent_id": s.agent_id,
-                "variant_id": s.variant_id,
-                "sample_id": s.sample_id,
-                "status": s.status.value,
-                "step_count": s.step_count,
-                "duration_ms": s.duration_ms,
-                "latest_action": s.latest_action,
-                "latest_observation": s.latest_observation,
-                "latest_message": s.latest_message,
-                "scorer_metrics": dict(s.scorer_metrics),
-            }
-            for s in task_monitor.list_states()
-        ],
+        "task_monitor": _task_monitor_rows(task_monitor, model_by_trial_key=_trial_models(plan)),
     }
     _log(f"summary {json.dumps(summary.__dict__, ensure_ascii=False)}")
     event_writer.close()
@@ -1893,17 +2096,22 @@ async def run_eval(
     resume: bool = False,
     rerun_failed_only: bool = False,
     interaction_controller: Any | None = None,
+    max_running_trials: int | None = None,
+    max_container_slots: int | None = None,
+    max_builds: int | None = None,
+    max_scoring_tasks: int | None = None,
+    provider_budgets: dict[str, int] | None = None,
     max_trials: int | None = None,
     max_sandboxes: int | None = None,
-    max_builds: int | None = None,
     max_model_calls: int | None = None,
     experiment_id: str | None = None,
     on_run_bootstrap: Callable[[EvalRunBootstrap], None] | None = None,
 ) -> EvalRunResult:
-    base = Path(path).resolve()
-    base_dir = base if base.is_dir() else base.parent
-    components = load_project_components(base_dir, require_task_file=True)
+    entry_path = Path(path).resolve()
+    base_dir, project_config, _code = _resolve_project_entry(entry_path)
+    components = load_project_components(entry_path, require_task_file=True)
     return await run_eval_with_components(
+        entry_path=entry_path,
         base_dir=base_dir,
         tasks=components.tasks,
         agents=components.agents,
@@ -1914,7 +2122,7 @@ async def run_eval(
         variant_filter=variant_filter,
         renderer=renderer,
         rerun_command=_build_rerun_command(
-            base_dir,
+            entry_path,
             task_filter,
             agent_filter,
             variant_filter,
@@ -1924,10 +2132,15 @@ async def run_eval(
         resume=resume,
         rerun_failed_only=rerun_failed_only,
         interaction_controller=interaction_controller,
+        max_running_trials=max_running_trials,
+        max_container_slots=max_container_slots,
+        max_builds=max_builds,
+        max_scoring_tasks=max_scoring_tasks,
+        provider_budgets=provider_budgets,
         max_trials=max_trials,
         max_sandboxes=max_sandboxes,
-        max_builds=max_builds,
         max_model_calls=max_model_calls,
+        project_config=project_config,
         experiment_id=experiment_id,
         on_run_bootstrap=on_run_bootstrap,
     )

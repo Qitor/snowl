@@ -9,6 +9,7 @@ type JsonRecord = Record<string, unknown>;
 type RunState = {
   runId: string;
   runDir: string;
+  runLogPath: string;
   eventsPath: string;
   manifestPath: string;
   summaryPath: string;
@@ -19,7 +20,7 @@ type RunState = {
   eventTail: string;
   lastEventIndex: number;
   updatedAtMs: number;
-  status: "running" | "completed";
+  status: "running" | "completed" | "cancelled";
   experimentId: string;
   benchmark: string;
   summary: JsonRecord;
@@ -55,6 +56,50 @@ type IdentityRow = {
   statusCounts: Record<string, number>;
   metrics: Record<string, number>;
 };
+
+type TaskMonitorRow = {
+  taskId: string;
+  agentId: string;
+  variantId: string;
+  sampleId: string | null;
+  model: string | null;
+  status: string;
+  stepCount: number;
+  startedAtMs: number | null;
+  endedAtMs: number | null;
+  durationMs: number | null;
+  latestAction: string | null;
+  latestObservation: string | null;
+  latestMessage: string | null;
+  scorerMetrics: Record<string, number>;
+};
+
+type LiveSummaryIdentity = {
+  display_id: string;
+  agent_id: string;
+  variant_id: string;
+  model: string | null;
+  metrics: Record<string, number>;
+  rank_score: number;
+  count: number;
+  status_counts: Record<string, number>;
+  scored_trials: number;
+  metric_counts: Record<string, number>;
+};
+
+type RunLiveSignals = {
+  stalled: boolean;
+  attentionCount: number;
+  hasTaskMonitor: boolean;
+  heartbeatOnly: boolean;
+  lastProgressTsMs: number | null;
+  attentionTaskCount: number;
+  lastMetricTsMs: number | null;
+};
+
+const STALLED_PROGRESS_MS = 30_000;
+const LONG_RUNNING_TASK_MS = 45_000;
+const ABANDONED_RUN_MS = 120_000;
 
 function nowMs(): number {
   return Date.now();
@@ -163,6 +208,18 @@ function makeDisplayId(input: { agentId?: string | null; variantId?: string | nu
 
 function makeIdentityKey(input: { agentId?: string | null; variantId?: string | null; model?: string | null }): string {
   return `${String(input.agentId || "")}::${String(input.variantId || "default")}::${String(input.model || "")}`;
+}
+
+function parsePayload(event: JsonRecord): JsonRecord {
+  const payload = event.payload;
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    return payload as JsonRecord;
+  }
+  return {};
+}
+
+function taskRowKey(input: { taskId?: string | null; agentId?: string | null; variantId?: string | null; sampleId?: string | null }): string {
+  return `${String(input.taskId || "")}::${String(input.agentId || "")}::${String(input.variantId || "default")}::${String(input.sampleId || "-")}`;
 }
 
 export class RunMonitorStore {
@@ -317,14 +374,42 @@ export class RunMonitorStore {
     return runId;
   }
 
-  private inferBenchmark(manifest: JsonRecord, profiling: JsonRecord): string {
+  private inferBenchmark(state: RunState, manifest: JsonRecord, profiling: JsonRecord): string {
     const runMeta = (profiling.run as JsonRecord) || {};
     const fromRun = String(runMeta.benchmark || "").trim().toLowerCase();
     if (fromRun) {
       return fromRun;
     }
     const fromManifest = String(manifest.benchmark || "").trim().toLowerCase();
-    return fromManifest || "custom";
+    if (fromManifest) {
+      return fromManifest;
+    }
+    const row = this.db
+      .prepare("SELECT benchmark FROM events WHERE run_id = ? AND benchmark != '' ORDER BY event_index ASC LIMIT 1")
+      .get(state.runId) as { benchmark?: string } | undefined;
+    return String(row?.benchmark || "").trim().toLowerCase() || "custom";
+  }
+
+  private inferRunStatus(state: RunState, manifest: JsonRecord): "running" | "completed" | "cancelled" {
+    if (Object.keys(state.summary).length > 0) {
+      return "completed";
+    }
+    const manifestStatus = String(manifest.status || manifest.run_status || "").trim().toLowerCase();
+    if (manifestStatus === "cancelled" || manifestStatus === "canceled") {
+      return "cancelled";
+    }
+    if (manifestStatus === "completed") {
+      return "completed";
+    }
+    const updatedAtMs = this.computeRunUpdatedAt(state);
+    const latestEventRow = this.db
+      .prepare("SELECT ts_ms FROM events WHERE run_id = ? ORDER BY event_index DESC LIMIT 1")
+      .get(state.runId) as { ts_ms?: number } | undefined;
+    const freshestSignalTs = asInt(latestEventRow?.ts_ms, 0) || updatedAtMs;
+    if (freshestSignalTs > 0 && nowMs() - freshestSignalTs >= ABANDONED_RUN_MS) {
+      return "cancelled";
+    }
+    return "running";
   }
 
   private upsertRunRow(state: RunState, manifest: JsonRecord): void {
@@ -360,9 +445,9 @@ export class RunMonitorStore {
     state.plan = readJsonObject(state.planPath);
     state.profiling = readJsonObject(state.profilingPath);
     state.experimentId = this.inferExperimentId(state.runId, manifest, state.profiling);
-    state.benchmark = this.inferBenchmark(manifest, state.profiling);
-    state.status = Object.keys(state.summary).length > 0 ? "completed" : "running";
+    state.benchmark = this.inferBenchmark(state, manifest, state.profiling);
     state.updatedAtMs = this.computeRunUpdatedAt(state);
+    state.status = this.inferRunStatus(state, manifest);
     this.upsertRunRow(state, manifest);
   }
 
@@ -376,7 +461,8 @@ export class RunMonitorStore {
       fileMtimeMs(state.aggregatePath),
       fileMtimeMs(state.profilingPath),
     ];
-    return Math.max(...candidates, state.updatedAtMs || 0, 0);
+    const computed = Math.max(...candidates, 0);
+    return computed > 0 ? computed : state.updatedAtMs || 0;
   }
 
   private emitEvent(runId: string, event: JsonRecord): void {
@@ -484,6 +570,7 @@ export class RunMonitorStore {
         this.runs.set(pointer.runId, {
           runId: pointer.runId,
           runDir: pointer.runDir,
+          runLogPath: path.join(pointer.runDir, "run.log"),
           eventsPath: path.join(pointer.runDir, "events.jsonl"),
           manifestPath: path.join(pointer.runDir, "manifest.json"),
           summaryPath: path.join(pointer.runDir, "summary.json"),
@@ -504,6 +591,7 @@ export class RunMonitorStore {
         discovered += 1;
       } else if (existing.runDir !== pointer.runDir) {
         existing.runDir = pointer.runDir;
+        existing.runLogPath = path.join(pointer.runDir, "run.log");
         existing.eventsPath = path.join(pointer.runDir, "events.jsonl");
         existing.manifestPath = path.join(pointer.runDir, "manifest.json");
         existing.summaryPath = path.join(pointer.runDir, "summary.json");
@@ -524,19 +612,290 @@ export class RunMonitorStore {
   }
 
   private computeProgress(state: RunState): { done: number; total: number; failed: number } {
+    const logProgress = this.readRunLogProgress(state);
     if (state.summary && Object.keys(state.summary).length > 0) {
-      const total = asInt(state.summary.total, 0);
+      const summaryTotal = asInt(state.summary.total, 0);
+      const planTotal = asInt(state.plan.trial_count, 0);
+      const total = summaryTotal > 0 ? summaryTotal : planTotal > 0 ? planTotal : logProgress.total;
       const failed = asInt(state.summary.error, 0) + asInt(state.summary.limit_exceeded, 0) + asInt(state.summary.cancelled, 0);
-      return { done: total, total, failed };
+      if (summaryTotal > 0 && state.status === "completed") {
+        return { done: summaryTotal, total, failed };
+      }
+      const doneRow = this.db
+        .prepare("SELECT COUNT(*) AS c FROM events WHERE run_id = ? AND event_name='runtime.trial.finish'")
+        .get(state.runId) as { c?: number };
+      const done = asInt(doneRow?.c, 0) || logProgress.done;
+      return { done, total, failed };
     }
-    const total = asInt(state.plan.trial_count, 0);
+    const total = asInt(state.plan.trial_count, 0) || logProgress.total;
     const doneRow = this.db
       .prepare("SELECT COUNT(*) AS c FROM events WHERE run_id = ? AND event_name='runtime.trial.finish'")
       .get(state.runId) as { c?: number };
     const failRow = this.db
       .prepare("SELECT COUNT(*) AS c FROM events WHERE run_id = ? AND event_name='runtime.trial.error'")
       .get(state.runId) as { c?: number };
-    return { done: asInt(doneRow?.c, 0), total, failed: asInt(failRow?.c, 0) };
+    return { done: asInt(doneRow?.c, 0) || logProgress.done, total, failed: asInt(failRow?.c, 0) };
+  }
+
+  private readRunLogProgress(state: RunState): { done: number; total: number } {
+    try {
+      const raw = fs.readFileSync(state.runLogPath, "utf-8");
+      const patterns = [/progress=(\d+)\/(\d+)/g, /\[(\d+)\/(\d+)\]\s+task=/g, /idx=(\d+)\/(\d+)/g];
+      let done = 0;
+      let total = 0;
+      for (const pattern of patterns) {
+        for (const match of raw.matchAll(pattern)) {
+          done = asInt(match[1], done);
+          total = asInt(match[2], total);
+        }
+      }
+      return { done, total };
+    } catch {
+      return { done: 0, total: 0 };
+    }
+  }
+
+  private computeRunLiveSignals(state: RunState, taskRows?: TaskMonitorRow[]): RunLiveSignals {
+    const rows = taskRows || this.collectTaskMonitorRows(state);
+    const latestEventRow = this.db
+      .prepare("SELECT ts_ms, event_name, event_json FROM events WHERE run_id = ? ORDER BY event_index DESC LIMIT 1")
+      .get(state.runId) as { ts_ms?: number; event_name?: string; event_json?: string } | undefined;
+    const lastProgressRow = this.db
+      .prepare(
+        `
+          SELECT ts_ms, event_json FROM events
+          WHERE run_id = ?
+            AND event_name IN (
+              'runtime.trial.start',
+              'runtime.trial.finish',
+              'runtime.trial.error',
+              'runtime.scorer.start',
+              'runtime.scorer.finish',
+              'runtime.model.query.start',
+              'runtime.model.query.finish',
+              'runtime.agent.step'
+            )
+          ORDER BY event_index DESC
+          LIMIT 1
+        `,
+      )
+      .get(state.runId) as { ts_ms?: number; event_json?: string } | undefined;
+    const lastMetricRow = this.db
+      .prepare(
+        `
+          SELECT ts_ms FROM events
+          WHERE run_id = ? AND event_name = 'runtime.scorer.finish'
+          ORDER BY event_index DESC
+          LIMIT 1
+        `,
+      )
+      .get(state.runId) as { ts_ms?: number } | undefined;
+    const attentionEventRow = this.db
+      .prepare(
+        `
+          SELECT 1 AS c FROM events
+          WHERE run_id = ?
+            AND (
+              event_name LIKE '%error%'
+              OR event_name LIKE '%failed%'
+              OR event_name = 'pretask.failed'
+            )
+          LIMIT 1
+        `,
+      )
+      .get(state.runId) as { c?: number } | undefined;
+    const latestTs = asInt(latestEventRow?.ts_ms, 0);
+    const lastProgressTs = asInt(lastProgressRow?.ts_ms, 0) || null;
+    const latestEventName = String(latestEventRow?.event_name || "").toLowerCase();
+    const now = nowMs();
+    const heartbeatOnly = Boolean(latestEventName === "ui.heartbeat" && lastProgressTs === null && latestTs > 0);
+    const stalled =
+      state.status === "running" &&
+      ((lastProgressTs !== null && now - lastProgressTs >= STALLED_PROGRESS_MS) ||
+        (lastProgressTs === null && latestTs > 0 && now - latestTs >= STALLED_PROGRESS_MS));
+    const erroredTaskCount = rows.filter((row) => row.status === "error").length;
+    const longRunningTaskCount = rows.filter((row) => {
+      if (row.status === "running" || row.status === "scoring") {
+        return row.startedAtMs != null && now - row.startedAtMs >= LONG_RUNNING_TASK_MS;
+      }
+      return false;
+    }).length;
+    const attentionTaskCount = erroredTaskCount + longRunningTaskCount;
+    const missingTaskMonitor = state.status === "running" && asInt(state.plan.trial_count, 0) > 0 && rows.length === 0;
+    const hasAttentionEvents = Boolean(asInt(attentionEventRow?.c, 0));
+    const attentionCount =
+      attentionTaskCount +
+      (stalled ? 1 : 0) +
+      (missingTaskMonitor ? 1 : 0) +
+      (heartbeatOnly ? 1 : 0) +
+      (hasAttentionEvents && attentionTaskCount === 0 ? 1 : 0);
+    return {
+      stalled,
+      attentionCount,
+      hasTaskMonitor: rows.length > 0,
+      heartbeatOnly,
+      lastProgressTsMs: lastProgressTs,
+      attentionTaskCount,
+      lastMetricTsMs: asInt(lastMetricRow?.ts_ms, 0) || null,
+    };
+  }
+
+  private collectTaskMonitorRowsFromProfiling(state: RunState): TaskMonitorRow[] {
+    const taskMonitor = Array.isArray(state.profiling.task_monitor) ? state.profiling.task_monitor : [];
+    const rows: TaskMonitorRow[] = [];
+    for (const raw of taskMonitor) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        continue;
+      }
+      const row = raw as JsonRecord;
+      rows.push({
+        taskId: String(row.task_id || "-"),
+        agentId: String(row.agent_id || "unknown"),
+        variantId: String(row.variant_id || "default"),
+        sampleId: row.sample_id == null ? null : String(row.sample_id),
+        model: String(row.model || "").trim() || null,
+        status: String(row.status || "queued").toLowerCase(),
+        stepCount: asInt(row.step_count, 0),
+        startedAtMs: row.started_at_ms == null ? null : asInt(row.started_at_ms, 0),
+        endedAtMs: row.ended_at_ms == null ? null : asInt(row.ended_at_ms, 0),
+        durationMs: row.duration_ms == null ? null : asInt(row.duration_ms, 0),
+        latestAction: String(row.latest_action || "").trim() || null,
+        latestObservation: String(row.latest_observation || "").trim() || null,
+        latestMessage: String(row.latest_message || "").trim() || null,
+        scorerMetrics:
+          row.scorer_metrics && typeof row.scorer_metrics === "object" && !Array.isArray(row.scorer_metrics)
+            ? Object.fromEntries(
+                Object.entries(row.scorer_metrics as JsonRecord)
+                  .map(([key, value]) => [key, Number(value)])
+                  .filter((entry) => Number.isFinite(entry[1])),
+              )
+            : {},
+      });
+    }
+    return rows;
+  }
+
+  private collectTaskMonitorRowsFromEvents(state: RunState): TaskMonitorRow[] {
+    const rows = this.db
+      .prepare(
+        `
+          SELECT event_json FROM events
+          WHERE run_id = ? AND trial_key != ''
+          ORDER BY event_index ASC
+        `,
+      )
+      .all(state.runId) as Array<{ event_json: string }>;
+    const grouped = new Map<string, TaskMonitorRow>();
+    for (const row of rows) {
+      const event = parseJsonObject(row.event_json);
+      if (Object.keys(event).length === 0) {
+        continue;
+      }
+      const payload = parsePayload(event);
+      const trial = parseTrialKey(String(event.trial_key || "")) || null;
+      const taskId = String(event.task_id || trial?.taskId || "-");
+      const agentId = String(event.agent_id || trial?.agentId || "unknown");
+      const variantId = String(event.variant_id || trial?.variantId || "default");
+      const sampleId =
+        event.sample_id != null
+          ? String(event.sample_id)
+          : payload.sample_id != null
+            ? String(payload.sample_id)
+            : (trial?.sampleId || null);
+      const key = taskRowKey({ taskId, agentId, variantId, sampleId });
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          taskId,
+          agentId,
+          variantId,
+          sampleId,
+          model: null,
+          status: "queued",
+          stepCount: 0,
+          startedAtMs: null,
+          endedAtMs: null,
+          durationMs: null,
+          latestAction: null,
+          latestObservation: null,
+          latestMessage: null,
+          scorerMetrics: {},
+        });
+      }
+      const slot = grouped.get(key) as TaskMonitorRow;
+      const model = String(event.model || payload.model || "").trim();
+      if (model) {
+        slot.model = model;
+      }
+      const message = String(event.message || payload.message || "").trim();
+      if (message) {
+        slot.latestMessage = message;
+      }
+      const eventName = String(event.event || "");
+      if (eventName === "runtime.trial.start") {
+        slot.status = "running";
+        slot.startedAtMs = asInt(event.ts_ms, slot.startedAtMs ?? 0) || slot.startedAtMs;
+      } else if (eventName === "runtime.scorer.start") {
+        slot.status = "scoring";
+      } else if (eventName === "runtime.scorer.finish") {
+        const metrics = payload.metrics || payload.scorer_metrics;
+        if (metrics && typeof metrics === "object" && !Array.isArray(metrics)) {
+          slot.scorerMetrics = Object.fromEntries(
+            Object.entries(metrics as JsonRecord)
+              .map(([keyName, value]) => [keyName, Number(value)])
+              .filter((entry) => Number.isFinite(entry[1])),
+          );
+        }
+      } else if (eventName === "runtime.trial.finish") {
+        const rawStatus = String(payload.status || event.status || event.message || "success").trim().toLowerCase();
+        slot.status = rawStatus || "success";
+        slot.endedAtMs = asInt(event.ts_ms, slot.endedAtMs ?? 0) || slot.endedAtMs;
+        if (slot.startedAtMs != null && slot.endedAtMs != null) {
+          slot.durationMs = Math.max(0, slot.endedAtMs - slot.startedAtMs);
+        }
+      } else if (eventName === "runtime.trial.error") {
+        slot.status = "error";
+        slot.endedAtMs = asInt(event.ts_ms, slot.endedAtMs ?? 0) || slot.endedAtMs;
+        if (slot.startedAtMs != null && slot.endedAtMs != null) {
+          slot.durationMs = Math.max(0, slot.endedAtMs - slot.startedAtMs);
+        }
+      } else if (eventName.startsWith("runtime.trial.step") || eventName === "runtime.agent.step") {
+        slot.stepCount += 1;
+        const action = payload.action || payload.action_type;
+        const observation = payload.observation || payload.observation_type;
+        if (action != null) {
+          slot.latestAction = String(action);
+        }
+        if (observation != null) {
+          slot.latestObservation = String(observation);
+        }
+      }
+    }
+    return Array.from(grouped.values()).sort((a, b) => taskRowKey(a).localeCompare(taskRowKey(b)));
+  }
+
+  private collectTaskMonitorRows(state: RunState): TaskMonitorRow[] {
+    const merged = new Map<string, TaskMonitorRow>();
+    for (const row of this.collectTaskMonitorRowsFromProfiling(state)) {
+      merged.set(taskRowKey(row), { ...row, scorerMetrics: { ...row.scorerMetrics } });
+    }
+    for (const row of this.collectTaskMonitorRowsFromEvents(state)) {
+      const key = taskRowKey(row);
+      const existing = merged.get(key);
+      if (!existing) {
+        merged.set(key, { ...row, scorerMetrics: { ...row.scorerMetrics } });
+        continue;
+      }
+      merged.set(key, {
+        ...existing,
+        ...row,
+        model: row.model || existing.model,
+        latestAction: row.latestAction || existing.latestAction,
+        latestObservation: row.latestObservation || existing.latestObservation,
+        latestMessage: row.latestMessage || existing.latestMessage,
+        scorerMetrics: Object.keys(row.scorerMetrics).length > 0 ? { ...row.scorerMetrics } : { ...existing.scorerMetrics },
+      });
+    }
+    return Array.from(merged.values()).sort((a, b) => taskRowKey(a).localeCompare(taskRowKey(b)));
   }
 
   private collectIdentityRowsFromAggregate(state: RunState): IdentityRow[] {
@@ -577,17 +936,12 @@ export class RunMonitorStore {
   }
 
   private collectIdentityRowsFromTaskMonitor(state: RunState): IdentityRow[] {
-    const taskMonitor = Array.isArray(state.profiling.task_monitor) ? state.profiling.task_monitor : [];
     const grouped = new Map<string, IdentityRow>();
-    for (const row of taskMonitor) {
-      if (!row || typeof row !== "object" || Array.isArray(row)) {
-        continue;
-      }
-      const asRow = row as JsonRecord;
-      const taskId = String(asRow.task_id || "-");
-      const agentId = String(asRow.agent_id || "unknown");
-      const variantId = String(asRow.variant_id || "default");
-      const model = String(asRow.model || "").trim() || null;
+    for (const asRow of this.collectTaskMonitorRows(state)) {
+      const taskId = asRow.taskId;
+      const agentId = asRow.agentId;
+      const variantId = asRow.variantId;
+      const model = asRow.model;
       const key = `${taskId}::${makeIdentityKey({ agentId, variantId, model })}`;
       if (!grouped.has(key)) {
         grouped.set(key, {
@@ -605,7 +959,7 @@ export class RunMonitorStore {
       slot.count += 1;
       const status = String(asRow.status || "queued").toLowerCase();
       slot.statusCounts[status] = (slot.statusCounts[status] || 0) + 1;
-      const metrics = ((asRow.scorer_metrics as JsonRecord) || {}) as JsonRecord;
+      const metrics = asRow.scorerMetrics || {};
       for (const [metricName, metricValue] of Object.entries(metrics)) {
         const numeric = Number(metricValue);
         if (!Number.isFinite(numeric)) {
@@ -660,22 +1014,52 @@ export class RunMonitorStore {
     return Array.from(seen.values()).sort((a, b) => a.display_id.localeCompare(b.display_id));
   }
 
-  private buildRunSummary(state: RunState, primaryDimension: "variant-first" | "benchmark-first"): JsonRecord {
-    const progress = this.computeProgress(state);
-    const identityRows = this.collectIdentityRows(state);
-    const identities = this.collectRunIdentities(state);
+  private buildLiveSummaryFromTaskRows(
+    taskRows: TaskMonitorRow[],
+    identities: Array<{ display_id: string; agent_id: string; variant_id: string; model: string | null }>,
+    primaryDimension: "variant-first" | "benchmark-first",
+  ): {
+    agents: LiveSummaryIdentity[];
+    matrix: Record<string, Record<string, number>>;
+    scoredTrials: number;
+    scoredTrialsByIdentity: Record<string, number>;
+    metricCounts: Record<string, Record<string, number>>;
+  } {
+    const metadata = new Map<
+      string,
+      {
+        display_id: string;
+        agent_id: string;
+        variant_id: string;
+        model: string | null;
+        count: number;
+        status_counts: Record<string, number>;
+      }
+    >();
+    for (const identity of identities) {
+      const key = makeIdentityKey({ agentId: identity.agent_id, variantId: identity.variant_id, model: identity.model });
+      metadata.set(key, {
+        display_id: identity.display_id,
+        agent_id: identity.agent_id,
+        variant_id: identity.variant_id,
+        model: identity.model,
+        count: 0,
+        status_counts: {},
+      });
+    }
+
     const metricSums = new Map<string, Map<string, number>>();
     const metricCounts = new Map<string, Map<string, number>>();
-    const metadata = new Map<string, { display_id: string; agent_id: string; variant_id: string; model: string | null; count: number; status_counts: Record<string, number> }>();
-    const matrix: Record<string, Record<string, number>> = {};
+    const scoredTrialsByIdentity = new Map<string, number>();
+    const matrixSums = new Map<string, Map<string, number>>();
+    const matrixCounts = new Map<string, Map<string, number>>();
+    let scoredTrials = 0;
 
-    for (const row of identityRows) {
-      const key = makeIdentityKey({ agentId: row.agentId, variantId: row.variantId, model: row.model });
-      if (!metricSums.has(key)) {
-        metricSums.set(key, new Map());
-        metricCounts.set(key, new Map());
-        metadata.set(key, {
-          display_id: row.displayId,
+    for (const row of taskRows) {
+      const identityKey = makeIdentityKey({ agentId: row.agentId, variantId: row.variantId, model: row.model });
+      if (!metadata.has(identityKey)) {
+        metadata.set(identityKey, {
+          display_id: makeDisplayId({ agentId: row.agentId, variantId: row.variantId, model: row.model }),
           agent_id: row.agentId,
           variant_id: row.variantId,
           model: row.model,
@@ -683,9 +1067,7 @@ export class RunMonitorStore {
           status_counts: {},
         });
       }
-      const sums = metricSums.get(key) as Map<string, number>;
-      const counts = metricCounts.get(key) as Map<string, number>;
-      const meta = metadata.get(key) as {
+      const meta = metadata.get(identityKey) as {
         display_id: string;
         agent_id: string;
         variant_id: string;
@@ -693,46 +1075,59 @@ export class RunMonitorStore {
         count: number;
         status_counts: Record<string, number>;
       };
-      meta.count += row.count;
-      for (const [statusName, statusCount] of Object.entries(row.statusCounts)) {
-        meta.status_counts[statusName] = (meta.status_counts[statusName] || 0) + asInt(statusCount, 0);
-      }
+      meta.count += 1;
+      const status = String(row.status || "queued").toLowerCase();
+      meta.status_counts[status] = (meta.status_counts[status] || 0) + 1;
+
+      const metrics = row.scorerMetrics || {};
       let primaryMetric: number | null = null;
-      for (const [metricName, metricValue] of Object.entries(row.metrics)) {
+      let hasScoredMetric = false;
+      for (const [metricName, metricValue] of Object.entries(metrics)) {
         const numeric = Number(metricValue);
         if (!Number.isFinite(numeric)) {
           continue;
         }
+        hasScoredMetric = true;
+        if (!metricSums.has(identityKey)) {
+          metricSums.set(identityKey, new Map());
+          metricCounts.set(identityKey, new Map());
+        }
+        const sums = metricSums.get(identityKey) as Map<string, number>;
+        const counts = metricCounts.get(identityKey) as Map<string, number>;
         sums.set(metricName, (sums.get(metricName) || 0) + numeric);
         counts.set(metricName, (counts.get(metricName) || 0) + 1);
         if (primaryMetric === null) {
           primaryMetric = numeric;
         }
       }
-      const rowKey = primaryDimension === "benchmark-first" ? row.taskId : row.displayId;
-      const colKey = primaryDimension === "benchmark-first" ? row.displayId : row.taskId;
+
+      if (hasScoredMetric) {
+        scoredTrials += 1;
+        scoredTrialsByIdentity.set(meta.display_id, (scoredTrialsByIdentity.get(meta.display_id) || 0) + 1);
+      }
       if (primaryMetric !== null) {
-        if (!matrix[rowKey]) {
-          matrix[rowKey] = {};
+        const rowKey = primaryDimension === "benchmark-first" ? row.taskId : meta.display_id;
+        const colKey = primaryDimension === "benchmark-first" ? meta.display_id : row.taskId;
+        if (!matrixSums.has(rowKey)) {
+          matrixSums.set(rowKey, new Map());
+          matrixCounts.set(rowKey, new Map());
         }
-        matrix[rowKey][colKey] = primaryMetric;
+        const sums = matrixSums.get(rowKey) as Map<string, number>;
+        const counts = matrixCounts.get(rowKey) as Map<string, number>;
+        sums.set(colKey, (sums.get(colKey) || 0) + primaryMetric);
+        counts.set(colKey, (counts.get(colKey) || 0) + 1);
       }
     }
 
-    const agents = Array.from(metricSums.entries()).map(([key, sums]) => {
-      const counts = metricCounts.get(key) || new Map<string, number>();
-      const meta = metadata.get(key) as {
-        display_id: string;
-        agent_id: string;
-        variant_id: string;
-        model: string | null;
-        count: number;
-        status_counts: Record<string, number>;
-      };
+    const agents: LiveSummaryIdentity[] = Array.from(metadata.entries()).map(([identityKey, meta]) => {
+      const sums = metricSums.get(identityKey) || new Map<string, number>();
+      const counts = metricCounts.get(identityKey) || new Map<string, number>();
       const metrics: Record<string, number> = {};
+      const metricCountRow: Record<string, number> = {};
       for (const [metricName, total] of sums.entries()) {
         const count = Math.max(1, counts.get(metricName) || 1);
         metrics[metricName] = total / count;
+        metricCountRow[metricName] = count;
       }
       const rankScore = Object.values(metrics).length > 0 ? Math.max(...Object.values(metrics)) : 0;
       return {
@@ -744,9 +1139,131 @@ export class RunMonitorStore {
         rank_score: rankScore,
         count: meta.count,
         status_counts: meta.status_counts,
+        scored_trials: scoredTrialsByIdentity.get(meta.display_id) || 0,
+        metric_counts: metricCountRow,
       };
     });
     agents.sort((a, b) => b.rank_score - a.rank_score || a.display_id.localeCompare(b.display_id));
+
+    const matrix: Record<string, Record<string, number>> = {};
+    for (const [rowKey, sums] of matrixSums.entries()) {
+      matrix[rowKey] = {};
+      const counts = matrixCounts.get(rowKey) || new Map<string, number>();
+      for (const [colKey, total] of sums.entries()) {
+        const count = Math.max(1, counts.get(colKey) || 1);
+        matrix[rowKey][colKey] = total / count;
+      }
+    }
+
+    return {
+      agents,
+      matrix,
+      scoredTrials,
+      scoredTrialsByIdentity: Object.fromEntries(scoredTrialsByIdentity.entries()),
+      metricCounts: Object.fromEntries(agents.map((agent) => [agent.display_id, agent.metric_counts])),
+    };
+  }
+
+  private buildRunSummary(state: RunState, primaryDimension: "variant-first" | "benchmark-first"): JsonRecord {
+    const progress = this.computeProgress(state);
+    const identities = this.collectRunIdentities(state);
+    const taskRows = this.collectTaskMonitorRows(state);
+    const liveSummary = this.buildLiveSummaryFromTaskRows(taskRows, identities, primaryDimension);
+    let agents: Array<Record<string, unknown>>;
+    let matrix: Record<string, Record<string, number>>;
+
+    if (state.status === "running" || !fs.existsSync(state.aggregatePath)) {
+      agents = liveSummary.agents;
+      matrix = liveSummary.matrix;
+    } else {
+      const identityRows = this.collectIdentityRowsFromAggregate(state);
+      const metricSums = new Map<string, Map<string, number>>();
+      const metricCounts = new Map<string, Map<string, number>>();
+      const metadata = new Map<string, { display_id: string; agent_id: string; variant_id: string; model: string | null; count: number; status_counts: Record<string, number> }>();
+      matrix = {};
+
+      for (const row of identityRows) {
+        const key = makeIdentityKey({ agentId: row.agentId, variantId: row.variantId, model: row.model });
+        if (!metricSums.has(key)) {
+          metricSums.set(key, new Map());
+          metricCounts.set(key, new Map());
+          metadata.set(key, {
+            display_id: row.displayId,
+            agent_id: row.agentId,
+            variant_id: row.variantId,
+            model: row.model,
+            count: 0,
+            status_counts: {},
+          });
+        }
+        const sums = metricSums.get(key) as Map<string, number>;
+        const counts = metricCounts.get(key) as Map<string, number>;
+        const meta = metadata.get(key) as {
+          display_id: string;
+          agent_id: string;
+          variant_id: string;
+          model: string | null;
+          count: number;
+          status_counts: Record<string, number>;
+        };
+        meta.count += row.count;
+        for (const [statusName, statusCount] of Object.entries(row.statusCounts)) {
+          meta.status_counts[statusName] = (meta.status_counts[statusName] || 0) + asInt(statusCount, 0);
+        }
+        let primaryMetric: number | null = null;
+        for (const [metricName, metricValue] of Object.entries(row.metrics)) {
+          const numeric = Number(metricValue);
+          if (!Number.isFinite(numeric)) {
+            continue;
+          }
+          sums.set(metricName, (sums.get(metricName) || 0) + numeric);
+          counts.set(metricName, (counts.get(metricName) || 0) + 1);
+          if (primaryMetric === null) {
+            primaryMetric = numeric;
+          }
+        }
+        const rowKey = primaryDimension === "benchmark-first" ? row.taskId : row.displayId;
+        const colKey = primaryDimension === "benchmark-first" ? row.displayId : row.taskId;
+        if (primaryMetric !== null) {
+          if (!matrix[rowKey]) {
+            matrix[rowKey] = {};
+          }
+          matrix[rowKey][colKey] = primaryMetric;
+        }
+      }
+
+      agents = Array.from(metricSums.entries()).map(([key, sums]) => {
+        const counts = metricCounts.get(key) || new Map<string, number>();
+        const meta = metadata.get(key) as {
+          display_id: string;
+          agent_id: string;
+          variant_id: string;
+          model: string | null;
+          count: number;
+          status_counts: Record<string, number>;
+        };
+        const metrics: Record<string, number> = {};
+        for (const [metricName, total] of sums.entries()) {
+          const count = Math.max(1, counts.get(metricName) || 1);
+          metrics[metricName] = total / count;
+        }
+        const rankScore = Object.values(metrics).length > 0 ? Math.max(...Object.values(metrics)) : 0;
+        const coverage = liveSummary.agents.find((agent) => agent.display_id === meta.display_id);
+        return {
+          display_id: meta.display_id,
+          agent_id: meta.agent_id,
+          variant_id: meta.variant_id,
+          model: meta.model,
+          metrics,
+          rank_score: rankScore,
+          count: meta.count,
+          status_counts: meta.status_counts,
+          scored_trials: coverage?.scored_trials || 0,
+          metric_counts: coverage?.metric_counts || {},
+        };
+      });
+      agents.sort((a, b) => Number(b.rank_score) - Number(a.rank_score) || String(a.display_id).localeCompare(String(b.display_id)));
+    }
 
     const models = Array.from(new Set(identities.map((row) => row.model).filter((value): value is string => Boolean(value)))).sort();
     const completed = state.status === "completed" ? 1 : 0;
@@ -770,6 +1287,9 @@ export class RunMonitorStore {
       },
       agents,
       matrix,
+      scored_trials: liveSummary.scoredTrials,
+      scored_trials_by_identity: liveSummary.scoredTrialsByIdentity,
+      metric_counts: liveSummary.metricCounts,
     };
   }
 
@@ -781,8 +1301,11 @@ export class RunMonitorStore {
         continue;
       }
       const progress = this.computeProgress(state);
+      const taskRows = this.collectTaskMonitorRows(state);
       const identities = this.collectRunIdentities(state);
       const models = Array.from(new Set(identities.map((row) => row.model).filter((value): value is string => Boolean(value)))).sort();
+      const liveSignals = this.computeRunLiveSignals(state, taskRows);
+      const attentionCount = liveSignals.attentionCount + (state.status === "cancelled" ? 1 : 0);
       out.push({
         run_id: state.runId,
         experiment_id: state.experimentId,
@@ -796,9 +1319,21 @@ export class RunMonitorStore {
         variant_count: identities.length,
         models,
         is_live: state.status === "running",
+        stalled: liveSignals.stalled,
+        attention_count: attentionCount,
+        has_task_monitor: liveSignals.hasTaskMonitor,
+        heartbeat_only: liveSignals.heartbeatOnly,
+        last_progress_ts_ms: liveSignals.lastProgressTsMs,
       });
     }
-    return out.sort((a, b) => asInt(b.updated_at_ms, 0) - asInt(a.updated_at_ms, 0));
+    return out.sort((a, b) => {
+      const attentionA = asInt(a.attention_count, 0) > 0 || a.status === "running" ? 1 : 0;
+      const attentionB = asInt(b.attention_count, 0) > 0 || b.status === "running" ? 1 : 0;
+      if (attentionA !== attentionB) {
+        return attentionB - attentionA;
+      }
+      return asInt(b.updated_at_ms, 0) - asInt(a.updated_at_ms, 0);
+    });
   }
 
   listExperiments(): JsonRecord[] {
@@ -847,7 +1382,10 @@ export class RunMonitorStore {
       return null;
     }
     const progress = this.computeProgress(state);
+    const taskRows = this.collectTaskMonitorRows(state);
+    const liveSignals = this.computeRunLiveSignals(state, taskRows);
     const identities = this.collectRunIdentities(state);
+    const scoredTrials = taskRows.filter((row) => Object.keys(row.scorerMetrics || {}).length > 0).length;
     return {
       run_id: state.runId,
       experiment_id: state.experimentId,
@@ -858,13 +1396,39 @@ export class RunMonitorStore {
       failed: progress.failed,
       summary: state.summary,
       plan: state.plan,
-      task_monitor: Array.isArray(state.profiling.task_monitor) ? state.profiling.task_monitor : [],
+      task_monitor: taskRows.map((row) => ({
+        task_id: row.taskId,
+        agent_id: row.agentId,
+        variant_id: row.variantId,
+        sample_id: row.sampleId,
+        model: row.model,
+        status: row.status,
+        step_count: row.stepCount,
+        started_at_ms: row.startedAtMs,
+        ended_at_ms: row.endedAtMs,
+        duration_ms: row.durationMs,
+        latest_action: row.latestAction,
+        latest_observation: row.latestObservation,
+        latest_message: row.latestMessage,
+        scorer_metrics: row.scorerMetrics,
+      })),
       controls: (state.profiling.controls as JsonRecord) || {},
       updated_at_ms: state.updatedAtMs,
       last_event_id: state.lastEventIndex > 0 ? `${state.runId}:${state.lastEventIndex}` : null,
       path: state.runDir,
       variant_count: identities.length,
       models: Array.from(new Set(identities.map((row) => row.model).filter((value): value is string => Boolean(value)))).sort(),
+      planned_trials: asInt(state.plan.trial_count, 0) || progress.total,
+      planned_tasks:
+        (Array.isArray(state.plan.task_ids) ? state.plan.task_ids.length : 0) ||
+        new Set(taskRows.map((row) => row.taskId)).size,
+      visible_task_rows: taskRows.length,
+      scored_trials: scoredTrials,
+      attention_task_count: liveSignals.attentionTaskCount,
+      last_progress_ts_ms: liveSignals.lastProgressTsMs,
+      last_metric_ts_ms: liveSignals.lastMetricTsMs,
+      stalled: liveSignals.stalled,
+      heartbeat_only: liveSignals.heartbeatOnly,
       identities,
     };
   }

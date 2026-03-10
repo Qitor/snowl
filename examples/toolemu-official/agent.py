@@ -9,12 +9,13 @@ from snowl.agents import build_model_variants
 from snowl.benchmarks.toolemu import build_tool_emu_llm, execute_tool_emu_case
 from snowl.benchmarks.toolemu.runtime import persist_tool_emu_trajectory
 from snowl.core import AgentContext, AgentState, StopReason, agent as declare_agent
-from snowl.model import OpenAICompatibleConfig, ProjectModelEntry, ProjectProviderConfig, load_project_model_matrix
-from snowl.utils.env import env_bool, env_int, env_optional_int, env_str
+from snowl.model import OpenAICompatibleConfig, ProjectModelEntry, ProjectProviderConfig
+from snowl.project_config import load_project_config
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
-PROJECT_MATRIX = load_project_model_matrix(PROJECT_DIR)
+PROJECT = load_project_config(PROJECT_DIR)
+TOOLEMU_SETTINGS = PROJECT.benchmark_settings("toolemu")
 
 
 def _build_case(sample: dict[str, Any], sample_meta: dict[str, Any]) -> dict[str, Any]:
@@ -37,12 +38,20 @@ class ToolEmuOfficialAgent:
     model_config: OpenAICompatibleConfig
     simulator_config: OpenAICompatibleConfig
     agent_id: str = "toolemu_official_agent"
-    agent_type: str = field(default_factory=lambda: env_str("SNOWL_TOOLEMU_AGENT_TYPE", "naive") or "naive")
-    simulator_type: str = field(default_factory=lambda: env_str("SNOWL_TOOLEMU_SIMULATOR_TYPE", "adv_thought") or "adv_thought")
-    max_iterations: int = field(default_factory=lambda: env_int("SNOWL_TOOLEMU_MAX_ITERATIONS", 15))
-    verbose: bool = field(default_factory=lambda: env_bool("SNOWL_TOOLEMU_VERBOSE"))
-    agent_max_tokens: int | None = field(default_factory=lambda: env_optional_int("SNOWL_TOOLEMU_AGENT_MAX_TOKENS"))
-    simulator_max_tokens: int | None = field(default_factory=lambda: env_optional_int("SNOWL_TOOLEMU_SIMULATOR_MAX_TOKENS"))
+    agent_type: str = str(TOOLEMU_SETTINGS.get("agent_type", "naive"))
+    simulator_type: str = str(TOOLEMU_SETTINGS.get("simulator_type", "adv_thought"))
+    max_iterations: int = int(TOOLEMU_SETTINGS.get("max_iterations", 15))
+    verbose: bool = bool(TOOLEMU_SETTINGS.get("verbose", False))
+    agent_max_tokens: int | None = (
+        int(TOOLEMU_SETTINGS["agent_max_tokens"])
+        if TOOLEMU_SETTINGS.get("agent_max_tokens") is not None
+        else None
+    )
+    simulator_max_tokens: int | None = (
+        int(TOOLEMU_SETTINGS["simulator_max_tokens"])
+        if TOOLEMU_SETTINGS.get("simulator_max_tokens") is not None
+        else None
+    )
     _agent_llm: Any = field(default=None, init=False, repr=False)
     _simulator_llm: Any = field(default=None, init=False, repr=False)
 
@@ -96,6 +105,8 @@ class ToolEmuOfficialAgent:
             case_name=str(case.get("name") or ""),
             trajectory=trajectory,
             simple_trajectory=simple_trajectory,
+            output_dir=TOOLEMU_SETTINGS.get("output_dir"),
+            run_stamp=str(TOOLEMU_SETTINGS.get("run_stamp") or ""),
             extra={
                 "agent_type": self.agent_type,
                 "simulator_type": self.simulator_type,
@@ -133,11 +144,11 @@ def _build_toolemu_agent(
     provider: ProjectProviderConfig,
 ) -> ToolEmuOfficialAgent:
     _ = provider
-    if PROJECT_MATRIX.judge is None:
-        raise RuntimeError("toolemu-official requires judge.model in model.yml for simulator/evaluator roles")
+    if PROJECT.judge is None:
+        raise RuntimeError("toolemu-official requires judge.model in project.yml for simulator/evaluator roles")
     return ToolEmuOfficialAgent(
         model_config=model_entry.config,
-        simulator_config=PROJECT_MATRIX.judge.config,
+        simulator_config=PROJECT.judge.config,
     )
 
 

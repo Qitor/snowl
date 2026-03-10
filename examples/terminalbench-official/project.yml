@@ -1,0 +1,44 @@
+project:
+  name: terminalbench-qwen-sweep
+  root_dir: .
+
+provider:
+  id: siliconflow
+  kind: openai_compatible
+  base_url: https://api.siliconflow.cn/v1
+  api_key: sk-...
+  timeout: 30
+  max_retries: 2
+
+agent_matrix:
+  models:
+    - id: qwen3_32b
+      model: Qwen/Qwen3-32B
+    - id: qwen25_7b
+      model: Qwen/Qwen2.5-7B-Instruct
+
+eval:
+  benchmark: terminalbench
+  code:
+    base_dir: .
+    task_module: ./task.py
+    agent_module: ./agent.py
+    scorer_module: ./scorer.py
+  split: test
+  limit: 1
+
+runtime:
+  max_running_trials: 2
+  max_container_slots: auto
+  max_builds: 1
+  max_scoring_tasks: 2
+  provider_budgets:
+    siliconflow: 4
+
+benchmarks:
+  terminalbench:
+    compose_build: true
+    run_tests: false
+    max_episodes: 8
+    max_parse_retries: 3
+    temperature: 0.2

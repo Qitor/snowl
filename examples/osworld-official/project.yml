@@ -1,0 +1,53 @@
+project:
+  name: osworld-qwen-sweep
+  root_dir: .
+
+provider:
+  id: siliconflow
+  kind: openai_compatible
+  base_url: https://api.siliconflow.cn/v1
+  api_key: sk-...
+  timeout: 60
+  max_retries: 2
+
+agent_matrix:
+  models:
+    - id: qwen3_32b
+      model: Qwen/Qwen3-32B
+    - id: qwen25_7b
+      model: Qwen/Qwen2.5-7B-Instruct
+
+eval:
+  benchmark: osworld
+  code:
+    base_dir: .
+    task_module: ./task.py
+    agent_module: ./agent.py
+    scorer_module: ./scorer.py
+  split: test
+  limit: 20
+
+runtime:
+  max_running_trials: 2
+  max_container_slots: auto
+  max_builds: 1
+  max_scoring_tasks: 2
+  provider_budgets:
+    siliconflow: 4
+
+benchmarks:
+  osworld:
+    max_steps: 15
+    temperature: 0.2
+    observation_type: screenshot
+    recording: true
+    save_observation_frames: true
+    ready_timeout: 240
+    max_trajectory_length: 3
+    screenshot_retries: 3
+    screenshot_retry_wait_sec: 1.0
+    client_password: password
+    cap_add: NET_ADMIN
+    image: happysixd/osworld-docker
+    obs_frames_dir: .snowl/observations
+    recordings_dir: .snowl/recordings

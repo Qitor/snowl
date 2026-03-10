@@ -1,24 +1,24 @@
 # Snowl Examples Convention
 
-All examples are stored in top-level `examples/` (not under `snowl/`).
+All examples live in top-level `examples/`.
 
-Each example should be one folder:
+Recommended layout:
 
 ```text
 examples/
   <example_name>/
+    project.yml
     task.py
     agent.py
     scorer.py
-    model.yml      # recommended for provider + agent matrix
     tool.py        # optional
-    README.md      # optional but recommended
+    README.md      # recommended
 ```
 
 Run an example:
 
 ```bash
-snowl eval examples/<example_name>
+snowl eval examples/<example_name>/project.yml
 ```
 
 Official benchmark examples in this repo:
@@ -29,39 +29,29 @@ Official benchmark examples in this repo:
 - `examples/toolemu-official`
 - `examples/agentsafetybench-official`
 
-Some benchmark examples depend on reference repos under `references/`, especially:
+Some examples depend on reference repos under `references/`, especially:
 
-- `examples/toolemu-official` -> `references/ToolEmu`
-- `examples/agentsafetybench-official` -> `references/Agent-SafetyBench`
+- `toolemu-official` -> `references/ToolEmu`
+- `agentsafetybench-official` -> `references/Agent-SafetyBench`
+- `terminalbench-official` -> `references/terminal-bench`
+- `osworld-official` -> `references/OSWorld`
+
+Authoring rules:
+
+- `project.yml` is the source of truth
+- `eval.code.base_dir` plus module paths explicitly point to `task.py`, `agent.py`, `scorer.py`, and optional `tool.py`
+- keep tested models under `agent_matrix.models`
+- keep `judge.model` separate from tested models when a scorer uses a judge
+- prefer `build_model_variants(...)` for multi-model examples
 
 Variant filtering:
 
 ```bash
-snowl eval examples/<example_name> --agent <agent_id> --variant <variant_id>
+snowl eval examples/<example_name>/project.yml --agent <agent_id> --variant <variant_id>
 ```
 
-Benchmark compare with variants:
+Benchmark adapter mode:
 
 ```bash
-snowl bench run terminalbench --project examples/terminalbench-official --split test --variant v1,v2
+snowl bench run terminalbench --project examples/terminalbench-official/project.yml --split test --variant qwen25_7b
 ```
-
-Live CLI showcase demo:
-
-```bash
-snowl eval examples/terminalbench-official --keys "p,p,m,f,r"
-```
-
-See [`/Users/morinop/coding/snowl_v2/live_cli_demo.md`](/Users/morinop/coding/snowl_v2/live_cli_demo.md) for the full scripted flow.
-
-Authoring rule (default):
-
-- Keep examples minimal and direct.
-- Use decorator-first declarations: `@task`, `@agent`, `@scorer`.
-- Prefer factory functions returning objects (or lists) for lazy setup.
-- Avoid wrapper classes/functions unless they add real runtime logic
-  (e.g., lazy external resource initialization or stateful orchestration).
-- Fallback (non-decorator) discovery still works for compatibility.
-- For multi-model compare, declare models in `model.yml` under `agent_matrix.models`
-  and use `build_model_variants(...)` from `snowl.agents`.
-- Keep `judge.model` separate from tested agent models when a scorer uses a judge.

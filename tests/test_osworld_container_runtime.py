@@ -8,13 +8,6 @@ from snowl.benchmarks.osworld.container import OSWorldContainerLauncher
 
 def test_osworld_port_resolution_auto_allocates_unique_ports(monkeypatch) -> None:
     launcher = OSWorldContainerLauncher(repo_root=Path.cwd(), emit=None)
-    for key in (
-        "SNOWL_OSWORLD_SERVER_PORT",
-        "SNOWL_OSWORLD_CHROMIUM_PORT",
-        "SNOWL_OSWORLD_VNC_PORT",
-        "SNOWL_OSWORLD_VLC_PORT",
-    ):
-        monkeypatch.delenv(key, raising=False)
 
     # Simulate default ports busy to force allocation to next free values.
     busy = {5000, 9222, 8006, 8080}
@@ -31,11 +24,9 @@ def test_osworld_port_resolution_auto_allocates_unique_ports(monkeypatch) -> Non
 
 
 def test_osworld_prepare_retries_when_port_conflict(monkeypatch) -> None:
-    launcher = OSWorldContainerLauncher(repo_root=Path.cwd(), emit=None)
+    launcher = OSWorldContainerLauncher(repo_root=Path.cwd(), emit=None, settings={"start_retries": 2})
     vm = Path.cwd() / ".snowl_test_vm_Ubuntu.qcow2"
     vm.write_bytes(b"vm")
-
-    monkeypatch.setenv("SNOWL_OSWORLD_START_RETRIES", "2")
     monkeypatch.setattr(
         launcher,
         "_resolve_boot_inputs",
@@ -101,9 +92,6 @@ def test_osworld_prepare_retries_when_port_conflict(monkeypatch) -> None:
 
 def test_osworld_visual_ready_params_no_kvm_default(monkeypatch) -> None:
     launcher = OSWorldContainerLauncher(repo_root=Path.cwd(), emit=None)
-    monkeypatch.delenv("SNOWL_OSWORLD_VISUAL_READY_TIMEOUT", raising=False)
-    monkeypatch.delenv("SNOWL_OSWORLD_VISUAL_READY_MIN_SCREENSHOT_BYTES", raising=False)
-    monkeypatch.delenv("SNOWL_OSWORLD_VISUAL_READY_POLL_SEC", raising=False)
 
     timeout_sec, min_bytes, poll_sec = launcher._resolve_visual_ready_params(
         first_boot=False,

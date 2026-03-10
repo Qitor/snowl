@@ -11,7 +11,7 @@ export type RunRow = {
   run_id: string;
   experiment_id: string;
   benchmark: string;
-  status: "running" | "completed";
+  status: "running" | "completed" | "cancelled";
   done: number;
   total: number;
   failed: number;
@@ -20,13 +20,18 @@ export type RunRow = {
   variant_count: number;
   models: string[];
   is_live: boolean;
+  stalled: boolean;
+  attention_count: number;
+  has_task_monitor: boolean;
+  heartbeat_only: boolean;
+  last_progress_ts_ms: number | null;
 };
 
 export type RunSnapshot = {
   run_id: string;
   experiment_id: string;
   benchmark: string;
-  status: "running" | "completed";
+  status: "running" | "completed" | "cancelled";
   done: number;
   total: number;
   failed: number;
@@ -39,6 +44,15 @@ export type RunSnapshot = {
   path?: string;
   variant_count: number;
   models: string[];
+  planned_trials: number;
+  planned_tasks: number;
+  visible_task_rows: number;
+  scored_trials: number;
+  attention_task_count: number;
+  last_progress_ts_ms: number | null;
+  last_metric_ts_ms: number | null;
+  stalled: boolean;
+  heartbeat_only: boolean;
   identities: Array<{
     display_id: string;
     agent_id: string;
@@ -56,13 +70,15 @@ export type IdentitySummaryRow = {
   rank_score: number;
   count?: number;
   status_counts?: Record<string, number>;
+  scored_trials?: number;
+  metric_counts?: Record<string, number>;
 };
 
 export type RunSummaryResponse = {
   run_id: string;
   experiment_id: string;
   benchmark: string;
-  status: "running" | "completed";
+  status: "running" | "completed" | "cancelled";
   primary_dimension: "variant-first" | "benchmark-first";
   variant_count: number;
   models: string[];
@@ -81,6 +97,9 @@ export type RunSummaryResponse = {
   };
   agents: IdentitySummaryRow[];
   matrix: Record<string, Record<string, number>>;
+  scored_trials: number;
+  scored_trials_by_identity: Record<string, number>;
+  metric_counts: Record<string, Record<string, number>>;
 };
 
 export type ExperimentSummaryResponse = {

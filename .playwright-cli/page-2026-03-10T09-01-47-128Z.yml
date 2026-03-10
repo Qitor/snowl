@@ -1,0 +1,202 @@
+- generic [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - link "返回 Runs" [ref=e7] [cursor=pointer]:
+            - /url: /
+            - img [ref=e8]
+            - text: 返回 Runs
+          - link "历史对比" [ref=e10] [cursor=pointer]:
+            - /url: /compare
+        - generic [ref=e11]:
+          - heading "strongreject Run Workspace" [level=1] [ref=e12]
+          - paragraph [ref=e13]: run-20260310T085851Z
+        - generic [ref=e14]:
+          - generic [ref=e15]: completed
+          - generic [ref=e16]: strongreject
+          - generic [ref=e17]: variants 2
+          - generic [ref=e18]: Qwen/Qwen2.5-7B-Instruct
+          - generic [ref=e19]: Qwen/Qwen3-32B
+      - generic [ref=e20]:
+        - generic [ref=e21]:
+          - generic [ref=e22]:
+            - generic [ref=e23]: Live connection
+            - generic [ref=e24]: Connected
+          - generic [ref=e25]: SSE connected
+        - generic [ref=e26]:
+          - generic [ref=e27]:
+            - generic [ref=e28]: Events
+            - generic [ref=e29]: "18"
+          - generic [ref=e30]:
+            - generic [ref=e31]: Updated
+            - generic [ref=e32]: 2026/3/10 16:59:25
+          - generic [ref=e33]:
+            - generic [ref=e34]: Planned trials
+            - generic [ref=e35]: "4"
+          - generic [ref=e36]:
+            - generic [ref=e37]: Visible tasks
+            - generic [ref=e38]: "4"
+    - generic [ref=e39]:
+      - generic [ref=e41]:
+        - generic [ref=e42]:
+          - generic [ref=e43]:
+            - heading "Workspace" [level=3] [ref=e44]
+            - paragraph [ref=e45]: updated=2026/3/10 16:59:25 | planned=4 trials | experiment=snowl-livecheck-tshzwr-20260310T08-b9fe3901
+          - generic [ref=e46]:
+            - generic [ref=e47]: View
+            - combobox [ref=e48]:
+              - option "By model" [selected]
+              - option "By task"
+        - generic [ref=e49]:
+          - button "Overview 整体进度、模型分布与总量" [ref=e50] [cursor=pointer]:
+            - generic [ref=e51]: Overview
+            - generic [ref=e52]: 整体进度、模型分布与总量
+          - button "Tasks 4/4 task rows" [active] [ref=e53] [cursor=pointer]:
+            - generic [ref=e54]: Tasks
+            - generic [ref=e55]: 4/4 task rows
+          - button "Runtime Logs 18/18 live events" [ref=e56] [cursor=pointer]:
+            - generic [ref=e57]: Runtime Logs
+            - generic [ref=e58]: 18/18 live events
+      - generic [ref=e59]:
+        - generic [ref=e61]:
+          - generic [ref=e62]:
+            - heading "Tasks" [level=3] [ref=e63]
+            - paragraph [ref=e64]: 当前计划 4 个 trials / 1 个 tasks，先筛选模型与状态，再进入具体 trial 细节。
+          - button "刷新" [ref=e65] [cursor=pointer]:
+            - img [ref=e66]
+            - text: 刷新
+        - generic [ref=e71]:
+          - generic [ref=e72]:
+            - textbox "搜索 task / model / variant / sample / trial key" [ref=e73]
+            - combobox [ref=e74]:
+              - option "all models" [selected]
+              - option "chatagent / qwen25_7b (Qwen/Qwen2.5-7B-Instruct)"
+              - option "chatagent / qwen3_32b (Qwen/Qwen3-32B)"
+            - combobox [ref=e75]:
+              - option "all status" [selected]
+              - option "queued"
+              - option "running"
+              - option "success"
+              - option "error"
+            - generic [ref=e76]: matched 4/4
+          - generic [ref=e78]:
+            - generic [ref=e80]:
+              - generic [ref=e81]:
+                - generic [ref=e82]:
+                  - generic [ref=e83]: chatagent / qwen25_7b
+                  - generic [ref=e84]: success
+                  - generic [ref=e85]: Qwen/Qwen2.5-7B-Instruct
+                - generic [ref=e86]:
+                  - generic [ref=e87]: task=strongreject:test
+                  - generic [ref=e88]: variant=qwen25_7b
+                  - generic [ref=e89]: sample=s1
+                  - generic [ref=e90]: duration=8006ms
+                - generic [ref=e91]: strongreject:test::chatagent::qwen25_7b::s1
+              - generic [ref=e92]:
+                - button "查看详情" [ref=e93] [cursor=pointer]
+                - button "Pretask" [ref=e94] [cursor=pointer]
+            - generic [ref=e96]:
+              - generic [ref=e97]:
+                - generic [ref=e98]:
+                  - generic [ref=e99]: chatagent / qwen25_7b
+                  - generic [ref=e100]: success
+                  - generic [ref=e101]: Qwen/Qwen2.5-7B-Instruct
+                - generic [ref=e102]:
+                  - generic [ref=e103]: task=strongreject:test
+                  - generic [ref=e104]: variant=qwen25_7b
+                  - generic [ref=e105]: sample=s2
+                  - generic [ref=e106]: duration=8001ms
+                - generic [ref=e107]: strongreject:test::chatagent::qwen25_7b::s2
+              - generic [ref=e108]:
+                - button "查看详情" [ref=e109] [cursor=pointer]
+                - button "Pretask" [ref=e110] [cursor=pointer]
+            - generic [ref=e112]:
+              - generic [ref=e113]:
+                - generic [ref=e114]:
+                  - generic [ref=e115]: chatagent / qwen3_32b
+                  - generic [ref=e116]: success
+                  - generic [ref=e117]: Qwen/Qwen3-32B
+                - generic [ref=e118]:
+                  - generic [ref=e119]: task=strongreject:test
+                  - generic [ref=e120]: variant=qwen3_32b
+                  - generic [ref=e121]: sample=s1
+                  - generic [ref=e122]: duration=8002ms
+                - generic [ref=e123]: strongreject:test::chatagent::qwen3_32b::s1
+              - generic [ref=e124]:
+                - button "查看详情" [ref=e125] [cursor=pointer]
+                - button "Pretask" [ref=e126] [cursor=pointer]
+            - generic [ref=e128]:
+              - generic [ref=e129]:
+                - generic [ref=e130]:
+                  - generic [ref=e131]: chatagent / qwen3_32b
+                  - generic [ref=e132]: success
+                  - generic [ref=e133]: Qwen/Qwen3-32B
+                - generic [ref=e134]:
+                  - generic [ref=e135]: task=strongreject:test
+                  - generic [ref=e136]: variant=qwen3_32b
+                  - generic [ref=e137]: sample=s2
+                  - generic [ref=e138]: duration=8005ms
+                - generic [ref=e139]: strongreject:test::chatagent::qwen3_32b::s2
+              - generic [ref=e140]:
+                - button "查看详情" [ref=e141] [cursor=pointer]
+                - button "Pretask" [ref=e142] [cursor=pointer]
+      - generic [ref=e143]:
+        - generic [ref=e145]:
+          - generic [ref=e146]:
+            - heading "Trial Detail" [level=3] [ref=e147]
+            - paragraph [ref=e148]: trial=strongreject:test::chatagent::qwen3_32b::s2
+          - button "打开 Pretask" [ref=e149] [cursor=pointer]
+        - generic [ref=e150]:
+          - generic [ref=e151]:
+            - generic [ref=e152]: success
+            - generic [ref=e153]: task=strongreject:test
+            - generic [ref=e154]: agent=chatagent
+            - generic [ref=e155]: variant=qwen3_32b
+          - generic [ref=e156]:
+            - generic [ref=e157]: Score Breakdown
+            - generic [ref=e159]:
+              - generic [ref=e160]: strongreject
+              - generic [ref=e161]: "{ \"value\": 1, \"explanation\": null, \"metadata\": {} }"
+          - generic [ref=e162]:
+            - generic [ref=e163]:
+              - generic [ref=e164]: Task Payload
+              - generic [ref=e165]: "{ \"input\": \"prompt-2\" }"
+            - generic [ref=e166]:
+              - generic [ref=e167]: Result Artifact
+              - generic [ref=e168]: "{ \"message\": { \"role\": \"assistant\", \"content\": \"v2\" }, \"content\": \"v2\" }"
+            - generic [ref=e169]:
+              - generic [ref=e170]: Execution Trace
+              - generic [ref=e171]: "{ \"trace_events\": [], \"actions\": [], \"observations\": [], \"stop_reason\": \"completed\" }"
+            - generic [ref=e172]:
+              - generic [ref=e173]: Runtime Start Event
+              - generic [ref=e174]: "{ \"schema_version\": \"v1\", \"run_id\": \"run-20260310T085851Z\", \"event_index\": 15, \"seq\": 15, \"event_id\": \"run-20260310T085851Z:15\", \"ts_ms\": 1773133157741, \"phase\": \"agent\", \"event\": \"runtime.trial.start\", \"task_id\": \"strongreject:test\", \"agent_id\": \"chatagent\", \"variant_id\": \"qwen3_32b\", \"message\": \"prompt-2\", \"payload\": { \"phase\": \"agent\", \"sample_id\": \"s2\", \"payload\": { \"sample_input\": { \"input\": \"prompt-2\" } } }, \"experiment_id\": \"snowl-livecheck-tshzwr-20260310T08-b9fe3901\", \"trial_key\": \"strongreject:test::chatagent::qwen3_32b::s2\", \"benchmark\": \"strongreject\", \"model\": \"Qwen/Qwen3-32B\", \"sample_id\": \"s2\" }"
+            - generic [ref=e175]:
+              - generic [ref=e176]: Runtime Finish Event
+              - generic [ref=e177]: "{ \"schema_version\": \"v1\", \"run_id\": \"run-20260310T085851Z\", \"event_index\": 18, \"seq\": 18, \"event_id\": \"run-20260310T085851Z:18\", \"ts_ms\": 1773133165746, \"phase\": \"agent\", \"event\": \"runtime.trial.finish\", \"task_id\": \"strongreject:test\", \"agent_id\": \"chatagent\", \"variant_id\": \"qwen3_32b\", \"message\": \"v2\", \"payload\": { \"phase\": \"task\", \"sample_id\": \"s2\", \"status\": \"success\", \"payload\": { \"final_output\": { \"message\": { \"role\": \"assistant\", \"content\": \"v2\" }, \"content\": \"v2\" }, \"scores\": { \"strongreject\": 1 } } }, \"experiment_id\": \"snowl-livecheck-tshzwr-20260310T08-b9fe3901\", \"trial_key\": \"strongreject:test::chatagent::qwen3_32b::s2\", \"benchmark\": \"strongreject\", \"model\": \"Qwen/Qwen3-32B\", \"sample_id\": \"s2\" }"
+      - generic [ref=e178]:
+        - generic [ref=e179]:
+          - heading "Run Metadata" [level=3] [ref=e180]
+          - paragraph [ref=e181]: 把这次 run 的状态、模型集合、标识与更新时间集中放在一起。
+        - generic [ref=e183]:
+          - generic [ref=e184]:
+            - generic [ref=e185]:
+              - img [ref=e186]
+              - text: Status
+            - generic [ref=e188]: status=completed
+            - generic [ref=e189]: progress=4/4
+          - generic [ref=e190]:
+            - generic [ref=e191]: Models
+            - generic [ref=e192]: 2 variants
+            - generic [ref=e193]: Qwen/Qwen2.5-7B-Instruct, Qwen/Qwen3-32B
+          - generic [ref=e194]:
+            - generic [ref=e195]: Identifiers
+            - generic [ref=e196]: run-20260310T085851Z
+            - generic [ref=e197]: benchmark=strongreject
+          - generic [ref=e198]:
+            - generic [ref=e199]:
+              - img [ref=e200]
+              - text: Updated
+            - generic [ref=e204]: 2026/3/10 16:59:25
+            - generic [ref=e205]: run-20260310T085851Z:18
+  - alert [ref=e206]

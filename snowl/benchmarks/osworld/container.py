@@ -37,14 +37,6 @@ OSWORLD_PORT_DEFAULTS: dict[int, int] = {
     8006: 8006,
     8080: 8080,
 }
-OSWORLD_PORT_ENV: dict[int, str] = {
-    5000: "SNOWL_OSWORLD_SERVER_PORT",
-    9222: "SNOWL_OSWORLD_CHROMIUM_PORT",
-    8006: "SNOWL_OSWORLD_VNC_PORT",
-    8080: "SNOWL_OSWORLD_VLC_PORT",
-}
-
-
 @dataclass
 class OSWorldPrepareResult:
     env: GuiEnv
@@ -57,9 +49,16 @@ class OSWorldContainerLauncher:
         *,
         repo_root: Path,
         emit: Callable[[dict[str, Any]], None] | None = None,
+        settings: Mapping[str, Any] | None = None,
     ) -> None:
         self._repo_root = repo_root
         self._emit = emit if callable(emit) else None
+        self._settings = dict(settings or {})
+
+    def _setting(self, key: str, default: Any = None) -> Any:
+        if key in self._settings:
+            return self._settings.get(key)
+        return default
 
     def _emit_event(self, event: dict[str, Any]) -> None:
         if self._emit is None:
@@ -70,7 +69,7 @@ class OSWorldContainerLauncher:
             return
 
     def _osworld_vm_cache_dir(self) -> Path:
-        raw = str(os.getenv("SNOWL_OSWORLD_VM_CACHE_DIR", "")).strip()
+        raw = str(self._setting("vm_cache_dir", "")).strip()
         if raw:
             return Path(raw).expanduser().resolve()
         return self._repo_root / "references" / "OSWorld" / "docker_vm_data"
@@ -144,7 +143,7 @@ class OSWorldContainerLauncher:
 
     def _ensure_default_osworld_vm(self) -> tuple[Path, bool]:
         cache_dir = self._osworld_vm_cache_dir()
-        vm_url = str(os.getenv("SNOWL_OSWORLD_VM_URL", OSWORLD_DEFAULT_BOOT_URL)).strip()
+        vm_url = str(self._setting("vm_url", OSWORLD_DEFAULT_BOOT_URL)).strip()
         vm_name = self._vm_name_from_url(vm_url)
         vm_path = cache_dir / vm_name
         if vm_path.exists():
@@ -198,8 +197,8 @@ class OSWorldContainerLauncher:
         return vm_path, True
 
     def _resolve_boot_inputs(self) -> tuple[dict[str, str], dict[str, str], bool, dict[str, Any]]:
-        explicit_vm_path = str(os.getenv("SNOWL_OSWORLD_VM_PATH", "")).strip()
-        explicit_boot_url = str(os.getenv("SNOWL_OSWORLD_BOOT", "")).strip()
+        explicit_vm_path = str(self._setting("vm_path", "")).strip()
+        explicit_boot_url = str(self._setting("boot", "")).strip()
         container_env: dict[str, str] = {}
         volumes: dict[str, str] = {}
         boot_config: dict[str, Any] = {
@@ -213,7 +212,7 @@ class OSWorldContainerLauncher:
         if explicit_vm_path:
             vm_file = Path(explicit_vm_path).expanduser().resolve()
             if not vm_file.exists():
-                raise RuntimeError(f"SNOWL_OSWORLD_VM_PATH not found: {vm_file}")
+                raise RuntimeError(f"osworld.vm_path not found: {vm_file}")
             volumes[str(vm_file)] = "/System.qcow2:ro"
             boot_config.update({"vm_path_set": True, "source": "env_vm_path", "vm_path": str(vm_file)})
         elif explicit_boot_url:
@@ -233,15 +232,14 @@ class OSWorldContainerLauncher:
                 }
             )
 
-        for key in ("SNOWL_OSWORLD_DISK_SIZE", "SNOWL_OSWORLD_RAM_SIZE", "SNOWL_OSWORLD_CPU_CORES", "SNOWL_OSWORLD_KVM"):
-            value = str(os.getenv(key, "")).strip()
+        for setting_key, mapped in (
+            ("disk_size", "DISK_SIZE"),
+            ("ram_size", "RAM_SIZE"),
+            ("cpu_cores", "CPU_CORES"),
+            ("kvm", "KVM"),
+        ):
+            value = str(self._setting(setting_key, "")).strip()
             if value:
-                mapped = {
-                    "SNOWL_OSWORLD_DISK_SIZE": "DISK_SIZE",
-                    "SNOWL_OSWORLD_RAM_SIZE": "RAM_SIZE",
-                    "SNOWL_OSWORLD_CPU_CORES": "CPU_CORES",
-                    "SNOWL_OSWORLD_KVM": "KVM",
-                }[key]
                 container_env[mapped] = value
 
         defaults = {"DISK_SIZE": "32G", "RAM_SIZE": "4G", "CPU_CORES": "4"}
@@ -251,7 +249,7 @@ class OSWorldContainerLauncher:
         return container_env, volumes, first_boot, boot_config
 
     def _resolve_cap_add(self) -> list[str]:
-        raw = str(os.getenv("SNOWL_OSWORLD_CAP_ADD", "NET_ADMIN")).strip()
+        raw = str(self._setting("cap_add", "NET_ADMIN")).strip()
         if not raw or raw.lower() in {"0", "false", "off", "none"}:
             return []
         caps: list[str] = []
@@ -294,18 +292,20 @@ class OSWorldContainerLauncher:
         reserved: set[int] = set()
         has_explicit = False
         for c_port in OSWORLD_CONTAINER_PORTS:
-            env_key = OSWORLD_PORT_ENV[c_port]
-            raw = str(os.getenv(env_key, "")).strip()
+            explicit_ports = self._settings.get("ports")
+            raw = ""
+            if isinstance(explicit_ports, Mapping):
+                raw = str(explicit_ports.get(str(c_port)) or explicit_ports.get(c_port) or "").strip()
             if not raw:
                 continue
             has_explicit = True
             host_port = int(raw)
             if host_port < 1 or host_port > 65535:
-                raise RuntimeError(f"{env_key} must be in [1, 65535], got: {host_port}")
+                raise RuntimeError(f"osworld.ports.{c_port} must be in [1, 65535], got: {host_port}")
             if host_port in reserved:
-                raise RuntimeError(f"{env_key} duplicates another OSWorld host port: {host_port}")
+                raise RuntimeError(f"osworld.ports.{c_port} duplicates another OSWorld host port: {host_port}")
             if not self._is_port_available(host_port):
-                raise RuntimeError(f"{env_key}={host_port} is already in use on localhost.")
+                raise RuntimeError(f"osworld.ports.{c_port}={host_port} is already in use on localhost.")
             ports[c_port] = host_port
             reserved.add(host_port)
         for c_port in OSWORLD_CONTAINER_PORTS:
@@ -322,9 +322,9 @@ class OSWorldContainerLauncher:
         first_boot: bool,
         kvm_disabled: bool,
     ) -> tuple[float, int, float]:
-        timeout_raw = str(os.getenv("SNOWL_OSWORLD_VISUAL_READY_TIMEOUT", "")).strip()
-        min_bytes_raw = str(os.getenv("SNOWL_OSWORLD_VISUAL_READY_MIN_SCREENSHOT_BYTES", "")).strip()
-        poll_raw = str(os.getenv("SNOWL_OSWORLD_VISUAL_READY_POLL_SEC", "")).strip()
+        timeout_raw = str(self._setting("visual_ready_timeout", "")).strip()
+        min_bytes_raw = str(self._setting("visual_ready_min_screenshot_bytes", "")).strip()
+        poll_raw = str(self._setting("visual_ready_poll_sec", "")).strip()
 
         if timeout_raw:
             timeout_sec = max(1.0, float(timeout_raw))
@@ -425,13 +425,13 @@ class OSWorldContainerLauncher:
             or not host_kvm_exists
         )
 
-        start_retry_raw = str(os.getenv("SNOWL_OSWORLD_START_RETRIES", "")).strip()
+        start_retry_raw = str(self._setting("start_retries", "")).strip()
         if start_retry_raw:
             start_retries = max(1, int(start_retry_raw))
         else:
             start_retries = OSWORLD_DEFAULT_PORT_RETRY_ATTEMPTS
 
-        timeout_raw = str(os.getenv("SNOWL_OSWORLD_READY_TIMEOUT", "")).strip()
+        timeout_raw = str(self._setting("ready_timeout", "")).strip()
         if timeout_raw:
             ready_timeout_sec = max(1.0, float(timeout_raw))
         else:
@@ -458,7 +458,7 @@ class OSWorldContainerLauncher:
             config={"ready_timeout_sec": ready_timeout_sec},
         )
 
-        image = os.getenv("SNOWL_OSWORLD_IMAGE", "happysixd/osworld-docker")
+        image = str(self._setting("image", "happysixd/osworld-docker"))
         self._emit_event(
             {
                 "event": "osworld.container.config",
@@ -532,7 +532,7 @@ class OSWorldContainerLauncher:
                 logs_text = "\n".join(x for x in (logs_stdout, logs_stderr) if x).strip()
                 no_kvm_hint = (
                     " Host has no KVM acceleration; OS boot may take much longer before GUI becomes usable. "
-                    "Increase SNOWL_OSWORLD_VISUAL_READY_TIMEOUT if needed."
+                    "Increase osworld.visual_ready_timeout if needed."
                     if kvm_disabled
                     else ""
                 )
@@ -567,12 +567,12 @@ class OSWorldContainerLauncher:
             if "downloading" in lower_logs and "qcow2" in lower_logs:
                 hint += (
                     " OSWorld is downloading the VM image on first boot; increase "
-                    "SNOWL_OSWORLD_READY_TIMEOUT (e.g. 1800 seconds) and retry."
+                    "osworld.ready_timeout (e.g. 1800 seconds) and retry."
                 )
             if self._is_port_conflict(start_evt=start_evt, logs_text=logs_text):
                 hint += (
                     " Host port conflict detected. Re-run with --max-trials 1, or let Snowl auto-assign "
-                    "ports by not pinning SNOWL_OSWORLD_*_PORT env vars."
+                    "ports by not pinning osworld.ports in project.yml."
                 )
 
             try:

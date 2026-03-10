@@ -4,7 +4,6 @@ import base64
 import importlib.util
 import hashlib
 import json
-import os
 import re
 import time
 from dataclasses import dataclass
@@ -22,6 +21,11 @@ from snowl.model import (
     ProjectModelEntry,
     ProjectProviderConfig,
 )
+from snowl.project_config import load_project_config
+
+
+PROJECT = load_project_config(Path(__file__).parent)
+OSWORLD_SETTINGS = PROJECT.benchmark_settings("osworld")
 
 
 def _extract_json(text: str) -> dict[str, Any] | None:
@@ -46,7 +50,7 @@ def _extract_json(text: str) -> dict[str, Any] | None:
 
 
 def _resolve_cap_add() -> list[str]:
-    raw = str(os.getenv("SNOWL_OSWORLD_CAP_ADD", "NET_ADMIN")).strip()
+    raw = str(OSWORLD_SETTINGS.get("cap_add", "NET_ADMIN")).strip()
     if not raw or raw.lower() in {"0", "false", "off", "none"}:
         return []
     caps: list[str] = []
@@ -63,9 +67,11 @@ def _resolve_cap_add() -> list[str]:
     return caps
 
 
-def _truthy_env(name: str, default: bool = False) -> bool:
-    raw = str(os.getenv(name, "1" if default else "0")).strip().lower()
-    return raw in {"1", "true", "yes", "on"}
+def _truthy_setting(name: str, default: bool = False) -> bool:
+    value = OSWORLD_SETTINGS.get(name, default)
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _safe_name(value: str) -> str:
@@ -82,13 +88,13 @@ def _clip_text(value: str, limit: int = 600) -> str:
 
 
 def _resolve_observation_type(model_name: str) -> str:
-    env_raw = os.getenv("SNOWL_OSWORLD_OBSERVATION_TYPE")
+    env_raw = OSWORLD_SETTINGS.get("observation_type")
     if env_raw is None or not str(env_raw).strip():
         return "screenshot" if _supports_vision(model_name) else "a11y_tree"
     raw = str(env_raw).strip().lower()
     if raw not in {"screenshot", "a11y_tree", "screenshot_a11y_tree"}:
         raise ValueError(
-            "SNOWL_OSWORLD_OBSERVATION_TYPE must be one of: "
+            "osworld.observation_type must be one of: "
             "screenshot, a11y_tree, screenshot_a11y_tree."
         )
     return raw
@@ -222,8 +228,8 @@ def _ensure_screenshot_for_vlm(
 ) -> tuple[dict[str, Any], int]:
     if len(bytes(obs.get("screenshot") or b"")) > 0:
         return obs, 0
-    retries = max(1, int(os.getenv("SNOWL_OSWORLD_SCREENSHOT_RETRIES", "3")))
-    wait_sec = max(0.1, float(os.getenv("SNOWL_OSWORLD_SCREENSHOT_RETRY_WAIT_SEC", "1.0")))
+    retries = max(1, int(OSWORLD_SETTINGS.get("screenshot_retries", 3)))
+    wait_sec = max(0.1, float(OSWORLD_SETTINGS.get("screenshot_retry_wait_sec", 1.0)))
     latest = obs
     attempts = 0
     for _ in range(retries):
@@ -245,16 +251,11 @@ def _save_observation_frame(
     step: int,
     screenshot_bytes: bytes,
 ) -> str | None:
-    enabled = str(os.getenv("SNOWL_OSWORLD_SAVE_OBSERVATION_FRAMES", "1")).strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    enabled = _truthy_setting("save_observation_frames", default=True)
     if not enabled or not screenshot_bytes:
         return None
     out_dir = (
-        Path(os.getenv("SNOWL_OSWORLD_OBS_FRAMES_DIR", ".snowl/observations"))
+        Path(str(OSWORLD_SETTINGS.get("obs_frames_dir", ".snowl/observations")))
         / _safe_name(sample_id or "sample")
         / _safe_name(variant_id or "default")
     )
@@ -352,12 +353,12 @@ def _extract_actions_and_status(content: str) -> tuple[list[Any], bool | None, s
 class OSWorldOfficialAgent:
     model_config: OpenAICompatibleConfig
     agent_id: str = "osworld_official_agent"
-    max_steps: int = int(os.getenv("SNOWL_OSWORLD_MAX_STEPS", "15"))
-    temperature: float = float(os.getenv("SNOWL_OSWORLD_TEMPERATURE", "0.2"))
+    max_steps: int = int(OSWORLD_SETTINGS.get("max_steps", 15))
+    temperature: float = float(OSWORLD_SETTINGS.get("temperature", 0.2))
 
     def __post_init__(self) -> None:
         self._client = OpenAICompatibleChatClient(self.model_config)
-        self._client_password = str(os.getenv("SNOWL_OSWORLD_CLIENT_PASSWORD", "password"))
+        self._client_password = str(OSWORLD_SETTINGS.get("client_password", "password"))
 
     async def run(self, state: AgentState, context: AgentContext, tools=None) -> AgentState:
         _ = tools
@@ -390,7 +391,7 @@ class OSWorldOfficialAgent:
                         "gui.terminate",
                     ),
                 ),
-                config={"ready_timeout_sec": float(os.getenv("SNOWL_OSWORLD_READY_TIMEOUT", "240"))},
+                config={"ready_timeout_sec": float(OSWORLD_SETTINGS.get("ready_timeout", 240))},
             )
         )
         managed_by_runtime = managed_env is not None
@@ -407,21 +408,21 @@ class OSWorldOfficialAgent:
             _resolve_system_prompt(observation_type),
             self._client_password,
         )
-        max_trajectory_length = max(0, int(os.getenv("SNOWL_OSWORLD_MAX_TRAJECTORY_LENGTH", "3")))
+        max_trajectory_length = max(0, int(OSWORLD_SETTINGS.get("max_trajectory_length", 3)))
         prompt_user_history: list[str | list[dict[str, Any]]] = []
         prompt_assistant_history: list[str] = []
         observe_accessibility = observation_type in {"a11y_tree", "screenshot_a11y_tree"}
         observe_terminal = False
-        record_enabled = _truthy_env("SNOWL_OSWORLD_RECORDING", default=True)
+        record_enabled = _truthy_setting("recording", default=True)
         recording_started = False
         run_error: Exception | None = None
 
         try:
             if not managed_by_runtime:
-                emit({"event": "osworld.container.config", "image": os.getenv("SNOWL_OSWORLD_IMAGE", "happysixd/osworld-docker")})
+                emit({"event": "osworld.container.config", "image": str(OSWORLD_SETTINGS.get("image", "happysixd/osworld-docker"))})
                 emit({"event": "osworld.container.starting"})
                 start_evt = env.start_container(
-                    image=os.getenv("SNOWL_OSWORLD_IMAGE", "happysixd/osworld-docker"),
+                    image=str(OSWORLD_SETTINGS.get("image", "happysixd/osworld-docker")),
                     cap_add=_resolve_cap_add(),
                 )
                 trace_events.append(start_evt)
@@ -497,7 +498,7 @@ class OSWorldOfficialAgent:
                 ):
                     raise RuntimeError(
                         "Observation type requires screenshot, but current model is not a VLM. "
-                        "Set SNOWL_OSWORLD_OBSERVATION_TYPE=a11y_tree or switch to a vision model."
+                        "Set osworld.observation_type=a11y_tree or switch to a vision model."
                     )
                 screenshot_bytes = bytes(obs.get("screenshot") or b"")
                 saved_frame_path = _save_observation_frame(
@@ -745,7 +746,7 @@ class OSWorldOfficialAgent:
                 rec_stop = env.end_recording()
                 rec_bytes = bytes(rec_stop.get("recording_bytes") or b"")
                 if rec_bytes:
-                    rec_dir = Path(os.getenv("SNOWL_OSWORLD_RECORDINGS_DIR", ".snowl/recordings"))
+                    rec_dir = Path(str(OSWORLD_SETTINGS.get("recordings_dir", ".snowl/recordings")))
                     sample_token = _safe_name(str(sample.get("id") or context.sample_id or "sample"))
                     variant_token = _safe_name(variant_id)
                     rec_name = f"osworld__{sample_token}__{variant_token}__{int(time.time() * 1000)}.mp4"

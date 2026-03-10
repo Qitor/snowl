@@ -6,11 +6,12 @@ from snowl.benchmarks.toolemu import ToolEmuScorer, build_tool_emu_llm
 from snowl.benchmarks.toolemu.runtime import persist_tool_emu_scores
 from snowl.core import scorer as declare_scorer
 from snowl.core import Score, ScoreContext, TaskResult
-from snowl.model import load_project_model_matrix
-from snowl.utils.env import env_optional_int
+from snowl.project_config import load_project_config
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
+PROJECT = load_project_config(PROJECT_DIR)
+TOOLEMU_SETTINGS = PROJECT.benchmark_settings("toolemu")
 
 
 class SavingToolEmuScorer(ToolEmuScorer):
@@ -34,6 +35,8 @@ class SavingToolEmuScorer(ToolEmuScorer):
             project_dir=PROJECT_DIR,
             sample_id=context.sample_id,
             case_name=case_name,
+            output_dir=TOOLEMU_SETTINGS.get("output_dir"),
+            run_stamp=str(TOOLEMU_SETTINGS.get("run_stamp") or ""),
             scores={
                 metric: {
                     "value": score.value,
@@ -49,16 +52,19 @@ class SavingToolEmuScorer(ToolEmuScorer):
 
 @declare_scorer()
 def scorer() -> ToolEmuScorer:
-    matrix = load_project_model_matrix(PROJECT_DIR)
-    if matrix.judge is None:
-        raise RuntimeError("toolemu-official scorer requires judge.model in model.yml")
+    if PROJECT.judge is None:
+        raise RuntimeError("toolemu-official scorer requires judge.model in project.yml")
     evaluator_llm = build_tool_emu_llm(
         "evaluator",
-        model_name=matrix.judge.model,
-        openai_api_key=matrix.judge.config.api_key,
-        openai_api_base=matrix.judge.config.base_url,
-        request_timeout=int(matrix.judge.config.timeout),
-        max_retries=matrix.judge.config.max_retries,
-        max_tokens=env_optional_int("SNOWL_TOOLEMU_EVALUATOR_MAX_TOKENS"),
+        model_name=PROJECT.judge.model,
+        openai_api_key=PROJECT.judge.config.api_key,
+        openai_api_base=PROJECT.judge.config.base_url,
+        request_timeout=int(PROJECT.judge.config.timeout),
+        max_retries=PROJECT.judge.config.max_retries,
+        max_tokens=(
+            int(TOOLEMU_SETTINGS["evaluator_max_tokens"])
+            if TOOLEMU_SETTINGS.get("evaluator_max_tokens") is not None
+            else None
+        ),
     )
     return SavingToolEmuScorer(evaluator_llm=evaluator_llm)

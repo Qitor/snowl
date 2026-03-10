@@ -35,7 +35,8 @@ Concrete work:
 - standardize event schema and phase semantics
 - reduce duplicated source-of-truth areas between `webui/` and `snowl/_webui/`
 - strengthen smoke tests for `snowl eval`, `snowl bench run`, and monitor startup
-- finish the new project-level model matrix authoring path across QA, TerminalBench, and OSWorld examples
+- finish the YAML-first `project.yml` entrypoint across official examples and docs
+- remove user-facing env-driven provider/benchmark knobs in favor of explicit project config
 
 Exit criteria:
 
@@ -85,17 +86,19 @@ Goals:
 
 Concrete work:
 
+- provider-aware budgets for agent and judge calls
+- execute/score phase decoupling so scoring does not consume trial execution capacity
 - stronger warm-pool and spec-hash reuse
 - better retry/resume semantics
 - clearer pretask and container lifecycle diagnostics
-- more explicit resource governance and quotas
-- larger-scale reliability tests
+- larger-scale reliability tests and synthetic throughput baselines
 
 Exit criteria:
 
 - long-running matrix evals fail less often due to orchestration issues
 - failures are inspectable without reading raw ad hoc logs
 - rerun and resume paths are trustworthy
+- runtime throughput improvements are measurable and reproducible
 
 ## Phase 3: Extensibility And Ecosystem Fit
 

@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 from snowl.benchmarks import get_default_benchmark_registry, run_conformance
 from snowl.eval import EvalRenderer, EvalRunBootstrap, EvalRunResult, load_project_components, run_eval_with_components
+from snowl.project_config import find_project_file, load_project_config
 
 
 def _parse_filter_kv(values: list[str] | None) -> dict[str, Any]:
@@ -67,8 +68,10 @@ async def run_benchmark(
     )
 
     base = Path(project_path).resolve()
-    base_dir = base if base.is_dir() else base.parent
-    components = load_project_components(base_dir, require_task_file=False)
+    entry_path = find_project_file(base) or base
+    project_config = load_project_config(entry_path) if entry_path.suffix.lower() in {".yml", ".yaml"} else None
+    base_dir = project_config.root_dir if project_config is not None else (base if base.is_dir() else base.parent)
+    components = load_project_components(entry_path, require_task_file=False)
 
     rerun_cmd = " ".join(
         [
@@ -88,6 +91,7 @@ async def run_benchmark(
     )
 
     return await run_eval_with_components(
+        entry_path=entry_path,
         base_dir=base_dir,
         tasks=tasks,
         agents=components.agents,
@@ -102,6 +106,7 @@ async def run_benchmark(
         max_sandboxes=max_sandboxes,
         max_builds=max_builds,
         max_model_calls=max_model_calls,
+        project_config=project_config,
         experiment_id=experiment_id,
         on_run_bootstrap=on_run_bootstrap,
     )

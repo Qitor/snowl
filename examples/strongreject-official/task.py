@@ -5,16 +5,22 @@ from pathlib import Path
 from snowl.benchmarks.example_task import load_single_task
 from snowl.benchmarks.strongreject import StrongRejectBenchmarkAdapter
 from snowl.core import Task, task as declare_task
+from snowl.project_config import load_project_config
 
 
 ROOT = Path(__file__).resolve().parents[2]
 DATASET_PATH = ROOT / "references" / "strongreject" / "strongreject_dataset" / "strongreject_small_dataset.csv"
 AIM_PATH = ROOT / "references" / "strongreject" / "strongreject" / "AIM.txt"
+PROJECT = load_project_config(Path(__file__).parent)
 
 @declare_task()
 def task() -> Task:
     adapter = StrongRejectBenchmarkAdapter(dataset_path=str(DATASET_PATH))
-    base_task = load_single_task(adapter, split="test", limit=50)
+    base_task = load_single_task(
+        adapter,
+        split=PROJECT.eval.split or "test",
+        limit=PROJECT.eval.limit if PROJECT.eval.limit is not None else 50,
+    )
     aim_template = AIM_PATH.read_text(encoding="utf-8")
 
     def _aim_wrapped_samples():

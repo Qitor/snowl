@@ -127,15 +127,16 @@ def build_tool_emu_llm(
     )
 
 
-def resolve_toolemu_output_dir(project_dir: str | Path) -> Path:
-    explicit = str(os.getenv("SNOWL_TOOLEMU_OUTPUT_DIR", "")).strip()
-    if explicit:
-        root = Path(explicit)
+def resolve_toolemu_output_dir(
+    project_dir: str | Path,
+    *,
+    output_dir: str | Path | None = None,
+    run_stamp: str | None = None,
+) -> Path:
+    if output_dir is not None:
+        root = Path(output_dir)
     else:
-        stamp = os.getenv("SNOWL_TOOLEMU_RUN_STAMP", "").strip()
-        if not stamp:
-            stamp = datetime.now(timezone.utc).strftime("run-%Y%m%dT%H%M%SZ")
-            os.environ["SNOWL_TOOLEMU_RUN_STAMP"] = stamp
+        stamp = str(run_stamp or "").strip() or datetime.now(timezone.utc).strftime("run-%Y%m%dT%H%M%SZ")
         root = Path(project_dir) / "outputs" / stamp
     root.mkdir(parents=True, exist_ok=True)
     (root / "trajectories").mkdir(parents=True, exist_ok=True)
@@ -151,8 +152,10 @@ def persist_tool_emu_trajectory(
     trajectory: Mapping[str, Any],
     simple_trajectory: str,
     extra: Mapping[str, Any] | None = None,
+    output_dir: str | Path | None = None,
+    run_stamp: str | None = None,
 ) -> dict[str, str]:
-    out_dir = resolve_toolemu_output_dir(project_dir)
+    out_dir = resolve_toolemu_output_dir(project_dir, output_dir=output_dir, run_stamp=run_stamp)
     token = _safe_token(sample_id or case_name, "sample")
     payload = dict(trajectory)
     if extra:
@@ -184,8 +187,10 @@ def persist_tool_emu_scores(
     case_name: str | None,
     scores: Mapping[str, Any],
     extra: Mapping[str, Any] | None = None,
+    output_dir: str | Path | None = None,
+    run_stamp: str | None = None,
 ) -> dict[str, str]:
-    out_dir = resolve_toolemu_output_dir(project_dir)
+    out_dir = resolve_toolemu_output_dir(project_dir, output_dir=output_dir, run_stamp=run_stamp)
     token = _safe_token(sample_id or case_name, "sample")
     payload: dict[str, Any] = {
         "sample_id": sample_id,

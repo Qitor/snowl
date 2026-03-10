@@ -131,7 +131,11 @@ class TerminalBenchProvider:
         agent_logs_root.mkdir(parents=True, exist_ok=True)
         docker_compose_path = str(sample_meta.get("docker_compose_path") or "").strip()
         use_compose = bool(docker_compose_path and Path(docker_compose_path).exists())
-        compose_build = os.getenv("SNOWL_TB_COMPOSE_BUILD", "1") == "1"
+        compose_build = bool(
+            sample_meta.get("compose_build")
+            if sample_meta.get("compose_build") is not None
+            else context.task_metadata.get("compose_build", True)
+        )
         compose_env = {
             "T_BENCH_TASK_DOCKER_CLIENT_CONTAINER_NAME": trial_name,
             "T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME": f"tb__{safe_task}__{safe_variant}__client",
@@ -289,6 +293,7 @@ class OSWorldProvider:
         launcher = OSWorldContainerLauncher(
             repo_root=Path(__file__).resolve().parents[2],
             emit=context.emit_event,
+            settings=context.task_metadata.get("osworld_settings"),
         )
         prepared = launcher.prepare(docker_path=docker_path)
         return ContainerSession(

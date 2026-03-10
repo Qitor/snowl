@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,9 +15,12 @@ from snowl.model import (
     ProjectModelEntry,
     ProjectProviderConfig,
 )
+from snowl.project_config import load_project_config
 
 
 ROOT = Path(__file__).resolve().parents[2]
+PROJECT = load_project_config(Path(__file__).parent)
+TB_SETTINGS = PROJECT.benchmark_settings("terminalbench")
 TERMINUS_PROMPT_PATH = (
     ROOT
     / "references"
@@ -96,9 +98,9 @@ def _tail(text: Any, limit: int = 240) -> str:
 class TerminusOfficialAgent:
     model_config: OpenAICompatibleConfig
     agent_id: str = "terminalbench_official_agent"
-    max_episodes: int = 8
-    max_parse_retries: int = 3
-    temperature: float = 0.2
+    max_episodes: int = int(TB_SETTINGS.get("max_episodes", 8))
+    max_parse_retries: int = int(TB_SETTINGS.get("max_parse_retries", 3))
+    temperature: float = float(TB_SETTINGS.get("temperature", 0.2))
 
     def __post_init__(self) -> None:
         self._client: OpenAICompatibleChatClient | None = None
@@ -166,7 +168,7 @@ class TerminusOfficialAgent:
         agent_logs_root.mkdir(parents=True, exist_ok=True)
         docker_compose_path = str(sample_meta.get("docker_compose_path") or "").strip()
         use_compose = bool(docker_compose_path and Path(docker_compose_path).exists())
-        compose_build = os.getenv("SNOWL_TB_COMPOSE_BUILD", "1") == "1"
+        compose_build = bool(TB_SETTINGS.get("compose_build", True))
         compose_env = {
             "T_BENCH_TASK_DOCKER_CLIENT_CONTAINER_NAME": trial_name,
             "T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME": f"tb__{safe_task}__{safe_variant}__client",
@@ -454,7 +456,7 @@ class TerminusOfficialAgent:
 
             parser_results: dict[str, str] = {}
             run_tests_path = Path(str(meta.get("run_tests_path", "")))
-            if run_tests_path.exists() and os.getenv("SNOWL_TB_RUN_TESTS", "0") == "1":
+            if run_tests_path.exists() and bool(TB_SETTINGS.get("run_tests", False)):
                 try:
                     emit(
                         {

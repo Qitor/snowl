@@ -1,0 +1,39 @@
+project:
+  name: strongreject-qwen-sweep
+  root_dir: .
+
+provider:
+  id: siliconflow
+  kind: openai_compatible
+  base_url: https://api.siliconflow.cn/v1
+  api_key: sk-irodedqyvgqjdilarnwmrixfwigoxvaenmcfnjmfvbaxrkxm
+  timeout: 30
+  max_retries: 2
+
+agent_matrix:
+  models:
+    - id: qwen25_7b
+      model: Qwen/Qwen2.5-7B-Instruct
+    - id: qwen3_32b
+      model: Qwen/Qwen3-32B
+
+judge:
+  model: Qwen/Qwen2.5-7B-Instruct
+
+eval:
+  benchmark: strongreject
+  code:
+    base_dir: .
+    task_module: ./task.py
+    agent_module: ./agent.py
+    scorer_module: ./scorer.py
+  split: test
+  limit: 50
+
+runtime:
+  max_running_trials: 8
+  max_container_slots: 0
+  max_builds: 2
+  max_scoring_tasks: 8
+  provider_budgets:
+    siliconflow: 8

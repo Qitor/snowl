@@ -1,0 +1,345 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - link "返回 Runs" [ref=e7] [cursor=pointer]:
+            - /url: /
+            - img [ref=e8]
+            - text: 返回 Runs
+          - link "历史对比" [ref=e10] [cursor=pointer]:
+            - /url: /compare
+        - generic [ref=e11]:
+          - heading "strongreject Run Workspace" [level=1] [ref=e12]
+          - paragraph [ref=e13]: run-20260310T065251Z
+        - generic [ref=e14]:
+          - generic [ref=e15]: running
+          - generic [ref=e16]: strongreject
+          - generic [ref=e17]: variants 2
+          - generic [ref=e18]: no recent progress
+          - generic [ref=e19]: 3 tasks need attention
+          - generic [ref=e20]: Qwen/Qwen2.5-7B-Instruct
+          - generic [ref=e21]: Qwen/Qwen3-32B
+      - generic [ref=e22]:
+        - generic [ref=e23]:
+          - generic [ref=e24]:
+            - generic [ref=e25]: Live connection
+            - generic [ref=e26]: Connected
+          - generic [ref=e27]: SSE connected
+        - generic [ref=e28]:
+          - generic [ref=e29]:
+            - generic [ref=e30]: Events
+            - generic [ref=e31]: "1000"
+          - generic [ref=e32]:
+            - generic [ref=e33]: Updated
+            - generic [ref=e34]: 2026/3/10 17:59:07
+          - generic [ref=e35]:
+            - generic [ref=e36]: Planned trials
+            - generic [ref=e37]: "100"
+          - generic [ref=e38]:
+            - generic [ref=e39]: Visible tasks
+            - generic [ref=e40]: "15"
+    - generic [ref=e41]:
+      - generic [ref=e43]:
+        - generic [ref=e44]:
+          - generic [ref=e45]:
+            - heading "Workspace" [level=3] [ref=e46]
+            - paragraph [ref=e47]: updated=2026/3/10 17:59:07 | planned=100 trials | experiment=run-20260310T065251Z
+          - generic [ref=e48]:
+            - generic [ref=e49]: View
+            - combobox [ref=e50]:
+              - option "By model" [selected]
+              - option "By task"
+        - generic [ref=e51]:
+          - button "Overview 整体进度、模型分布与总量" [ref=e52] [cursor=pointer]:
+            - generic [ref=e53]: Overview
+            - generic [ref=e54]: 整体进度、模型分布与总量
+          - button "Tasks 15/15 task rows" [ref=e55] [cursor=pointer]:
+            - generic [ref=e56]: Tasks
+            - generic [ref=e57]: 15/15 task rows
+          - button "Runtime Logs attention-first · 6/1000 live events" [ref=e58] [cursor=pointer]:
+            - generic [ref=e59]: Runtime Logs
+            - generic [ref=e60]: attention-first · 6/1000 live events
+      - generic [ref=e61]:
+        - generic [ref=e63]:
+          - generic [ref=e64]:
+            - heading "Tasks" [level=3] [ref=e65]
+            - paragraph [ref=e66]: 当前计划 100 个 trials / 1 个 tasks，其中 3 个需要优先关注，先筛选模型与状态，再进入具体 trial 细节。
+          - button "刷新" [ref=e67] [cursor=pointer]:
+            - img [ref=e68]
+            - text: 刷新
+        - generic [ref=e73]:
+          - generic [ref=e74]:
+            - textbox "搜索 task / model / variant / sample / trial key" [ref=e75]
+            - combobox [ref=e76]:
+              - option "all models" [selected]
+              - option "chatagent / qwen25_7b (Qwen/Qwen2.5-7B-Instruct)"
+              - option "chatagent / qwen3_32b (Qwen/Qwen3-32B)"
+            - combobox [ref=e77]:
+              - option "all status" [selected]
+              - option "queued"
+              - option "running"
+              - option "scoring"
+              - option "success"
+              - option "error"
+            - button "Attention only" [ref=e78] [cursor=pointer]
+            - generic [ref=e79]: matched 15/15
+          - generic [ref=e81]:
+            - generic [ref=e83]:
+              - generic [ref=e84]:
+                - generic [ref=e85]:
+                  - generic [ref=e86]: chatagent / qwen3_32b
+                  - generic [ref=e87]: error
+                  - generic [ref=e88]: Qwen/Qwen3-32B
+                - generic [ref=e89]:
+                  - generic [ref=e90]: task=strongreject:test
+                  - generic [ref=e91]: variant=qwen3_32b
+                  - generic [ref=e92]: sample=sr-000001-51cd5e12670c
+                  - generic [ref=e93]: duration=93446ms
+                - generic [ref=e94]: strongreject:test::chatagent::qwen3_32b::sr-000001-51cd5e12670c
+              - generic [ref=e95]:
+                - button "查看详情" [ref=e96] [cursor=pointer]
+                - button "Pretask" [ref=e97] [cursor=pointer]
+            - generic [ref=e99]:
+              - generic [ref=e100]:
+                - generic [ref=e101]:
+                  - generic [ref=e102]: chatagent / qwen3_32b
+                  - generic [ref=e103]: error
+                  - generic [ref=e104]: Qwen/Qwen3-32B
+                - generic [ref=e105]:
+                  - generic [ref=e106]: task=strongreject:test
+                  - generic [ref=e107]: variant=qwen3_32b
+                  - generic [ref=e108]: sample=sr-000003-59c0a1a63d6c
+                  - generic [ref=e109]: duration=95074ms
+                - generic [ref=e110]: strongreject:test::chatagent::qwen3_32b::sr-000003-59c0a1a63d6c
+              - generic [ref=e111]:
+                - button "查看详情" [ref=e112] [cursor=pointer]
+                - button "Pretask" [ref=e113] [cursor=pointer]
+            - generic [ref=e115]:
+              - generic [ref=e116]:
+                - generic [ref=e117]:
+                  - generic [ref=e118]: chatagent / qwen25_7b
+                  - generic [ref=e119]: running
+                  - generic [ref=e120]: Qwen/Qwen2.5-7B-Instruct
+                - generic [ref=e121]:
+                  - generic [ref=e122]: task=strongreject:test
+                  - generic [ref=e123]: variant=qwen25_7b
+                  - generic [ref=e124]: sample=sr-000008-4d5cf61048ce
+                  - generic [ref=e125]: duration=0ms
+                - generic [ref=e126]: strongreject:test::chatagent::qwen25_7b::sr-000008-4d5cf61048ce
+              - generic [ref=e127]:
+                - button "查看详情" [ref=e128] [cursor=pointer]
+                - button "Pretask" [ref=e129] [cursor=pointer]
+            - generic [ref=e131]:
+              - generic [ref=e132]:
+                - generic [ref=e133]:
+                  - generic [ref=e134]: chatagent / qwen25_7b
+                  - generic [ref=e135]: success
+                  - generic [ref=e136]: Qwen/Qwen2.5-7B-Instruct
+                - generic [ref=e137]:
+                  - generic [ref=e138]: task=strongreject:test
+                  - generic [ref=e139]: variant=qwen25_7b
+                  - generic [ref=e140]: sample=sr-000001-51cd5e12670c
+                  - generic [ref=e141]: duration=3632ms
+                - generic [ref=e142]: strongreject:test::chatagent::qwen25_7b::sr-000001-51cd5e12670c
+              - generic [ref=e143]:
+                - button "查看详情" [ref=e144] [cursor=pointer]
+                - button "Pretask" [ref=e145] [cursor=pointer]
+            - generic [ref=e147]:
+              - generic [ref=e148]:
+                - generic [ref=e149]:
+                  - generic [ref=e150]: chatagent / qwen25_7b
+                  - generic [ref=e151]: success
+                  - generic [ref=e152]: Qwen/Qwen2.5-7B-Instruct
+                - generic [ref=e153]:
+                  - generic [ref=e154]: task=strongreject:test
+                  - generic [ref=e155]: variant=qwen25_7b
+                  - generic [ref=e156]: sample=sr-000002-3c9d639968af
+                  - generic [ref=e157]: duration=4243ms
+                - generic [ref=e158]: strongreject:test::chatagent::qwen25_7b::sr-000002-3c9d639968af
+              - generic [ref=e159]:
+                - button "查看详情" [ref=e160] [cursor=pointer]
+                - button "Pretask" [ref=e161] [cursor=pointer]
+            - generic [ref=e163]:
+              - generic [ref=e164]:
+                - generic [ref=e165]:
+                  - generic [ref=e166]: chatagent / qwen25_7b
+                  - generic [ref=e167]: success
+                  - generic [ref=e168]: Qwen/Qwen2.5-7B-Instruct
+                - generic [ref=e169]:
+                  - generic [ref=e170]: task=strongreject:test
+                  - generic [ref=e171]: variant=qwen25_7b
+                  - generic [ref=e172]: sample=sr-000003-59c0a1a63d6c
+                  - generic [ref=e173]: duration=7966ms
+                - generic [ref=e174]: strongreject:test::chatagent::qwen25_7b::sr-000003-59c0a1a63d6c
+              - generic [ref=e175]:
+                - button "查看详情" [ref=e176] [cursor=pointer]
+                - button "Pretask" [ref=e177] [cursor=pointer]
+            - generic [ref=e179]:
+              - generic [ref=e180]:
+                - generic [ref=e181]:
+                  - generic [ref=e182]: chatagent / qwen25_7b
+                  - generic [ref=e183]: success
+                  - generic [ref=e184]: Qwen/Qwen2.5-7B-Instruct
+                - generic [ref=e185]:
+                  - generic [ref=e186]: task=strongreject:test
+                  - generic [ref=e187]: variant=qwen25_7b
+                  - generic [ref=e188]: sample=sr-000004-4e68381eb93c
+                  - generic [ref=e189]: duration=3305ms
+                - generic [ref=e190]: strongreject:test::chatagent::qwen25_7b::sr-000004-4e68381eb93c
+              - generic [ref=e191]:
+                - button "查看详情" [ref=e192] [cursor=pointer]
+                - button "Pretask" [ref=e193] [cursor=pointer]
+            - generic [ref=e195]:
+              - generic [ref=e196]:
+                - generic [ref=e197]:
+                  - generic [ref=e198]: chatagent / qwen25_7b
+                  - generic [ref=e199]: success
+                  - generic [ref=e200]: Qwen/Qwen2.5-7B-Instruct
+                - generic [ref=e201]:
+                  - generic [ref=e202]: task=strongreject:test
+                  - generic [ref=e203]: variant=qwen25_7b
+                  - generic [ref=e204]: sample=sr-000005-ad7e4ea70b96
+                  - generic [ref=e205]: duration=6746ms
+                - generic [ref=e206]: strongreject:test::chatagent::qwen25_7b::sr-000005-ad7e4ea70b96
+              - generic [ref=e207]:
+                - button "查看详情" [ref=e208] [cursor=pointer]
+                - button "Pretask" [ref=e209] [cursor=pointer]
+            - generic [ref=e211]:
+              - generic [ref=e212]:
+                - generic [ref=e213]:
+                  - generic [ref=e214]: chatagent / qwen25_7b
+                  - generic [ref=e215]: success
+                  - generic [ref=e216]: Qwen/Qwen2.5-7B-Instruct
+                - generic [ref=e217]:
+                  - generic [ref=e218]: task=strongreject:test
+                  - generic [ref=e219]: variant=qwen25_7b
+                  - generic [ref=e220]: sample=sr-000006-7b440e05d263
+                  - generic [ref=e221]: duration=5986ms
+                - generic [ref=e222]: strongreject:test::chatagent::qwen25_7b::sr-000006-7b440e05d263
+              - generic [ref=e223]:
+                - button "查看详情" [ref=e224] [cursor=pointer]
+                - button "Pretask" [ref=e225] [cursor=pointer]
+            - generic [ref=e227]:
+              - generic [ref=e228]:
+                - generic [ref=e229]:
+                  - generic [ref=e230]: chatagent / qwen25_7b
+                  - generic [ref=e231]: success
+                  - generic [ref=e232]: Qwen/Qwen2.5-7B-Instruct
+                - generic [ref=e233]:
+                  - generic [ref=e234]: task=strongreject:test
+                  - generic [ref=e235]: variant=qwen25_7b
+                  - generic [ref=e236]: sample=sr-000007-2d9a10271fbd
+                  - generic [ref=e237]: duration=1941ms
+                - generic [ref=e238]: strongreject:test::chatagent::qwen25_7b::sr-000007-2d9a10271fbd
+              - generic [ref=e239]:
+                - button "查看详情" [ref=e240] [cursor=pointer]
+                - button "Pretask" [ref=e241] [cursor=pointer]
+            - generic [ref=e243]:
+              - generic [ref=e244]:
+                - generic [ref=e245]:
+                  - generic [ref=e246]: chatagent / qwen3_32b
+                  - generic [ref=e247]: success
+                  - generic [ref=e248]: Qwen/Qwen3-32B
+                - generic [ref=e249]:
+                  - generic [ref=e250]: task=strongreject:test
+                  - generic [ref=e251]: variant=qwen3_32b
+                  - generic [ref=e252]: sample=sr-000002-3c9d639968af
+                  - generic [ref=e253]: duration=49976ms
+                - generic [ref=e254]: strongreject:test::chatagent::qwen3_32b::sr-000002-3c9d639968af
+              - generic [ref=e255]:
+                - button "查看详情" [ref=e256] [cursor=pointer]
+                - button "Pretask" [ref=e257] [cursor=pointer]
+            - generic [ref=e259]:
+              - generic [ref=e260]:
+                - generic [ref=e261]:
+                  - generic [ref=e262]: chatagent / qwen3_32b
+                  - generic [ref=e263]: success
+                  - generic [ref=e264]: Qwen/Qwen3-32B
+                - generic [ref=e265]:
+                  - generic [ref=e266]: task=strongreject:test
+                  - generic [ref=e267]: variant=qwen3_32b
+                  - generic [ref=e268]: sample=sr-000004-4e68381eb93c
+                  - generic [ref=e269]: duration=53895ms
+                - generic [ref=e270]: strongreject:test::chatagent::qwen3_32b::sr-000004-4e68381eb93c
+              - generic [ref=e271]:
+                - button "查看详情" [ref=e272] [cursor=pointer]
+                - button "Pretask" [ref=e273] [cursor=pointer]
+            - generic [ref=e275]:
+              - generic [ref=e276]:
+                - generic [ref=e277]:
+                  - generic [ref=e278]: chatagent / qwen3_32b
+                  - generic [ref=e279]: success
+                  - generic [ref=e280]: Qwen/Qwen3-32B
+                - generic [ref=e281]:
+                  - generic [ref=e282]: task=strongreject:test
+                  - generic [ref=e283]: variant=qwen3_32b
+                  - generic [ref=e284]: sample=sr-000005-ad7e4ea70b96
+                  - generic [ref=e285]: duration=27697ms
+                - generic [ref=e286]: strongreject:test::chatagent::qwen3_32b::sr-000005-ad7e4ea70b96
+              - generic [ref=e287]:
+                - button "查看详情" [ref=e288] [cursor=pointer]
+                - button "Pretask" [ref=e289] [cursor=pointer]
+            - generic [ref=e291]:
+              - generic [ref=e292]:
+                - generic [ref=e293]:
+                  - generic [ref=e294]: chatagent / qwen3_32b
+                  - generic [ref=e295]: success
+                  - generic [ref=e296]: Qwen/Qwen3-32B
+                - generic [ref=e297]:
+                  - generic [ref=e298]: task=strongreject:test
+                  - generic [ref=e299]: variant=qwen3_32b
+                  - generic [ref=e300]: sample=sr-000006-7b440e05d263
+                  - generic [ref=e301]: duration=45142ms
+                - generic [ref=e302]: strongreject:test::chatagent::qwen3_32b::sr-000006-7b440e05d263
+              - generic [ref=e303]:
+                - button "查看详情" [ref=e304] [cursor=pointer]
+                - button "Pretask" [ref=e305] [cursor=pointer]
+            - generic [ref=e307]:
+              - generic [ref=e308]:
+                - generic [ref=e309]:
+                  - generic [ref=e310]: chatagent / qwen3_32b
+                  - generic [ref=e311]: success
+                  - generic [ref=e312]: Qwen/Qwen3-32B
+                - generic [ref=e313]:
+                  - generic [ref=e314]: task=strongreject:test
+                  - generic [ref=e315]: variant=qwen3_32b
+                  - generic [ref=e316]: sample=sr-000007-2d9a10271fbd
+                  - generic [ref=e317]: duration=27465ms
+                - generic [ref=e318]: strongreject:test::chatagent::qwen3_32b::sr-000007-2d9a10271fbd
+              - generic [ref=e319]:
+                - button "查看详情" [ref=e320] [cursor=pointer]
+                - button "Pretask" [ref=e321] [cursor=pointer]
+      - generic [ref=e322]:
+        - generic [ref=e324]:
+          - generic [ref=e325]:
+            - heading "Trial Detail" [level=3] [ref=e326]
+            - paragraph [ref=e327]: 从任务列表或日志中选择一个 trial 查看细节
+          - button "打开 Pretask" [disabled]
+        - generic [ref=e329]: 在 Tasks 里点击“查看详情”，或在 Runtime Logs 输入 trial key。
+      - generic [ref=e330]:
+        - generic [ref=e331]:
+          - heading "Run Metadata" [level=3] [ref=e332]
+          - paragraph [ref=e333]: 把这次 run 的状态、模型集合、标识与更新时间集中放在一起。
+        - generic [ref=e335]:
+          - generic [ref=e336]:
+            - generic [ref=e337]:
+              - img [ref=e338]
+              - text: Status
+            - generic [ref=e340]: status=running
+            - generic [ref=e341]: progress=14/100
+          - generic [ref=e342]:
+            - generic [ref=e343]: Models
+            - generic [ref=e344]: 2 variants
+            - generic [ref=e345]: Qwen/Qwen2.5-7B-Instruct, Qwen/Qwen3-32B
+          - generic [ref=e346]:
+            - generic [ref=e347]: Identifiers
+            - generic [ref=e348]: run-20260310T065251Z
+            - generic [ref=e349]: benchmark=strongreject
+          - generic [ref=e350]:
+            - generic [ref=e351]:
+              - img [ref=e352]
+              - text: Updated
+            - generic [ref=e356]: 2026/3/10 17:59:07
+            - generic [ref=e357]: run-20260310T065251Z:1157
+  - alert [ref=e358]

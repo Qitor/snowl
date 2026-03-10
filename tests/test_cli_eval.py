@@ -7,6 +7,33 @@ from pathlib import Path
 from snowl.cli import main
 
 
+def _write_project_yml(tmp_path: Path) -> None:
+    (tmp_path / "project.yml").write_text(
+        """
+project:
+  name: cli-demo
+  root_dir: .
+provider:
+  id: demo
+  kind: openai_compatible
+  base_url: https://example.com/v1
+  api_key: sk-test
+agent_matrix:
+  models:
+    - id: tested
+      model: demo-model
+eval:
+  benchmark: custom
+  code:
+    base_dir: .
+    task_module: ./task.py
+    agent_module: ./agent.py
+    scorer_module: ./scorer.py
+""",
+        encoding="utf-8",
+    )
+
+
 def test_cli_eval_auto_discovery(tmp_path: Path) -> None:
     (tmp_path / "tool.py").write_text(
         """
@@ -66,8 +93,9 @@ scorer = S()
         """,
         encoding="utf-8",
     )
+    _write_project_yml(tmp_path)
 
-    rc = main(["eval", str(tmp_path)])
+    rc = main(["eval", str(tmp_path / "project.yml")])
     assert rc == 0
 
 
@@ -103,10 +131,11 @@ scorer = S()
 """,
         encoding="utf-8",
     )
+    _write_project_yml(tmp_path)
     rc = main(
         [
             "eval",
-            str(tmp_path),
+            str(tmp_path / "project.yml"),
             "--no-ui",
             "--ui-refresh-ms",
             "120",
@@ -128,6 +157,61 @@ scorer = S()
     assert rc == 0
 
 
+def test_cli_eval_accepts_scheduler_flags(tmp_path: Path) -> None:
+    (tmp_path / "task.py").write_text(
+        """
+from snowl.core import EnvSpec, Task
+task = Task(task_id="t1", env_spec=EnvSpec(env_type="local"), sample_iter_factory=lambda: iter([{"id":"s1","input":"x"}]))
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "agent.py").write_text(
+        """
+from snowl.core import StopReason
+class A:
+    agent_id = "a1"
+    async def run(self, state, context, tools=None):
+        _ = (context, tools)
+        state.output = {"message":{"role":"assistant","content":"ok"}, "usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}, "trace_events":[]}
+        state.stop_reason = StopReason.COMPLETED
+        return state
+agent = A()
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "scorer.py").write_text(
+        """
+from snowl.core import Score
+class S:
+    scorer_id = "s1"
+    def score(self, task_result, trace, context):
+        _ = (task_result, trace, context)
+        return {"accuracy": Score(value=1.0)}
+scorer = S()
+""",
+        encoding="utf-8",
+    )
+    _write_project_yml(tmp_path)
+    rc = main(
+        [
+            "eval",
+            str(tmp_path / "project.yml"),
+            "--no-ui",
+            "--max-running-trials",
+            "2",
+            "--max-container-slots",
+            "1",
+            "--max-builds",
+            "1",
+            "--max-scoring-tasks",
+            "2",
+            "--provider-budget",
+            "demo=2",
+        ]
+    )
+    assert rc == 0
+
+
 def test_cli_eval_keyboard_interrupt_prints_log_path(tmp_path: Path, monkeypatch, capsys) -> None:
     runs = tmp_path / ".snowl" / "runs" / "run-20260303T110000Z"
     runs.mkdir(parents=True)
@@ -138,7 +222,8 @@ def test_cli_eval_keyboard_interrupt_prints_log_path(tmp_path: Path, monkeypatch
         raise KeyboardInterrupt
 
     monkeypatch.setattr(asyncio, "run", _raise_interrupt)
-    rc = main(["eval", str(tmp_path), "--no-ui"])
+    _write_project_yml(tmp_path)
+    rc = main(["eval", str(tmp_path / "project.yml"), "--no-ui"])
     out = capsys.readouterr().out
     assert rc == 130
     assert "Interrupted by user." in out
@@ -195,7 +280,8 @@ scorer = S()
         encoding="utf-8",
     )
 
-    rc = main(["eval", str(tmp_path), "--no-ui", "--experiment-id", "exp-cli"])
+    _write_project_yml(tmp_path)
+    rc = main(["eval", str(tmp_path / "project.yml"), "--no-ui", "--experiment-id", "exp-cli"])
     assert rc == 0
 
     runs_root = tmp_path / ".snowl" / "runs"

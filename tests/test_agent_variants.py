@@ -124,7 +124,7 @@ agent_variants = [
         encoding="utf-8",
     )
 
-    result = asyncio.run(run_eval(tmp_path, renderer=None, max_trials=4))
+    result = asyncio.run(run_eval(tmp_path, renderer=None, max_running_trials=4))
     assert result.summary.total == 20
     assert result.summary.error == 1
     assert result.summary.success == 19
@@ -162,9 +162,13 @@ agent_variants = [
 
 def test_cli_variant_filter_works_with_project_model_matrix(tmp_path: Path) -> None:
     _write_task_and_scorer(tmp_path)
-    (tmp_path / "model.yml").write_text(
+    (tmp_path / "project.yml").write_text(
         """
+project:
+  name: matrix-demo
+  root_dir: .
 provider:
+  id: demo
   kind: openai_compatible
   base_url: https://example.com/v1
   api_key: sk-test
@@ -178,6 +182,13 @@ agent_matrix:
       model: model-beta
 judge:
   model: judge-model
+eval:
+  benchmark: custom
+  code:
+    base_dir: .
+    task_module: ./task.py
+    agent_module: ./agent.py
+    scorer_module: ./scorer.py
         """,
         encoding="utf-8",
     )

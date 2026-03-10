@@ -1,0 +1,102 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - generic [ref=e7]:
+            - img [ref=e8]
+            - text: Run Gallery
+          - generic [ref=e10]:
+            - heading "Snowl Experiment Board" [level=1] [ref=e11]
+            - paragraph [ref=e12]: 先挑中这一次评测运行，再进入对应 workspace 看多模型结果、任务状态和实时日志。
+          - generic [ref=e13]: project=/tmp/snowl-operator-d6JU4t
+        - generic [ref=e14]:
+          - generic [ref=e15]: monitor connected
+          - link "历史对比" [ref=e16] [cursor=pointer]:
+            - /url: /compare
+      - generic [ref=e17]:
+        - generic [ref=e18]:
+          - generic [ref=e19]:
+            - generic [ref=e20]:
+              - generic [ref=e21]: Running Now
+              - generic [ref=e22]: "0"
+            - img [ref=e24]
+          - generic [ref=e27]: 当前仍在进行中的评测
+        - generic [ref=e28]:
+          - generic [ref=e29]:
+            - generic [ref=e30]:
+              - generic [ref=e31]: Recent Complete
+              - generic [ref=e32]: "1"
+            - img [ref=e34]
+          - generic [ref=e37]: 已顺利完成的 runs
+        - generic [ref=e38]:
+          - generic [ref=e39]:
+            - generic [ref=e40]:
+              - generic [ref=e41]: Needs Attention
+              - generic [ref=e42]: "0"
+            - img [ref=e44]
+          - generic [ref=e46]: 包含错误或失败 trial
+        - generic [ref=e47]:
+          - generic [ref=e48]:
+            - generic [ref=e49]:
+              - generic [ref=e50]: Benchmarks
+              - generic [ref=e51]: "1"
+            - img [ref=e53]
+          - generic [ref=e55]: 当前项目下的 benchmark 种类
+    - generic [ref=e56]:
+      - generic [ref=e57]:
+        - generic [ref=e58]:
+          - generic [ref=e59]:
+            - heading "Continue Watching" [level=3] [ref=e60]
+            - paragraph [ref=e61]: 默认把焦点放在最新的运行中或需要注意的 run，方便直接回到当前值班对象。
+          - link "打开当前 run" [ref=e62] [cursor=pointer]:
+            - /url: /runs/run-20260310T093257Z
+        - generic [ref=e63]:
+          - generic [ref=e64]:
+            - generic [ref=e65]:
+              - generic [ref=e66]: strongreject
+              - generic [ref=e67]: completed
+            - generic [ref=e68]: run-20260310T093257Z
+            - generic [ref=e69]: updated 2026/3/10 17:33:51
+            - generic [ref=e70]:
+              - generic [ref=e71]:
+                - generic [ref=e72]: Progress
+                - generic [ref=e73]: 4/4
+              - generic [ref=e74]:
+                - generic [ref=e75]: Variants
+                - generic [ref=e76]: "2"
+              - generic [ref=e77]:
+                - generic [ref=e78]: Attention
+                - generic [ref=e79]: "0"
+              - generic [ref=e80]:
+                - generic [ref=e81]: Task monitor
+                - generic [ref=e82]: ready
+          - generic [ref=e83]:
+            - generic [ref=e84]: Operator signals
+            - generic [ref=e85]:
+              - generic [ref=e86]: archived run
+              - generic [ref=e87]: no active attention signals
+            - generic [ref=e88]: 这个 run 是当前最新的值班对象。进入 workspace 后，先看任务推进，再决定是否需要切到日志诊断。
+      - generic [ref=e90]:
+        - generic [ref=e91]:
+          - generic [ref=e92]:
+            - heading "Run Gallery" [level=3] [ref=e93]
+            - paragraph [ref=e94]: 用 benchmark tabs 先收窄范围，再按状态过滤，快速锁定你想看的那次运行。
+          - generic [ref=e95]:
+            - button "Running" [ref=e96] [cursor=pointer]
+            - button "Needs attention" [ref=e97] [cursor=pointer]
+            - button "Completed" [ref=e98] [cursor=pointer]
+            - button "All" [ref=e99] [cursor=pointer]
+        - generic [ref=e100]:
+          - button "All benchmarks 1" [ref=e101] [cursor=pointer]:
+            - img [ref=e102]
+            - text: All benchmarks
+            - generic [ref=e104]: "1"
+          - button "strongreject 1" [ref=e105] [cursor=pointer]:
+            - img [ref=e106]
+            - text: strongreject
+            - generic [ref=e108]: "1"
+      - generic [ref=e110]:
+        - heading "暂无符合条件的 runs" [level=3] [ref=e111]
+        - paragraph [ref=e112]: "试试切换 benchmark tabs 或状态筛选。监控目录仍然是 `/tmp/snowl-operator-d6JU4t/.snowl/runs`。"
+  - alert [ref=e113]

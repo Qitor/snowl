@@ -1,1 +1,1 @@
-{"version":1,"functions":{"/api/runs/[runId]/snapshot":{},"/api/experiments/[experimentId]/summary":{},"/api/runs/[runId]/summary":{},"/api/runs/[runId]/events/stream":{},"/api/runs/[runId]/trial":{},"/api/health":{},"/api/runs":{},"/api/runs/[runId]/pretask":{},"/api/experiments":{}}}
+{"version":1,"functions":{"/api/runs/[runId]/pretask":{},"/api/health":{},"/api/runs/[runId]/summary":{},"/api/experiments":{},"/api/experiments/[experimentId]/summary":{},"/api/runs/[runId]/trial":{},"/api/runs/[runId]/snapshot":{},"/api/runs":{},"/api/runs/[runId]/events/stream":{}}}

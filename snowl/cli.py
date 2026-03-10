@@ -18,6 +18,7 @@ import urllib.request
 from snowl.bench import check_benchmark_conformance, list_benchmarks, run_benchmark
 from snowl.eval import EvalRunBootstrap, run_eval
 from snowl.examples_lint import validate_examples_layout
+from snowl.project_config import find_project_file, load_project_config
 from snowl.ui import ConsoleRenderer, InteractionController, LiveConsoleRenderer
 from snowl.web.runtime import WebRuntimeError, current_webui_cache_key, ensure_next_build, ensure_next_runtime
 
@@ -31,6 +32,12 @@ def _split_csv(value: str | None) -> list[str] | None:
 
 def _project_base_dir(path: str) -> Path:
     p = Path(path).resolve()
+    project_file = find_project_file(p)
+    if project_file is not None:
+        try:
+            return load_project_config(project_file).root_dir
+        except Exception:
+            return project_file.parent
     return p if p.is_dir() else p.parent
 
 
@@ -118,6 +125,20 @@ def _coerce_positive_int(value: object | None) -> int | None:
     except Exception:
         return None
     return parsed if parsed > 0 else None
+
+
+def _parse_provider_budgets(values: list[str] | None) -> dict[str, int] | None:
+    budgets: dict[str, int] = {}
+    for item in values or []:
+        raw = str(item or "").strip()
+        if not raw or "=" not in raw:
+            continue
+        provider_id, limit_raw = raw.split("=", 1)
+        provider_key = provider_id.strip()
+        limit = _coerce_positive_int(limit_raw)
+        if provider_key and limit is not None:
+            budgets[provider_key] = limit
+    return budgets or None
 
 
 def _expected_web_monitor_cache_key() -> str | None:
@@ -494,10 +515,11 @@ def _cmd_eval(
     rerun_failed_only: bool,
     checkpoint_key: str | None,
     keys: str | None,
-    max_trials: int | None,
-    max_sandboxes: int | None,
+    max_running_trials: int | None,
+    max_container_slots: int | None,
     max_builds: int | None,
-    max_model_calls: int | None,
+    max_scoring_tasks: int | None,
+    provider_budget: list[str] | None,
     ui_refresh_ms: int | None,
     ui_max_events: int | None,
     ui_max_failures: int | None,
@@ -574,10 +596,11 @@ def _cmd_eval(
                     rerun_failed_only=rerun_failed_only,
                     checkpoint_key=checkpoint_key,
                     interaction_controller=controller,
-                    max_trials=max_trials,
-                    max_sandboxes=max_sandboxes,
+                    max_running_trials=max_running_trials,
+                    max_container_slots=max_container_slots,
                     max_builds=max_builds,
-                    max_model_calls=max_model_calls,
+                    max_scoring_tasks=max_scoring_tasks,
+                    provider_budgets=_parse_provider_budgets(provider_budget),
                     experiment_id=experiment_id,
                     on_run_bootstrap=_on_run_bootstrap,
                 )
@@ -648,10 +671,11 @@ def _cmd_bench_run(
     agent: str | None,
     variant: str | None,
     no_ui: bool,
-    max_trials: int | None,
-    max_sandboxes: int | None,
+    max_running_trials: int | None,
+    max_container_slots: int | None,
     max_builds: int | None,
-    max_model_calls: int | None,
+    max_scoring_tasks: int | None,
+    provider_budget: list[str] | None,
     ui_refresh_ms: int | None,
     ui_max_events: int | None,
     ui_max_failures: int | None,
@@ -724,10 +748,11 @@ def _cmd_bench_run(
                     agent_filter=_split_csv(agent),
                     variant_filter=_split_csv(variant),
                     renderer=renderer,
-                    max_trials=max_trials,
-                    max_sandboxes=max_sandboxes,
+                    max_running_trials=max_running_trials,
+                    max_container_slots=max_container_slots,
                     max_builds=max_builds,
-                    max_model_calls=max_model_calls,
+                    max_scoring_tasks=max_scoring_tasks,
+                    provider_budgets=_parse_provider_budgets(provider_budget),
                     experiment_id=experiment_id,
                     on_run_bootstrap=_on_run_bootstrap,
                 )
@@ -836,8 +861,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="snowl")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    eval_parser = sub.add_parser("eval", help="Run evaluation with auto-discovery.")
-    eval_parser.add_argument("path", nargs="?", default=".", help="Project path")
+    eval_parser = sub.add_parser("eval", help="Run evaluation from a project.yml file.")
+    eval_parser.add_argument("path", nargs="?", default="project.yml", help="Path to project.yml")
     eval_parser.add_argument("--task", dest="task", default=None, help="Task id selector (csv).")
     eval_parser.add_argument("--agent", dest="agent", default=None, help="Agent id selector (csv).")
     eval_parser.add_argument("--variant", dest="variant", default=None, help="Variant id selector (csv).")
@@ -863,10 +888,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Simulated interactive key sequence (e.g. 'pfar') for automation/tests.",
     )
-    eval_parser.add_argument("--max-trials", type=int, default=None, help="Max concurrent trials.")
-    eval_parser.add_argument("--max-sandboxes", type=int, default=None, help="Max concurrent sandboxes.")
-    eval_parser.add_argument("--max-builds", type=int, default=None, help="Max concurrent container builds.")
-    eval_parser.add_argument("--max-model-calls", type=int, default=None, help="Max concurrent model API calls.")
+    eval_parser.add_argument("--max-running-trials", type=int, default=None, help="Max concurrently executing trials.")
+    eval_parser.add_argument("--max-container-slots", type=int, default=None, help="Max concurrent container/sandbox slots.")
+    eval_parser.add_argument("--max-builds", type=int, default=None, help="Max concurrent container/image builds.")
+    eval_parser.add_argument("--max-scoring-tasks", type=int, default=None, help="Max concurrent scoring tasks.")
+    eval_parser.add_argument(
+        "--provider-budget",
+        action="append",
+        default=None,
+        help="Provider concurrency budget in the form provider_id=n (repeatable).",
+    )
     eval_parser.add_argument(
         "--experiment-id",
         default=None,
@@ -916,7 +947,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     bench_run = bench_sub.add_parser("run", help="Run benchmark tasks with local agent/scorer.")
     bench_run.add_argument("benchmark", help="Benchmark adapter name.")
-    bench_run.add_argument("--project", default=".", help="Project path with agent.py/scorer.py/tool.py.")
+    bench_run.add_argument("--project", default="project.yml", help="Path to project.yml.")
     bench_run.add_argument("--split", default="test", help="Benchmark split.")
     bench_run.add_argument("--limit", type=int, default=None, help="Max benchmark samples to load.")
     bench_run.add_argument(
@@ -944,10 +975,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable terminal progress output (keeps Web monitor auto-start unless --no-web-monitor is set).",
     )
-    bench_run.add_argument("--max-trials", type=int, default=None, help="Max concurrent trials.")
-    bench_run.add_argument("--max-sandboxes", type=int, default=None, help="Max concurrent sandboxes.")
-    bench_run.add_argument("--max-builds", type=int, default=None, help="Max concurrent container builds.")
-    bench_run.add_argument("--max-model-calls", type=int, default=None, help="Max concurrent model API calls.")
+    bench_run.add_argument("--max-running-trials", type=int, default=None, help="Max concurrently executing trials.")
+    bench_run.add_argument("--max-container-slots", type=int, default=None, help="Max concurrent container/sandbox slots.")
+    bench_run.add_argument("--max-builds", type=int, default=None, help="Max concurrent container/image builds.")
+    bench_run.add_argument("--max-scoring-tasks", type=int, default=None, help="Max concurrent scoring tasks.")
+    bench_run.add_argument(
+        "--provider-budget",
+        action="append",
+        default=None,
+        help="Provider concurrency budget in the form provider_id=n (repeatable).",
+    )
     bench_run.add_argument(
         "--experiment-id",
         default=None,
@@ -1035,10 +1072,11 @@ def main(argv: list[str] | None = None) -> int:
             rerun_failed_only=args.rerun_failed_only,
             checkpoint_key=args.checkpoint_key,
             keys=args.keys,
-            max_trials=args.max_trials,
-            max_sandboxes=args.max_sandboxes,
+            max_running_trials=args.max_running_trials,
+            max_container_slots=args.max_container_slots,
             max_builds=args.max_builds,
-            max_model_calls=args.max_model_calls,
+            max_scoring_tasks=args.max_scoring_tasks,
+            provider_budget=args.provider_budget,
             ui_refresh_ms=args.ui_refresh_ms,
             ui_max_events=args.ui_max_events,
             ui_max_failures=args.ui_max_failures,
@@ -1070,10 +1108,11 @@ def main(argv: list[str] | None = None) -> int:
                 agent=args.agent,
                 variant=args.variant,
                 no_ui=args.no_ui,
-                max_trials=args.max_trials,
-                max_sandboxes=args.max_sandboxes,
+                max_running_trials=args.max_running_trials,
+                max_container_slots=args.max_container_slots,
                 max_builds=args.max_builds,
-                max_model_calls=args.max_model_calls,
+                max_scoring_tasks=args.max_scoring_tasks,
+                provider_budget=args.provider_budget,
                 ui_refresh_ms=args.ui_refresh_ms,
                 ui_max_events=args.ui_max_events,
                 ui_max_failures=args.ui_max_failures,

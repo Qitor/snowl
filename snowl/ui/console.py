@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import datetime, timezone
-import os
 from pathlib import Path
 import shutil
 import sys
@@ -158,6 +157,8 @@ class ConsoleRenderer:
         if not self.verbose:
             return
         name = str(event.get("event", "runtime.event"))
+        if name == "ui.heartbeat":
+            return
         payload = event.get("payload")
         if not isinstance(payload, dict):
             payload = {}
@@ -247,8 +248,8 @@ class LiveConsoleRenderer(ConsoleRenderer):
         self._benchmark_name = "custom"
         self._plan_mode = "single"
         self._plan_counts = {"tasks": 0, "agents": 0, "variants": 0, "trials": 0}
-        self._model_name = str(os.getenv("OPENAI_MODEL", "")).strip()
-        self._model_base_url = str(os.getenv("OPENAI_BASE_URL", "")).strip()
+        self._model_name = ""
+        self._model_base_url = ""
         self._panel_config: PanelConfig = load_panel_config(benchmark_name=None)
         self._panel_registry = PanelRegistry()
         self._register_default_panels()
@@ -1777,6 +1778,8 @@ class LiveConsoleRenderer(ConsoleRenderer):
             self._activity_label = "container-stopped"
         elif name == "ui.heartbeat":
             self._activity_label = "running"
+            self._flush_dashboard()
+            return
         elif name == "ui.control":
             msg = str(normalized.message or "")
             if "interactive stdin input enabled" in msg:

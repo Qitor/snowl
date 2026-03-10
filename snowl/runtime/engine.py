@@ -48,6 +48,13 @@ class TrialOutcome:
     trace: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class PartialTrialResult:
+    task_result: TaskResult
+    trace: dict[str, Any]
+    score_context: ScoreContext
+
+
 def _initial_messages(sample: Mapping[str, Any]) -> list[dict[str, Any]]:
     if "messages" in sample and isinstance(sample["messages"], list):
         return [dict(message) for message in sample["messages"]]
@@ -111,8 +118,8 @@ def _status_from_stop_reason(stop_reason: StopReason | None) -> TaskStatus:
     return TaskStatus.SUCCESS
 
 
-async def execute_trial(request: TrialRequest) -> TrialOutcome:
-    """Execute one trial and produce TaskResult + scores + trace."""
+async def execute_agent_phase(request: TrialRequest) -> PartialTrialResult:
+    """Execute the agent/runtime phase and produce a partial trial result."""
 
     validate_task(request.task)
     validate_env_spec(request.task.env_spec)
@@ -211,7 +218,14 @@ async def execute_trial(request: TrialRequest) -> TrialOutcome:
                 "sample_id": sample_id,
             }
         )
-        return TrialOutcome(task_result=task_result, scores={}, trace=trace)
+        score_context = ScoreContext(
+            task_id=request.task.task_id,
+            agent_id=getattr(request.agent, "agent_id"),
+            sample_id=sample_id,
+            task_metadata=request.task.metadata,
+            sample_metadata=dict(request.sample.get("metadata", {})),
+        )
+        return PartialTrialResult(task_result=task_result, trace=trace, score_context=score_context)
     resolved_tool_specs: list[ToolSpec] = []
     if request.tools:
         resolved_tool_specs = [resolve_tool_spec(t) for t in request.tools]
@@ -277,7 +291,14 @@ async def execute_trial(request: TrialRequest) -> TrialOutcome:
                 "sample_id": sample_id,
             }
         )
-        return TrialOutcome(task_result=task_result, scores={}, trace=trace)
+        score_context = ScoreContext(
+            task_id=request.task.task_id,
+            agent_id=getattr(request.agent, "agent_id"),
+            sample_id=sample_id,
+            task_metadata=request.task.metadata,
+            sample_metadata=dict(request.sample.get("metadata", {})),
+        )
+        return PartialTrialResult(task_result=task_result, trace=trace, score_context=score_context)
 
     original_max_steps = None
     if request.limits.max_steps is not None and hasattr(request.agent, "max_steps"):
@@ -514,6 +535,23 @@ async def execute_trial(request: TrialRequest) -> TrialOutcome:
         task_metadata=request.task.metadata,
         sample_metadata=dict(request.sample.get("metadata", {})),
     )
+    return PartialTrialResult(task_result=task_result, trace=trace, score_context=score_context)
+
+
+async def score_trial_phase(request: TrialRequest, partial: PartialTrialResult) -> TrialOutcome:
+    """Apply the scorer to a partial trial result and finalize status."""
+    task_result = partial.task_result
+    trace = partial.trace
+    score_context = partial.score_context
+    variant_id = str(getattr(request.agent, "variant_id", "default"))
+
+    def _emit(event: dict[str, Any]) -> None:
+        if request.on_event is None:
+            return
+        try:
+            request.on_event(dict(event))
+        except Exception:
+            return
 
     try:
         _emit(
@@ -622,3 +660,10 @@ async def execute_trial(request: TrialRequest) -> TrialOutcome:
     )
 
     return TrialOutcome(task_result=task_result, scores=scores, trace=trace)
+
+
+async def execute_trial(request: TrialRequest) -> TrialOutcome:
+    """Execute one full trial for callers that still expect the old API."""
+
+    partial = await execute_agent_phase(request)
+    return await score_trial_phase(request, partial)

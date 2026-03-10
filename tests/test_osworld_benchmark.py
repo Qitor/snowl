@@ -317,7 +317,7 @@ def test_osworld_observation_frames_are_variant_scoped(tmp_path: Path, monkeypat
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
 
-    monkeypatch.setenv("SNOWL_OSWORLD_OBS_FRAMES_DIR", str(tmp_path / "frames"))
+    monkeypatch.setitem(module.OSWORLD_SETTINGS, "obs_frames_dir", str(tmp_path / "frames"))
     out = module._save_observation_frame(
         sample_id="sample-1",
         variant_id="model-a",

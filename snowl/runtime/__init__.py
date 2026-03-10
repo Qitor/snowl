@@ -7,7 +7,15 @@ from snowl.envs.sandbox_runtime import (
     WarmPoolSandboxRuntime,
 )
 from snowl.runtime.container_runtime import ContainerRuntime, ContainerSession
-from snowl.runtime.engine import TrialLimits, TrialOutcome, TrialRequest, execute_trial
+from snowl.runtime.engine import (
+    PartialTrialResult,
+    TrialLimits,
+    TrialOutcome,
+    TrialRequest,
+    execute_agent_phase,
+    execute_trial,
+    score_trial_phase,
+)
 from snowl.runtime.resource_scheduler import ResourceLimits, ResourceScheduler
 
 __all__ = [
@@ -19,8 +27,11 @@ __all__ = [
     "ContainerSession",
     "ResourceLimits",
     "ResourceScheduler",
+    "PartialTrialResult",
     "TrialLimits",
     "TrialOutcome",
     "TrialRequest",
+    "execute_agent_phase",
     "execute_trial",
+    "score_trial_phase",
 ]

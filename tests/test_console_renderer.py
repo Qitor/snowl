@@ -92,3 +92,12 @@ def test_console_renderer_prints_error_details(capsys) -> None:
     out = capsys.readouterr().out
     assert "status=error" in out
     assert "error_code=agent_runtime_error" in out
+
+
+def test_console_renderer_ignores_ui_heartbeat(capsys) -> None:
+    r = ConsoleRenderer(verbose=True)
+    r.render_runtime_event({"event": "ui.heartbeat"})
+    r.render_runtime_event({"event": "runtime.trial.start", "task_id": "t1", "agent_id": "a1"})
+    out = capsys.readouterr().out
+    assert "ui.heartbeat" not in out
+    assert "runtime.trial.start" in out

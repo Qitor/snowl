@@ -1,0 +1,196 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - generic [ref=e7]:
+            - img [ref=e8]
+            - text: Run Gallery
+          - generic [ref=e10]:
+            - heading "Snowl Experiment Board" [level=1] [ref=e11]
+            - paragraph [ref=e12]: 先挑中这一次评测运行，再进入对应 workspace 看多模型结果、任务状态和实时日志。
+          - generic [ref=e13]: project=/tmp/snowl-livecheck-tsHzwR
+        - generic [ref=e14]:
+          - generic [ref=e15]: monitor connected
+          - link "历史对比" [ref=e16] [cursor=pointer]:
+            - /url: /compare
+      - generic [ref=e17]:
+        - generic [ref=e18]:
+          - generic [ref=e19]:
+            - generic [ref=e20]:
+              - generic [ref=e21]: Running Now
+              - generic [ref=e22]: "0"
+            - img [ref=e24]
+          - generic [ref=e27]: 当前仍在进行中的评测
+        - generic [ref=e28]:
+          - generic [ref=e29]:
+            - generic [ref=e30]:
+              - generic [ref=e31]: Recent Complete
+              - generic [ref=e32]: "3"
+            - img [ref=e34]
+          - generic [ref=e37]: 已顺利完成的 runs
+        - generic [ref=e38]:
+          - generic [ref=e39]:
+            - generic [ref=e40]:
+              - generic [ref=e41]: Needs Attention
+              - generic [ref=e42]: "0"
+            - img [ref=e44]
+          - generic [ref=e46]: 包含错误或失败 trial
+        - generic [ref=e47]:
+          - generic [ref=e48]:
+            - generic [ref=e49]:
+              - generic [ref=e50]: Benchmarks
+              - generic [ref=e51]: "1"
+            - img [ref=e53]
+          - generic [ref=e55]: 当前项目下的 benchmark 种类
+    - generic [ref=e56]:
+      - generic [ref=e58]:
+        - generic [ref=e59]:
+          - generic [ref=e60]:
+            - heading "Run Gallery" [level=3] [ref=e61]
+            - paragraph [ref=e62]: 用 benchmark tabs 先收窄范围，再按状态过滤，快速锁定你想看的那次运行。
+          - generic [ref=e63]:
+            - button "All" [ref=e64] [cursor=pointer]
+            - button "Running" [ref=e65] [cursor=pointer]
+            - button "Completed" [ref=e66] [cursor=pointer]
+            - button "Failed" [ref=e67] [cursor=pointer]
+        - generic [ref=e68]:
+          - button "All benchmarks 3" [ref=e69] [cursor=pointer]:
+            - img [ref=e70]
+            - text: All benchmarks
+            - generic [ref=e72]: "3"
+          - button "strongreject 3" [ref=e73] [cursor=pointer]:
+            - img [ref=e74]
+            - text: strongreject
+            - generic [ref=e76]: "3"
+      - generic [ref=e77]:
+        - link "strongreject completed run-20260310T085851Z updated 2026/3/10 16:59:25 Progress 100% Tasks done 4 of 4 Models / variants 2 tracked identities Failures 0 task-level errors Execution 4/4 Model summary Qwen/Qwen2.5-7B-Instruct · Qwen/Qwen3-32B 2 models archived run healthy Open workspace" [ref=e78] [cursor=pointer]:
+          - /url: /runs/run-20260310T085851Z
+          - generic [ref=e79]:
+            - generic [ref=e81]:
+              - generic [ref=e82]:
+                - generic [ref=e83]:
+                  - generic [ref=e84]: strongreject
+                  - generic [ref=e85]: completed
+                - generic [ref=e86]:
+                  - heading "run-20260310T085851Z" [level=3] [ref=e87]
+                  - paragraph [ref=e88]: updated 2026/3/10 16:59:25
+              - generic [ref=e89]:
+                - generic [ref=e90]: Progress
+                - generic [ref=e91]: 100%
+            - generic [ref=e92]:
+              - generic [ref=e93]:
+                - generic [ref=e94]:
+                  - generic [ref=e95]: Tasks done
+                  - generic [ref=e96]: "4"
+                  - generic [ref=e97]: of 4
+                - generic [ref=e98]:
+                  - generic [ref=e99]: Models / variants
+                  - generic [ref=e100]: "2"
+                  - generic [ref=e101]: tracked identities
+                - generic [ref=e102]:
+                  - generic [ref=e103]: Failures
+                  - generic [ref=e104]: "0"
+                  - generic [ref=e105]: task-level errors
+              - generic [ref=e107]:
+                - generic [ref=e108]: Execution
+                - generic [ref=e109]: 4/4
+              - generic [ref=e112]:
+                - generic [ref=e113]:
+                  - img [ref=e114]
+                  - text: Model summary
+                - generic [ref=e121]: Qwen/Qwen2.5-7B-Instruct · Qwen/Qwen3-32B
+                - generic [ref=e122]:
+                  - generic [ref=e123]: 2 models
+                  - generic [ref=e124]: archived run
+                  - generic [ref=e125]: healthy
+              - generic [ref=e126]:
+                - generic [ref=e127]: Open workspace
+                - img [ref=e128]
+        - link "strongreject completed run-20260310T085730Z updated 2026/3/10 16:58:02 Progress 100% Tasks done 10 of 10 Models / variants 2 tracked identities Failures 0 task-level errors Execution 10/10 Model summary Qwen/Qwen2.5-7B-Instruct · Qwen/Qwen3-32B 2 models archived run healthy Open workspace" [ref=e130] [cursor=pointer]:
+          - /url: /runs/run-20260310T085730Z
+          - generic [ref=e131]:
+            - generic [ref=e133]:
+              - generic [ref=e134]:
+                - generic [ref=e135]:
+                  - generic [ref=e136]: strongreject
+                  - generic [ref=e137]: completed
+                - generic [ref=e138]:
+                  - heading "run-20260310T085730Z" [level=3] [ref=e139]
+                  - paragraph [ref=e140]: updated 2026/3/10 16:58:02
+              - generic [ref=e141]:
+                - generic [ref=e142]: Progress
+                - generic [ref=e143]: 100%
+            - generic [ref=e144]:
+              - generic [ref=e145]:
+                - generic [ref=e146]:
+                  - generic [ref=e147]: Tasks done
+                  - generic [ref=e148]: "10"
+                  - generic [ref=e149]: of 10
+                - generic [ref=e150]:
+                  - generic [ref=e151]: Models / variants
+                  - generic [ref=e152]: "2"
+                  - generic [ref=e153]: tracked identities
+                - generic [ref=e154]:
+                  - generic [ref=e155]: Failures
+                  - generic [ref=e156]: "0"
+                  - generic [ref=e157]: task-level errors
+              - generic [ref=e159]:
+                - generic [ref=e160]: Execution
+                - generic [ref=e161]: 10/10
+              - generic [ref=e164]:
+                - generic [ref=e165]:
+                  - img [ref=e166]
+                  - text: Model summary
+                - generic [ref=e173]: Qwen/Qwen2.5-7B-Instruct · Qwen/Qwen3-32B
+                - generic [ref=e174]:
+                  - generic [ref=e175]: 2 models
+                  - generic [ref=e176]: archived run
+                  - generic [ref=e177]: healthy
+              - generic [ref=e178]:
+                - generic [ref=e179]: Open workspace
+                - img [ref=e180]
+        - link "strongreject completed run-20260310T084346Z updated 2026/3/10 16:45:14 Progress 100% Tasks done 6 of 6 Models / variants 2 tracked identities Failures 0 task-level errors Execution 6/6 Model summary Qwen/Qwen2.5-7B-Instruct · Qwen/Qwen3-32B 2 models archived run healthy Open workspace" [ref=e182] [cursor=pointer]:
+          - /url: /runs/run-20260310T084346Z
+          - generic [ref=e183]:
+            - generic [ref=e185]:
+              - generic [ref=e186]:
+                - generic [ref=e187]:
+                  - generic [ref=e188]: strongreject
+                  - generic [ref=e189]: completed
+                - generic [ref=e190]:
+                  - heading "run-20260310T084346Z" [level=3] [ref=e191]
+                  - paragraph [ref=e192]: updated 2026/3/10 16:45:14
+              - generic [ref=e193]:
+                - generic [ref=e194]: Progress
+                - generic [ref=e195]: 100%
+            - generic [ref=e196]:
+              - generic [ref=e197]:
+                - generic [ref=e198]:
+                  - generic [ref=e199]: Tasks done
+                  - generic [ref=e200]: "6"
+                  - generic [ref=e201]: of 6
+                - generic [ref=e202]:
+                  - generic [ref=e203]: Models / variants
+                  - generic [ref=e204]: "2"
+                  - generic [ref=e205]: tracked identities
+                - generic [ref=e206]:
+                  - generic [ref=e207]: Failures
+                  - generic [ref=e208]: "0"
+                  - generic [ref=e209]: task-level errors
+              - generic [ref=e211]:
+                - generic [ref=e212]: Execution
+                - generic [ref=e213]: 6/6
+              - generic [ref=e216]:
+                - generic [ref=e217]:
+                  - img [ref=e218]
+                  - text: Model summary
+                - generic [ref=e225]: Qwen/Qwen2.5-7B-Instruct · Qwen/Qwen3-32B
+                - generic [ref=e226]:
+                  - generic [ref=e227]: 2 models
+                  - generic [ref=e228]: archived run
+                  - generic [ref=e229]: healthy
+              - generic [ref=e230]:
+                - generic [ref=e231]: Open workspace
+                - img [ref=e232]
+  - alert [ref=e234]

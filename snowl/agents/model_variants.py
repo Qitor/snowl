@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from snowl.core import AgentVariant, make_agent_variant
-from snowl.model import ProjectModelEntry, ProjectProviderConfig, load_project_model_matrix
+from snowl.model import ProjectModelEntry, ProjectProviderConfig, find_project_file, load_project_model_matrix
 
 
 ModelVariantFactory = Callable[[ProjectModelEntry, ProjectProviderConfig], Any]
@@ -20,11 +20,9 @@ def build_model_variants(
 ) -> list[AgentVariant]:
     base_path = Path(base_dir).resolve()
     matrix = load_project_model_matrix(base_path)
-    source_path = base_path / "model.yml"
-    if not source_path.exists():
-        source_path = base_path / "model.yaml"
+    source_path = find_project_file(base_path) or (base_path / "project.yml")
     variants: list[AgentVariant] = []
-    for entry in matrix.models:
+    for entry in matrix.agent_matrix:
         agent = factory(entry, matrix.provider)
         try:
             setattr(agent, "agent_id", agent_id)
@@ -52,6 +50,7 @@ def build_model_variants(
                 provenance={
                     "source": str(source_path),
                     "provider": matrix.provider.kind,
+                    "provider_id": matrix.provider.id,
                     "base_url": matrix.provider.base_url,
                 },
             )

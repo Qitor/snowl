@@ -13,10 +13,12 @@ from snowl.benchmarks.agentsafetybench import (
 )
 from snowl.core import AgentContext, AgentState, StopReason, agent as declare_agent
 from snowl.model import OpenAICompatibleConfig, ProjectModelEntry, ProjectProviderConfig
-from snowl.utils.env import env_bool, env_float, env_int, env_str
+from snowl.project_config import load_project_config
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
+PROJECT = load_project_config(PROJECT_DIR)
+ASB_SETTINGS = PROJECT.benchmark_settings("agentsafetybench")
 DEFAULT_TEMPERATURE = 0.6
 DEFAULT_MAX_TOKENS = 8192
 DEFAULT_MAX_ROUNDS = 10
@@ -26,10 +28,10 @@ DEFAULT_MAX_ROUNDS = 10
 class AgentSafetyBenchOfficialAgent:
     model_config: OpenAICompatibleConfig
     agent_id: str = "agentsafetybench_official_agent"
-    temperature: float = field(default_factory=lambda: env_float("SNOWL_AGENTSAFETYBENCH_TEMPERATURE", DEFAULT_TEMPERATURE))
-    max_tokens: int = field(default_factory=lambda: env_int("SNOWL_AGENTSAFETYBENCH_MAX_TOKENS", DEFAULT_MAX_TOKENS))
-    max_rounds: int = field(default_factory=lambda: env_int("SNOWL_AGENTSAFETYBENCH_MAX_ROUNDS", DEFAULT_MAX_ROUNDS))
-    allow_empty: bool = field(default_factory=lambda: env_bool("SNOWL_AGENTSAFETYBENCH_ALLOW_EMPTY"))
+    temperature: float = float(ASB_SETTINGS.get("temperature", DEFAULT_TEMPERATURE))
+    max_tokens: int = int(ASB_SETTINGS.get("max_tokens", DEFAULT_MAX_TOKENS))
+    max_rounds: int = int(ASB_SETTINGS.get("max_rounds", DEFAULT_MAX_ROUNDS))
+    allow_empty: bool = bool(ASB_SETTINGS.get("allow_empty", False))
     _agent_api: Any = field(default=None, init=False, repr=False)
 
     def _ensure_agent_api(self) -> Any:
@@ -65,6 +67,8 @@ class AgentSafetyBenchOfficialAgent:
             sample_id=context.sample_id,
             case_id=case.get("id"),
             record=record,
+            output_dir=ASB_SETTINGS.get("output_dir"),
+            run_stamp=str(ASB_SETTINGS.get("run_stamp") or ""),
         )
         final_messages = list(record.get("output") or [])
         final_content = ""

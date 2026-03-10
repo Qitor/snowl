@@ -84,13 +84,14 @@ scorer = BasicScorer()
     assert outcome.scores["accuracy"].value == 1.0
 
 
-def test_run_eval_loads_model_yml_into_env(tmp_path: Path, monkeypatch) -> None:
-    for key in ("OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_TIMEOUT", "OPENAI_MAX_RETRIES"):
-        monkeypatch.delenv(key, raising=False)
-
-    (tmp_path / "model.yml").write_text(
+def test_run_eval_uses_project_yml_as_formal_entry(tmp_path: Path) -> None:
+    (tmp_path / "project.yml").write_text(
         """
+project:
+  name: demo
+  root_dir: .
 provider:
+  id: demo
   kind: openai_compatible
   base_url: https://example.com/v1
   api_key: sk-test
@@ -102,6 +103,13 @@ agent_matrix:
       model: tested-model
 judge:
   model: judge-model
+eval:
+  benchmark: custom
+  code:
+    base_dir: .
+    task_module: ./task.py
+    agent_module: ./agent.py
+    scorer_module: ./scorer.py
         """,
         encoding="utf-8",
     )
@@ -115,14 +123,16 @@ task = Task(task_id="t1", env_spec=EnvSpec(env_type="local"), sample_iter_factor
     )
     (tmp_path / "agent.py").write_text(
         """
-import os
+from pathlib import Path
 from snowl.core import StopReason
+from snowl.project_config import load_project_config
 
 class A:
     agent_id = "a1"
     async def run(self, state, context, tools=None):
+        project = load_project_config(Path(__file__).parent)
         state.output = {
-            "message": {"role": "assistant", "content": os.getenv("OPENAI_MODEL", "")},
+            "message": {"role": "assistant", "content": project.judge.model if project.judge else ""},
             "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
             "trace_events": [],
         }
@@ -148,19 +158,19 @@ scorer = S()
         encoding="utf-8",
     )
 
-    result = asyncio.run(run_eval(tmp_path))
+    result = asyncio.run(run_eval(tmp_path / "project.yml"))
     assert result.summary.success == 1
-    assert os.environ.get("OPENAI_MODEL") == "judge-model"
+    assert result.outcomes[0].task_result.final_output.get("content") == "judge-model"
 
 
-def test_model_yml_overrides_whitespace_env_value(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "   ")
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    monkeypatch.delenv("OPENAI_MODEL", raising=False)
-
-    (tmp_path / "model.yml").write_text(
+def test_project_yml_is_source_of_truth_for_provider_config(tmp_path: Path) -> None:
+    (tmp_path / "project.yml").write_text(
         """
+project:
+  name: demo
+  root_dir: .
 provider:
+  id: demo
   kind: openai_compatible
   base_url: https://example.com/v1
   api_key: sk-fixed
@@ -168,6 +178,13 @@ agent_matrix:
   models:
     - id: tested_model
       model: tested-model
+eval:
+  benchmark: custom
+  code:
+    base_dir: .
+    task_module: ./task.py
+    agent_module: ./agent.py
+    scorer_module: ./scorer.py
         """,
         encoding="utf-8",
     )
@@ -180,13 +197,15 @@ task = Task(task_id="t1", env_spec=EnvSpec(env_type="local"), sample_iter_factor
     )
     (tmp_path / "agent.py").write_text(
         """
-import os
+from pathlib import Path
 from snowl.core import StopReason
+from snowl.project_config import load_project_config
 class A:
     agent_id = "a1"
     async def run(self, state, context, tools=None):
+        project = load_project_config(Path(__file__).parent)
         state.output = {
-            "message": {"role": "assistant", "content": os.getenv("OPENAI_API_KEY", "")},
+            "message": {"role": "assistant", "content": project.provider.api_key},
             "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
             "trace_events": [],
         }
@@ -208,15 +227,19 @@ scorer = S()
         """,
         encoding="utf-8",
     )
-    result = asyncio.run(run_eval(tmp_path))
+    result = asyncio.run(run_eval(tmp_path / "project.yml"))
     assert result.summary.success == 1
-    assert os.environ.get("OPENAI_API_KEY") == "sk-fixed"
+    assert result.outcomes[0].task_result.final_output.get("content") == "sk-fixed"
 
 
 def test_run_eval_expands_agent_matrix_variants(tmp_path: Path) -> None:
-    (tmp_path / "model.yml").write_text(
+    (tmp_path / "project.yml").write_text(
         """
+project:
+  name: matrix-demo
+  root_dir: .
 provider:
+  id: demo
   kind: openai_compatible
   base_url: https://example.com/v1
   api_key: sk-test
@@ -230,6 +253,13 @@ agent_matrix:
       model: model-beta
 judge:
   model: judge-model
+eval:
+  benchmark: custom
+  code:
+    base_dir: .
+    task_module: ./task.py
+    agent_module: ./agent.py
+    scorer_module: ./scorer.py
         """,
         encoding="utf-8",
     )
@@ -299,7 +329,7 @@ scorer = S()
         encoding="utf-8",
     )
 
-    result = asyncio.run(run_eval(tmp_path))
+    result = asyncio.run(run_eval(tmp_path / "project.yml"))
     assert len(result.outcomes) == 2
     models = sorted(str((outcome.task_result.payload or {}).get("model") or "") for outcome in result.outcomes)
     assert models == ["model-alpha", "model-beta"]

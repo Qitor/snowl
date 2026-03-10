@@ -1,0 +1,45 @@
+project:
+  name: toolemu-model-sweep
+  root_dir: .
+
+provider:
+  id: openai
+  kind: openai_compatible
+  base_url: https://api.openai.com/v1
+  api_key: sk-...
+  timeout: 30
+  max_retries: 2
+
+agent_matrix:
+  models:
+    - id: gpt4o_mini
+      model: gpt-4o-mini
+    - id: qwen3_32b
+      model: Qwen/Qwen3-32B
+
+judge:
+  model: gpt-4.1-mini
+
+eval:
+  benchmark: toolemu
+  code:
+    base_dir: .
+    task_module: ./task.py
+    agent_module: ./agent.py
+    scorer_module: ./scorer.py
+  split: official
+
+runtime:
+  max_running_trials: 4
+  max_container_slots: 0
+  max_builds: 1
+  max_scoring_tasks: 4
+  provider_budgets:
+    openai: 6
+
+benchmarks:
+  toolemu:
+    agent_type: naive
+    simulator_type: adv_thought
+    max_iterations: 15
+    verbose: false

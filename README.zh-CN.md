@@ -2,58 +2,56 @@
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
-Snowl 是一个 Agent 评测框架，并且正在朝“工业级评测平台”演进。
+Snowl 是一个 Agent 评测框架，并且正在朝工业级评测平台收敛。
 
-它的核心契约故意保持很小：
+它的持久核心契约是：
 
 - 定义 `Task`
 - 定义 `Agent`
 - 定义 `Scorer`
-- 用 `snowl eval ...` 运行
+- 展开成 `Task x AgentVariant x Sample`
+- 用 `snowl eval path/to/project.yml` 运行
 
 其余复杂度都由平台层承担：
 
 - benchmark 适配
 - 多模型展开
-- runtime 编排
-- container 生命周期管理
-- 评分与聚合
-- 产物与可观测性
-- Web 运行监控
+- provider-aware 并发调度
+- container/runtime 编排
+- 产物落盘
+- CLI + Web operator 工作流
 
-## 项目文档入口
+## 文档入口
 
 - [START_HERE.md](./START_HERE.md)：最快速的仓库导览
-- [ARCHITECTURE.md](./ARCHITECTURE.md)：当前系统架构与工业化方向
-- [PLANS.md](./PLANS.md)：产品与工程路线图
-- [AGENTS.md](./AGENTS.md)：给 Codex 等 coding agent 的仓库规则
-- [docs/codex_best_practices.md](./docs/codex_best_practices.md)：本仓库的 Codex 使用建议
+- [ARCHITECTURE.md](./ARCHITECTURE.md)：当前架构与 runtime 方向
+- [PLANS.md](./PLANS.md)：路线图与执行优先级
+- [AGENTS.md](./AGENTS.md)：给 coding agent 的仓库规则
+- [docs/runtime_scheduling.md](./docs/runtime_scheduling.md)：runtime 调度设计文档
+- [docs/codex_best_practices.md](./docs/codex_best_practices.md)：Codex 使用建议
 
-## 当前 Snowl 已经具备的能力
+## 当前产品形态
 
-Snowl 现在已经不是“几个 benchmark 脚本的集合”，而是有共享平台底座的评测框架。
+Snowl 现在已经支持：
 
-当前产品形态：
-
-- 通过 `snowl eval <path>` 跑自定义评测目录
-- 通过 `snowl bench run <benchmark> --project <path>` 跑 benchmark 适配器
-- 通过 `model.yml` 做项目级多模型 authoring
+- 以 `project.yml` 为正式入口
+- 通过 `agent_matrix.models` 做项目级多模型评测
 - 内置 benchmark：
   - `strongreject`
   - `terminalbench`
   - `osworld`
   - `toolemu`
   - `agentsafetybench`
-- `.snowl/runs/` 下的完整产物体系
-- 基于 Next.js 的 Web monitor：run gallery、run workspace、实时日志、历史对比
+- provider-aware 的本地并发治理
 - 面向 terminal / GUI benchmark 的 container-aware runtime
-- resume 和 rerun-failed 能力
+- `.snowl/runs/` 下的完整评测产物
+- 面向 operator 的 Next.js Web monitor
+- 前台 plain CLI + 后台 Web sidecar 的默认运行模式
+- resume 与 rerun-failed
 
-当前部署目标仍然是：本地单机评测，但可观测性已经比较完整。
+当前部署目标仍然是：本地单机评测。
 
-## 快速开始
-
-### 1. 安装
+## 安装
 
 ```bash
 cd /Users/morinop/coding/snowl_v2
@@ -62,9 +60,9 @@ pip install -e .
 
 安装阶段会一并构建内置 Web UI。
 
-### 2. 准备 benchmark references
+## 准备 reference 仓库
 
-部分官方 example 依赖外部 benchmark 仓库，并要求固定目录名：
+若使用官方 example，需要把外部 benchmark 仓库放在这些固定目录：
 
 - `references/terminal-bench`
 - `references/OSWorld`
@@ -83,22 +81,24 @@ git clone <TOOLEMU_GIT_URL> references/ToolEmu
 git clone <AGENT_SAFETY_BENCH_GIT_URL> references/Agent-SafetyBench
 ```
 
-### 3. 跑官方 example
+## 快速开始
+
+### 跑官方 example
 
 ```bash
-snowl eval /Users/morinop/coding/snowl_v2/examples/strongreject-official
+snowl eval /Users/morinop/coding/snowl_v2/examples/strongreject-official/project.yml
 ```
 
 其他 example：
 
 ```bash
-snowl eval /Users/morinop/coding/snowl_v2/examples/terminalbench-official
-snowl eval /Users/morinop/coding/snowl_v2/examples/osworld-official
-snowl eval /Users/morinop/coding/snowl_v2/examples/toolemu-official
-snowl eval /Users/morinop/coding/snowl_v2/examples/agentsafetybench-official
+snowl eval /Users/morinop/coding/snowl_v2/examples/terminalbench-official/project.yml
+snowl eval /Users/morinop/coding/snowl_v2/examples/osworld-official/project.yml
+snowl eval /Users/morinop/coding/snowl_v2/examples/toolemu-official/project.yml
+snowl eval /Users/morinop/coding/snowl_v2/examples/agentsafetybench-official/project.yml
 ```
 
-### 4. 通过 benchmark adapter 运行
+### 通过 benchmark adapter 运行
 
 ```bash
 snowl bench list
@@ -106,81 +106,74 @@ snowl bench list
 
 ```bash
 snowl bench run terminalbench \
-  --project /Users/morinop/coding/snowl_v2/examples/terminalbench-official \
+  --project /Users/morinop/coding/snowl_v2/examples/terminalbench-official/project.yml \
   --split test
 ```
 
 ## 默认运行体验
 
-现在默认 CLI 行为是：
+默认 CLI 行为是：
 
-- 前台：plain terminal progress / logging，跟随评测本身
+- 前台：评测本身的 plain terminal progress / logging
 - 后台：自动拉起 Web monitor sidecar
-- 可选：`--cli-ui` 打开旧的 live CLI 面板
+- 可选：`--cli-ui` 打开旧 live CLI 面板
 
 典型命令：
 
 ```bash
-snowl eval /absolute/path/to/my-eval
+snowl eval /absolute/path/to/my-project/project.yml
 ```
 
 实际行为：
 
-1. 终端先打印 run 的启动信息和进度
-2. 当 run 真正初始化完成后，再打印 Web URL，比如 `http://127.0.0.1:8765`
-3. 前台始终是评测任务本身
+1. 终端先打印 project/run 启动信息
+2. 评测以前台任务形式开始执行
+3. run 初始化完成后，再打印 Web URL，例如 `http://127.0.0.1:8765`
 4. 停掉 eval 时，也会一起停掉这次自动拉起的 monitor sidecar
 
 常用参数：
 
 - 过滤：`--task`、`--agent`、`--variant`
-- 并发限制：`--max-trials`、`--max-sandboxes`、`--max-builds`、`--max-model-calls`
+- runtime 预算：
+  - `--max-running-trials`
+  - `--max-container-slots`
+  - `--max-builds`
+  - `--max-scoring-tasks`
+  - `--provider-budget provider_id=n`
 - 可靠性：`--resume`、`--rerun-failed-only`
 - monitor：`--no-web-monitor`
 - 旧 live CLI：`--cli-ui`
 
-手动 monitor 仍然可用：
+手动 monitor 模式仍然可用：
 
 ```bash
-snowl web monitor --project /absolute/path/to/my-eval --host 127.0.0.1 --port 8765
+snowl web monitor --project /absolute/path/to/my-project --host 127.0.0.1 --port 8765
 ```
 
-## 评测目录契约
+## `project.yml` 是唯一正式入口
 
-推荐目录结构：
+Snowl 现在把单个 YAML 文件作为一条评测 run 的正式入口。
+
+推荐结构：
 
 ```text
-my-eval/
+my-project/
+  project.yml
   task.py
   agent.py
   scorer.py
-  model.yml        # 推荐
-  tool.py          # 可选
-  panels.yml       # 可选
+  tool.py        # 可选
 ```
 
-自动发现规则：
-
-- `task.py`：导出一个或多个 `Task` 或工厂
-- `agent.py`：导出一个或多个 `Agent` / `AgentVariant` 或工厂
-- `scorer.py`：导出 scorer 或工厂
-- `model.yml`：项目级 provider / 被测模型 / 可选 judge 配置
-- `tool.py`：可选工具定义
-
-然后直接运行：
-
-```bash
-snowl eval /absolute/path/to/my-eval
-```
-
-## 多模型 Authoring
-
-Snowl 现在正式推荐项目级 model matrix。
-
-示例 `model.yml`：
+示例：
 
 ```yaml
+project:
+  name: strongreject-qwen-sweep
+  root_dir: .
+
 provider:
+  id: siliconflow
   kind: openai_compatible
   base_url: https://api.siliconflow.cn/v1
   api_key: sk-...
@@ -196,15 +189,41 @@ agent_matrix:
 
 judge:
   model: gpt-4.1-mini
+
+eval:
+  benchmark: strongreject
+  code:
+    base_dir: .
+    task_module: ./task.py
+    agent_module: ./agent.py
+    scorer_module: ./scorer.py
+    tool_module: ./tool.py
+  split: test
+  limit: 50
+
+runtime:
+  max_running_trials: 8
+  max_container_slots: 0
+  max_builds: 2
+  max_scoring_tasks: 8
+  provider_budgets:
+    siliconflow: 8
 ```
 
 语义：
 
-- `provider`：这个 example 使用的唯一 provider
-- `agent_matrix.models`：被测模型列表
-- `judge.model`：可选的 scorer/judge 模型，和被测模型分离
+- `project.root_dir`：项目根目录，用于产物路径和相对路径解析
+- `eval.code.base_dir`：代码加载根目录
+- `provider`：本次评测使用的远程模型 provider
+- `agent_matrix.models`：被测模型列表，会展开成多个 `AgentVariant`
+- `judge.model`：可选 judge/scorer 模型，和被测模型分离
+- `runtime.provider_budgets`：provider 级并发预算
 
-`agent.py` 推荐写法：
+目录结构没有被取消，而是改成由 YAML 显式声明。
+
+## 多模型 Authoring
+
+`agent.py` 推荐模式：
 
 ```python
 from pathlib import Path
@@ -226,142 +245,89 @@ def agents():
     )
 ```
 
-现在这套模式已经同时覆盖 QA 型 example，以及 TerminalBench、OSWorld 这种 container-heavy example。
+这套模式现在已经同时覆盖 QA 型 example 和 TerminalBench、OSWorld 这种 container-heavy example。
 
-## 当前执行模型
+## Runtime 调度模型
 
-Snowl 当前真正执行的矩阵是：
+Snowl 正在从粗粒度 semaphore 走向显式的 phase-aware scheduler。
 
-- `Task x AgentVariant x Sample`
+当前 runtime 预算已经拆成：
 
-一条 run 的主流程大致是：
+- `max_running_trials`：agent 执行并发
+- `max_container_slots`：container / sandbox 容量
+- `max_builds`：build/pull/setup 并发
+- `max_scoring_tasks`：scorer 并发
+- `provider_budgets[provider_id]`：provider 级远程请求并发
 
-1. 项目发现
-2. model matrix 展开成 `AgentVariant`
-3. 生成 plan
-4. runtime 调度
-5. trial 执行
-6. scorer 打分与聚合
-7. 产物落盘
-8. CLI / Web 可观测性消费
+当前运行时已经体现两个关键设计：
 
-当前重要限制：
+- provider 是 remote 模型并发的主限制边界
+- scoring 不再默认占用 agent execution 的同一个 slot
 
-- 一个 run 只有一个 active scorer
-- experiment 级比较是跨多个 runs 完成的，不是单个统一的大调度器
-- 当前并发能力仍然是本地单机级别
+因此 QA 任务和 container-heavy benchmark 可以共用一套 scheduler，只是资源消耗不同。
 
 ## 产物与可观测性
 
-每次 run 的产物都在：
+每次 run 的产物目录：
 
 ```text
-<project>/.snowl/runs/<timestamp>/
+<project>/.snowl/runs/<run_id>/
 ```
 
-关键文件：
+关键产物包括：
 
-- `run.log`：面向人的日志
-- `events.jsonl`：结构化 live event 流
-- `manifest.json`：run 元数据与产物契约
-- `summary.json`：最终 summary
-- `aggregate.json`：对比与聚合结果
-- `profiling.json`：runtime 与 task monitor 信息
-- `trials.jsonl`：trial 级结果
-- `metrics_wide.csv`：分析友好的宽表导出
+- `manifest.json`
+- `plan.json`
+- `summary.json`
+- `aggregate.json`
+- `profiling.json`
+- `trials.jsonl`
+- `events.jsonl`
+- `run.log`
 
-Web UI 的大部分能力都是围绕这些产物和 live events 建立的。
+可观测性入口：
 
-## Web UI
+- CLI：面向 operator 的前台日志/进度
+- Web：
+  - `/`：run gallery / operator board
+  - `/runs/[runId]`：单 run workspace
+  - `/compare`：次级历史对比视图
 
-内置 monitor 是一个打包到 `snowl` 里的 Next.js 应用。
+running run 应该在启动后立刻变得可见。Snowl 会尽早写入 bootstrap artifacts，这样 Web 在 run 完成前就能显示 planned trials、visible tasks、models 和 progress。
 
-当前结构：
+## Examples
 
-- `/`：run gallery
-- `/runs/[runId]`：run workspace
-- `/compare`：历史 experiment 对比
+参见 [examples/README.md](./examples/README.md)。
 
-主工作流：
+## 开发检查
 
-- 先在 gallery 里选 run
-- 进入 workspace 看模型与任务状态
-- 下钻 runtime logs 和 pretask 诊断
-- 如有需要，再去 compare 看历史对比
+Python tests：
 
-它是 run-first，而不是 experiment-first。
+```bash
+pytest -q
+```
 
-## 当前架构方向
+runtime 重点检查：
 
-Snowl 现在真正的下一阶段，不再是“再接几个 benchmark”。
-真正最难、也最有价值的问题是 runtime 和 orchestration 工业化。
+```bash
+pytest -q tests/test_eval_autodiscovery.py tests/test_runtime_controls_and_profiling.py tests/test_resource_scheduler.py tests/test_cli_eval.py
+```
 
-接下来最硬的方向包括：
+合成调度基线：
 
-- 并发调度
-- build / sandbox / model-call 的 backpressure
-- container 生命周期鲁棒性
-- 失败后的 resume / recovery
-- 更强的产物契约
-- 长时间 run 的可观测性
+```bash
+python scripts/runtime_scheduler_benchmark.py
+```
 
-如果你要做这部分，请先读 [ARCHITECTURE.md](./ARCHITECTURE.md)。
+Web UI typecheck：
 
-## 仓库地图
+```bash
+cd webui
+npm run -s typecheck
+```
 
-核心框架：
+安装 sanity：
 
-- `snowl/core/`
-- `snowl/eval.py`
-- `snowl/runtime/`
-- `snowl/envs/`
-- `snowl/model/`
-- `snowl/agents/`
-
-监控与 UI：
-
-- `snowl/cli.py`
-- `snowl/web/`
-- `webui/`
-- `snowl/_webui/`
-
-benchmark 与 examples：
-
-- `snowl/benchmarks/`
-- `examples/`
-- `references/`
-
-验证与打包：
-
-- `tests/`
-- `pyproject.toml`
-- `setup.py`
-
-## 推荐阅读顺序
-
-1. [AGENTS.md](./AGENTS.md)
-2. [START_HERE.md](./START_HERE.md)
-3. [ARCHITECTURE.md](./ARCHITECTURE.md)
-4. [PLANS.md](./PLANS.md)
-5. 再看你要改的子系统代码
-
-## 状态说明
-
-Snowl 已经有比较强的平台基础，但它还不是工业级 scheduler。
-
-目前已经比较强的部分：
-
-- 统一评测契约
-- 官方 benchmark 覆盖
-- 多模型 authoring
-- container-aware trial execution
-- 产物与监控
-
-当前最难、也最值得投入的未完成部分：
-
-- 工业级 runtime scheduling
-- 更强的 fairness 与 backpressure
-- container-heavy run 的 fault isolation 和 recovery
-- 在不破坏契约的前提下走向多机/更大规模
-
-这正是这个仓库接下来的重点。
+```bash
+pip install -e .
+```

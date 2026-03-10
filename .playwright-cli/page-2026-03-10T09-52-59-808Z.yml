@@ -1,0 +1,566 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - generic [ref=e7]:
+            - img [ref=e8]
+            - text: Run Gallery
+          - generic [ref=e10]:
+            - heading "Snowl Experiment Board" [level=1] [ref=e11]
+            - paragraph [ref=e12]: 先挑中这一次评测运行，再进入对应 workspace 看多模型结果、任务状态和实时日志。
+          - generic [ref=e13]: project=/Users/morinop/coding/snowl_v2/examples/strongreject-official
+        - generic [ref=e14]:
+          - generic [ref=e15]: monitor connected
+          - link "历史对比" [ref=e16] [cursor=pointer]:
+            - /url: /compare
+      - generic [ref=e17]:
+        - generic [ref=e18]:
+          - generic [ref=e19]:
+            - generic [ref=e20]:
+              - generic [ref=e21]: Running Now
+              - generic [ref=e22]: "10"
+            - img [ref=e24]
+          - generic [ref=e27]: 当前仍在进行中的评测
+        - generic [ref=e28]:
+          - generic [ref=e29]:
+            - generic [ref=e30]:
+              - generic [ref=e31]: Recent Complete
+              - generic [ref=e32]: "4"
+            - img [ref=e34]
+          - generic [ref=e37]: 已顺利完成的 runs
+        - generic [ref=e38]:
+          - generic [ref=e39]:
+            - generic [ref=e40]:
+              - generic [ref=e41]: Needs Attention
+              - generic [ref=e42]: "13"
+            - img [ref=e44]
+          - generic [ref=e46]: 包含错误或失败 trial
+        - generic [ref=e47]:
+          - generic [ref=e48]:
+            - generic [ref=e49]:
+              - generic [ref=e50]: Benchmarks
+              - generic [ref=e51]: "2"
+            - img [ref=e53]
+          - generic [ref=e55]: 当前项目下的 benchmark 种类
+    - generic [ref=e56]:
+      - generic [ref=e78]:
+        - generic [ref=e79]:
+          - generic [ref=e80]:
+            - heading "Continue Watching" [level=3] [ref=e81]
+            - paragraph [ref=e82]: 默认把焦点放在最新的运行中或需要注意的 run，方便直接回到当前值班对象。
+          - link "打开当前 run" [ref=e83] [cursor=pointer]:
+            - /url: /runs/run-20260310T065251Z
+        - generic [ref=e84]:
+          - generic [ref=e85]:
+            - generic [ref=e86]:
+              - generic [ref=e87]: strongreject
+              - generic [ref=e88]: running
+              - generic [ref=e89]: stalled
+            - generic [ref=e90]: run-20260310T065251Z
+            - generic [ref=e91]: updated 2026/3/10 17:50:21
+            - generic [ref=e92]:
+              - generic [ref=e93]:
+                - generic [ref=e94]: Progress
+                - generic [ref=e95]: 14/0
+              - generic [ref=e96]:
+                - generic [ref=e97]: Variants
+                - generic [ref=e98]: "2"
+              - generic [ref=e99]:
+                - generic [ref=e100]: Attention
+                - generic [ref=e101]: "4"
+              - generic [ref=e102]:
+                - generic [ref=e103]: Task monitor
+                - generic [ref=e104]: ready
+          - generic [ref=e105]:
+            - generic [ref=e106]: Operator signals
+            - generic [ref=e107]:
+              - generic [ref=e108]: live observer attached
+              - generic [ref=e109]: 4 signals need review
+              - generic [ref=e110]: no recent progress
+            - generic [ref=e111]: 这个 run 当前最值得先看。优先进入 Tasks，确认是卡在 pretask、trial、scorer，还是只是长尾模型调用。
+      - generic [ref=e58]:
+        - generic [ref=e59]:
+          - generic [ref=e60]:
+            - heading "Run Gallery" [level=3] [ref=e61]
+            - paragraph [ref=e62]: 用 benchmark tabs 先收窄范围，再按状态过滤，快速锁定你想看的那次运行。
+          - generic [ref=e63]:
+            - button "Running" [ref=e64] [cursor=pointer]
+            - button "Needs attention" [ref=e65] [cursor=pointer]
+            - button "Completed" [ref=e66] [cursor=pointer]
+            - button "All" [ref=e67] [cursor=pointer]
+        - generic [ref=e68]:
+          - button "All benchmarks 17" [ref=e112] [cursor=pointer]:
+            - img [ref=e70]
+            - text: All benchmarks
+            - generic [ref=e72]: "17"
+          - button "custom 1" [ref=e113] [cursor=pointer]:
+            - img [ref=e114]
+            - text: custom
+            - generic [ref=e116]: "1"
+          - button "strongreject 16" [ref=e117] [cursor=pointer]:
+            - img [ref=e118]
+            - text: strongreject
+            - generic [ref=e120]: "16"
+      - generic [ref=e121]:
+        - link "strongreject running live stalled run-20260310T065251Z updated 2026/3/10 17:50:21 · run-20260310T065251Z Progress 0% Tasks done 14 of 0 Models / variants 2 tracked identities Attention 4 operator signals Execution 14/0 Model summary Qwen/Qwen2.5-7B-Instruct · Qwen/Qwen3-32B 2 models live observer needs review Run is alive but no meaningful progress has been observed recently. Watch run" [ref=e122] [cursor=pointer]:
+          - /url: /runs/run-20260310T065251Z
+          - generic [ref=e123]:
+            - generic [ref=e125]:
+              - generic [ref=e126]:
+                - generic [ref=e127]:
+                  - generic [ref=e128]: strongreject
+                  - generic [ref=e129]: running
+                  - generic [ref=e130]: live
+                  - generic [ref=e131]: stalled
+                - generic [ref=e132]:
+                  - heading "run-20260310T065251Z" [level=3] [ref=e133]
+                  - paragraph [ref=e134]: updated 2026/3/10 17:50:21 · run-20260310T065251Z
+              - generic [ref=e135]:
+                - generic [ref=e136]: Progress
+                - generic [ref=e137]: 0%
+            - generic [ref=e138]:
+              - generic [ref=e139]:
+                - generic [ref=e140]:
+                  - generic [ref=e141]: Tasks done
+                  - generic [ref=e142]: "14"
+                  - generic [ref=e143]: of 0
+                - generic [ref=e144]:
+                  - generic [ref=e145]: Models / variants
+                  - generic [ref=e146]: "2"
+                  - generic [ref=e147]: tracked identities
+                - generic [ref=e148]:
+                  - generic [ref=e149]: Attention
+                  - generic [ref=e150]: "4"
+                  - generic [ref=e151]: operator signals
+              - generic [ref=e153]:
+                - generic [ref=e154]: Execution
+                - generic [ref=e155]: 14/0
+              - generic [ref=e157]:
+                - generic [ref=e158]:
+                  - img [ref=e159]
+                  - text: Model summary
+                - generic [ref=e166]: Qwen/Qwen2.5-7B-Instruct · Qwen/Qwen3-32B
+                - generic [ref=e167]:
+                  - generic [ref=e168]: 2 models
+                  - generic [ref=e169]: live observer
+                  - generic [ref=e170]: needs review
+              - generic [ref=e171]: Run is alive but no meaningful progress has been observed recently.
+              - generic [ref=e172]:
+                - generic [ref=e173]: Watch run
+                - img [ref=e174]
+        - link "strongreject running live stalled run-20260309T152545Z updated 2026/3/10 17:50:21 · run-20260309T152545Z Progress 0% Tasks done 3 of 0 Models / variants 2 tracked identities Attention 2 operator signals Execution 3/0 Model summary Qwen/Qwen2.5-7B-Instruct 1 models live observer needs review Run is alive but no meaningful progress has been observed recently. Watch run" [ref=e176] [cursor=pointer]:
+          - /url: /runs/run-20260309T152545Z
+          - generic [ref=e177]:
+            - generic [ref=e179]:
+              - generic [ref=e180]:
+                - generic [ref=e181]:
+                  - generic [ref=e182]: strongreject
+                  - generic [ref=e183]: running
+                  - generic [ref=e184]: live
+                  - generic [ref=e185]: stalled
+                - generic [ref=e186]:
+                  - heading "run-20260309T152545Z" [level=3] [ref=e187]
+                  - paragraph [ref=e188]: updated 2026/3/10 17:50:21 · run-20260309T152545Z
+              - generic [ref=e189]:
+                - generic [ref=e190]: Progress
+                - generic [ref=e191]: 0%
+            - generic [ref=e192]:
+              - generic [ref=e193]:
+                - generic [ref=e194]:
+                  - generic [ref=e195]: Tasks done
+                  - generic [ref=e196]: "3"
+                  - generic [ref=e197]: of 0
+                - generic [ref=e198]:
+                  - generic [ref=e199]: Models / variants
+                  - generic [ref=e200]: "2"
+                  - generic [ref=e201]: tracked identities
+                - generic [ref=e202]:
+                  - generic [ref=e203]: Attention
+                  - generic [ref=e204]: "2"
+                  - generic [ref=e205]: operator signals
+              - generic [ref=e207]:
+                - generic [ref=e208]: Execution
+                - generic [ref=e209]: 3/0
+              - generic [ref=e211]:
+                - generic [ref=e212]:
+                  - img [ref=e213]
+                  - text: Model summary
+                - generic [ref=e220]: Qwen/Qwen2.5-7B-Instruct
+                - generic [ref=e221]:
+                  - generic [ref=e222]: 1 models
+                  - generic [ref=e223]: live observer
+                  - generic [ref=e224]: needs review
+              - generic [ref=e225]: Run is alive but no meaningful progress has been observed recently.
+              - generic [ref=e226]:
+                - generic [ref=e227]: Watch run
+                - img [ref=e228]
+        - link "strongreject running live stalled run-20260309T140031Z updated 2026/3/10 17:50:21 · run-20260309T140031Z Progress 0% Tasks done 5 of 0 Models / variants 2 tracked identities Attention 2 operator signals Execution 5/0 Model summary Qwen/Qwen2.5-7B-Instruct 1 models live observer needs review Run is alive but no meaningful progress has been observed recently. Watch run" [ref=e230] [cursor=pointer]:
+          - /url: /runs/run-20260309T140031Z
+          - generic [ref=e231]:
+            - generic [ref=e233]:
+              - generic [ref=e234]:
+                - generic [ref=e235]:
+                  - generic [ref=e236]: strongreject
+                  - generic [ref=e237]: running
+                  - generic [ref=e238]: live
+                  - generic [ref=e239]: stalled
+                - generic [ref=e240]:
+                  - heading "run-20260309T140031Z" [level=3] [ref=e241]
+                  - paragraph [ref=e242]: updated 2026/3/10 17:50:21 · run-20260309T140031Z
+              - generic [ref=e243]:
+                - generic [ref=e244]: Progress
+                - generic [ref=e245]: 0%
+            - generic [ref=e246]:
+              - generic [ref=e247]:
+                - generic [ref=e248]:
+                  - generic [ref=e249]: Tasks done
+                  - generic [ref=e250]: "5"
+                  - generic [ref=e251]: of 0
+                - generic [ref=e252]:
+                  - generic [ref=e253]: Models / variants
+                  - generic [ref=e254]: "2"
+                  - generic [ref=e255]: tracked identities
+                - generic [ref=e256]:
+                  - generic [ref=e257]: Attention
+                  - generic [ref=e258]: "2"
+                  - generic [ref=e259]: operator signals
+              - generic [ref=e261]:
+                - generic [ref=e262]: Execution
+                - generic [ref=e263]: 5/0
+              - generic [ref=e265]:
+                - generic [ref=e266]:
+                  - img [ref=e267]
+                  - text: Model summary
+                - generic [ref=e274]: Qwen/Qwen2.5-7B-Instruct
+                - generic [ref=e275]:
+                  - generic [ref=e276]: 1 models
+                  - generic [ref=e277]: live observer
+                  - generic [ref=e278]: needs review
+              - generic [ref=e279]: Run is alive but no meaningful progress has been observed recently.
+              - generic [ref=e280]:
+                - generic [ref=e281]: Watch run
+                - img [ref=e282]
+        - link "strongreject running live stalled run-20260309T131911Z updated 2026/3/10 17:50:21 · run-20260309T131911Z Progress 0% Tasks done 28 of 0 Models / variants 1 tracked identities Attention 2 operator signals Execution 28/0 Model summary Qwen/Qwen2.5-7B-Instruct 1 models live observer needs review Run is alive but no meaningful progress has been observed recently. Watch run" [ref=e284] [cursor=pointer]:
+          - /url: /runs/run-20260309T131911Z
+          - generic [ref=e285]:
+            - generic [ref=e287]:
+              - generic [ref=e288]:
+                - generic [ref=e289]:
+                  - generic [ref=e290]: strongreject
+                  - generic [ref=e291]: running
+                  - generic [ref=e292]: live
+                  - generic [ref=e293]: stalled
+                - generic [ref=e294]:
+                  - heading "run-20260309T131911Z" [level=3] [ref=e295]
+                  - paragraph [ref=e296]: updated 2026/3/10 17:50:21 · run-20260309T131911Z
+              - generic [ref=e297]:
+                - generic [ref=e298]: Progress
+                - generic [ref=e299]: 0%
+            - generic [ref=e300]:
+              - generic [ref=e301]:
+                - generic [ref=e302]:
+                  - generic [ref=e303]: Tasks done
+                  - generic [ref=e304]: "28"
+                  - generic [ref=e305]: of 0
+                - generic [ref=e306]:
+                  - generic [ref=e307]: Models / variants
+                  - generic [ref=e308]: "1"
+                  - generic [ref=e309]: tracked identities
+                - generic [ref=e310]:
+                  - generic [ref=e311]: Attention
+                  - generic [ref=e312]: "2"
+                  - generic [ref=e313]: operator signals
+              - generic [ref=e315]:
+                - generic [ref=e316]: Execution
+                - generic [ref=e317]: 28/0
+              - generic [ref=e319]:
+                - generic [ref=e320]:
+                  - img [ref=e321]
+                  - text: Model summary
+                - generic [ref=e328]: Qwen/Qwen2.5-7B-Instruct
+                - generic [ref=e329]:
+                  - generic [ref=e330]: 1 models
+                  - generic [ref=e331]: live observer
+                  - generic [ref=e332]: needs review
+              - generic [ref=e333]: Run is alive but no meaningful progress has been observed recently.
+              - generic [ref=e334]:
+                - generic [ref=e335]: Watch run
+                - img [ref=e336]
+        - link "strongreject running live stalled run-20260309T131822Z updated 2026/3/10 17:50:21 · run-20260309T131822Z Progress 0% Tasks done 5 of 0 Models / variants 1 tracked identities Attention 2 operator signals Execution 5/0 Model summary Qwen/Qwen2.5-7B-Instruct 1 models live observer needs review Run is alive but no meaningful progress has been observed recently. Watch run" [ref=e338] [cursor=pointer]:
+          - /url: /runs/run-20260309T131822Z
+          - generic [ref=e339]:
+            - generic [ref=e341]:
+              - generic [ref=e342]:
+                - generic [ref=e343]:
+                  - generic [ref=e344]: strongreject
+                  - generic [ref=e345]: running
+                  - generic [ref=e346]: live
+                  - generic [ref=e347]: stalled
+                - generic [ref=e348]:
+                  - heading "run-20260309T131822Z" [level=3] [ref=e349]
+                  - paragraph [ref=e350]: updated 2026/3/10 17:50:21 · run-20260309T131822Z
+              - generic [ref=e351]:
+                - generic [ref=e352]: Progress
+                - generic [ref=e353]: 0%
+            - generic [ref=e354]:
+              - generic [ref=e355]:
+                - generic [ref=e356]:
+                  - generic [ref=e357]: Tasks done
+                  - generic [ref=e358]: "5"
+                  - generic [ref=e359]: of 0
+                - generic [ref=e360]:
+                  - generic [ref=e361]: Models / variants
+                  - generic [ref=e362]: "1"
+                  - generic [ref=e363]: tracked identities
+                - generic [ref=e364]:
+                  - generic [ref=e365]: Attention
+                  - generic [ref=e366]: "2"
+                  - generic [ref=e367]: operator signals
+              - generic [ref=e369]:
+                - generic [ref=e370]: Execution
+                - generic [ref=e371]: 5/0
+              - generic [ref=e373]:
+                - generic [ref=e374]:
+                  - img [ref=e375]
+                  - text: Model summary
+                - generic [ref=e382]: Qwen/Qwen2.5-7B-Instruct
+                - generic [ref=e383]:
+                  - generic [ref=e384]: 1 models
+                  - generic [ref=e385]: live observer
+                  - generic [ref=e386]: needs review
+              - generic [ref=e387]: Run is alive but no meaningful progress has been observed recently.
+              - generic [ref=e388]:
+                - generic [ref=e389]: Watch run
+                - img [ref=e390]
+        - link "strongreject running live stalled run-20260309T130836Z updated 2026/3/10 17:50:21 · run-20260309T130836Z Progress 0% Tasks done 47 of 0 Models / variants 2 tracked identities Attention 2 operator signals Execution 47/0 Model summary Qwen/Qwen2.5-7B-Instruct 1 models live observer needs review Run is alive but no meaningful progress has been observed recently. Watch run" [ref=e392] [cursor=pointer]:
+          - /url: /runs/run-20260309T130836Z
+          - generic [ref=e393]:
+            - generic [ref=e395]:
+              - generic [ref=e396]:
+                - generic [ref=e397]:
+                  - generic [ref=e398]: strongreject
+                  - generic [ref=e399]: running
+                  - generic [ref=e400]: live
+                  - generic [ref=e401]: stalled
+                - generic [ref=e402]:
+                  - heading "run-20260309T130836Z" [level=3] [ref=e403]
+                  - paragraph [ref=e404]: updated 2026/3/10 17:50:21 · run-20260309T130836Z
+              - generic [ref=e405]:
+                - generic [ref=e406]: Progress
+                - generic [ref=e407]: 0%
+            - generic [ref=e408]:
+              - generic [ref=e409]:
+                - generic [ref=e410]:
+                  - generic [ref=e411]: Tasks done
+                  - generic [ref=e412]: "47"
+                  - generic [ref=e413]: of 0
+                - generic [ref=e414]:
+                  - generic [ref=e415]: Models / variants
+                  - generic [ref=e416]: "2"
+                  - generic [ref=e417]: tracked identities
+                - generic [ref=e418]:
+                  - generic [ref=e419]: Attention
+                  - generic [ref=e420]: "2"
+                  - generic [ref=e421]: operator signals
+              - generic [ref=e423]:
+                - generic [ref=e424]: Execution
+                - generic [ref=e425]: 47/0
+              - generic [ref=e427]:
+                - generic [ref=e428]:
+                  - img [ref=e429]
+                  - text: Model summary
+                - generic [ref=e436]: Qwen/Qwen2.5-7B-Instruct
+                - generic [ref=e437]:
+                  - generic [ref=e438]: 1 models
+                  - generic [ref=e439]: live observer
+                  - generic [ref=e440]: needs review
+              - generic [ref=e441]: Run is alive but no meaningful progress has been observed recently.
+              - generic [ref=e442]:
+                - generic [ref=e443]: Watch run
+                - img [ref=e444]
+        - link "strongreject running live stalled run-20260309T130804Z updated 2026/3/10 17:50:21 · run-20260309T130804Z Progress 0% Tasks done 3 of 0 Models / variants 2 tracked identities Attention 2 operator signals Execution 3/0 Model summary Qwen/Qwen2.5-7B-Instruct 1 models live observer needs review Run is alive but no meaningful progress has been observed recently. Watch run" [ref=e446] [cursor=pointer]:
+          - /url: /runs/run-20260309T130804Z
+          - generic [ref=e447]:
+            - generic [ref=e449]:
+              - generic [ref=e450]:
+                - generic [ref=e451]:
+                  - generic [ref=e452]: strongreject
+                  - generic [ref=e453]: running
+                  - generic [ref=e454]: live
+                  - generic [ref=e455]: stalled
+                - generic [ref=e456]:
+                  - heading "run-20260309T130804Z" [level=3] [ref=e457]
+                  - paragraph [ref=e458]: updated 2026/3/10 17:50:21 · run-20260309T130804Z
+              - generic [ref=e459]:
+                - generic [ref=e460]: Progress
+                - generic [ref=e461]: 0%
+            - generic [ref=e462]:
+              - generic [ref=e463]:
+                - generic [ref=e464]:
+                  - generic [ref=e465]: Tasks done
+                  - generic [ref=e466]: "3"
+                  - generic [ref=e467]: of 0
+                - generic [ref=e468]:
+                  - generic [ref=e469]: Models / variants
+                  - generic [ref=e470]: "2"
+                  - generic [ref=e471]: tracked identities
+                - generic [ref=e472]:
+                  - generic [ref=e473]: Attention
+                  - generic [ref=e474]: "2"
+                  - generic [ref=e475]: operator signals
+              - generic [ref=e477]:
+                - generic [ref=e478]: Execution
+                - generic [ref=e479]: 3/0
+              - generic [ref=e481]:
+                - generic [ref=e482]:
+                  - img [ref=e483]
+                  - text: Model summary
+                - generic [ref=e490]: Qwen/Qwen2.5-7B-Instruct
+                - generic [ref=e491]:
+                  - generic [ref=e492]: 1 models
+                  - generic [ref=e493]: live observer
+                  - generic [ref=e494]: needs review
+              - generic [ref=e495]: Run is alive but no meaningful progress has been observed recently.
+              - generic [ref=e496]:
+                - generic [ref=e497]: Watch run
+                - img [ref=e498]
+        - link "strongreject running live stalled run-20260309T130336Z updated 2026/3/10 17:50:21 · run-20260309T130336Z Progress 0% Tasks done 0 of 0 Models / variants 1 tracked identities Attention 2 operator signals Execution 0/0 Model summary 1 variants 1 models live observer needs review Run is alive but no meaningful progress has been observed recently. Watch run" [ref=e500] [cursor=pointer]:
+          - /url: /runs/run-20260309T130336Z
+          - generic [ref=e501]:
+            - generic [ref=e503]:
+              - generic [ref=e504]:
+                - generic [ref=e505]:
+                  - generic [ref=e506]: strongreject
+                  - generic [ref=e507]: running
+                  - generic [ref=e508]: live
+                  - generic [ref=e509]: stalled
+                - generic [ref=e510]:
+                  - heading "run-20260309T130336Z" [level=3] [ref=e511]
+                  - paragraph [ref=e512]: updated 2026/3/10 17:50:21 · run-20260309T130336Z
+              - generic [ref=e513]:
+                - generic [ref=e514]: Progress
+                - generic [ref=e515]: 0%
+            - generic [ref=e516]:
+              - generic [ref=e517]:
+                - generic [ref=e518]:
+                  - generic [ref=e519]: Tasks done
+                  - generic [ref=e520]: "0"
+                  - generic [ref=e521]: of 0
+                - generic [ref=e522]:
+                  - generic [ref=e523]: Models / variants
+                  - generic [ref=e524]: "1"
+                  - generic [ref=e525]: tracked identities
+                - generic [ref=e526]:
+                  - generic [ref=e527]: Attention
+                  - generic [ref=e528]: "2"
+                  - generic [ref=e529]: operator signals
+              - generic [ref=e531]:
+                - generic [ref=e532]: Execution
+                - generic [ref=e533]: 0/0
+              - generic [ref=e535]:
+                - generic [ref=e536]:
+                  - img [ref=e537]
+                  - text: Model summary
+                - generic [ref=e544]: 1 variants
+                - generic [ref=e545]:
+                  - generic [ref=e546]: 1 models
+                  - generic [ref=e547]: live observer
+                  - generic [ref=e548]: needs review
+              - generic [ref=e549]: Run is alive but no meaningful progress has been observed recently.
+              - generic [ref=e550]:
+                - generic [ref=e551]: Watch run
+                - img [ref=e552]
+        - link "strongreject running live stalled run-20260309T130400Z updated 2026/3/10 17:50:21 · run-20260309T130400Z Progress 0% Tasks done 33 of 0 Models / variants 2 tracked identities Attention 2 operator signals Execution 33/0 Model summary Qwen/Qwen2.5-7B-Instruct 1 models live observer needs review Run is alive but no meaningful progress has been observed recently. Watch run" [ref=e554] [cursor=pointer]:
+          - /url: /runs/run-20260309T130400Z
+          - generic [ref=e555]:
+            - generic [ref=e557]:
+              - generic [ref=e558]:
+                - generic [ref=e559]:
+                  - generic [ref=e560]: strongreject
+                  - generic [ref=e561]: running
+                  - generic [ref=e562]: live
+                  - generic [ref=e563]: stalled
+                - generic [ref=e564]:
+                  - heading "run-20260309T130400Z" [level=3] [ref=e565]
+                  - paragraph [ref=e566]: updated 2026/3/10 17:50:21 · run-20260309T130400Z
+              - generic [ref=e567]:
+                - generic [ref=e568]: Progress
+                - generic [ref=e569]: 0%
+            - generic [ref=e570]:
+              - generic [ref=e571]:
+                - generic [ref=e572]:
+                  - generic [ref=e573]: Tasks done
+                  - generic [ref=e574]: "33"
+                  - generic [ref=e575]: of 0
+                - generic [ref=e576]:
+                  - generic [ref=e577]: Models / variants
+                  - generic [ref=e578]: "2"
+                  - generic [ref=e579]: tracked identities
+                - generic [ref=e580]:
+                  - generic [ref=e581]: Attention
+                  - generic [ref=e582]: "2"
+                  - generic [ref=e583]: operator signals
+              - generic [ref=e585]:
+                - generic [ref=e586]: Execution
+                - generic [ref=e587]: 33/0
+              - generic [ref=e589]:
+                - generic [ref=e590]:
+                  - img [ref=e591]
+                  - text: Model summary
+                - generic [ref=e598]: Qwen/Qwen2.5-7B-Instruct
+                - generic [ref=e599]:
+                  - generic [ref=e600]: 1 models
+                  - generic [ref=e601]: live observer
+                  - generic [ref=e602]: needs review
+              - generic [ref=e603]: Run is alive but no meaningful progress has been observed recently.
+              - generic [ref=e604]:
+                - generic [ref=e605]: Watch run
+                - img [ref=e606]
+        - link "strongreject running live stalled run-20260309T125234Z updated 2026/3/10 17:50:21 · run-20260309T125234Z Progress 0% Tasks done 0 of 0 Models / variants 1 tracked identities Attention 2 operator signals Execution 0/0 Model summary 1 variants 1 models live observer needs review Run is alive but no meaningful progress has been observed recently. Watch run" [ref=e608] [cursor=pointer]:
+          - /url: /runs/run-20260309T125234Z
+          - generic [ref=e609]:
+            - generic [ref=e611]:
+              - generic [ref=e612]:
+                - generic [ref=e613]:
+                  - generic [ref=e614]: strongreject
+                  - generic [ref=e615]: running
+                  - generic [ref=e616]: live
+                  - generic [ref=e617]: stalled
+                - generic [ref=e618]:
+                  - heading "run-20260309T125234Z" [level=3] [ref=e619]
+                  - paragraph [ref=e620]: updated 2026/3/10 17:50:21 · run-20260309T125234Z
+              - generic [ref=e621]:
+                - generic [ref=e622]: Progress
+                - generic [ref=e623]: 0%
+            - generic [ref=e624]:
+              - generic [ref=e625]:
+                - generic [ref=e626]:
+                  - generic [ref=e627]: Tasks done
+                  - generic [ref=e628]: "0"
+                  - generic [ref=e629]: of 0
+                - generic [ref=e630]:
+                  - generic [ref=e631]: Models / variants
+                  - generic [ref=e632]: "1"
+                  - generic [ref=e633]: tracked identities
+                - generic [ref=e634]:
+                  - generic [ref=e635]: Attention
+                  - generic [ref=e636]: "2"
+                  - generic [ref=e637]: operator signals
+              - generic [ref=e639]:
+                - generic [ref=e640]: Execution
+                - generic [ref=e641]: 0/0
+              - generic [ref=e643]:
+                - generic [ref=e644]:
+                  - img [ref=e645]
+                  - text: Model summary
+                - generic [ref=e652]: 1 variants
+                - generic [ref=e653]:
+                  - generic [ref=e654]: 1 models
+                  - generic [ref=e655]: live observer
+                  - generic [ref=e656]: needs review
+              - generic [ref=e657]: Run is alive but no meaningful progress has been observed recently.
+              - generic [ref=e658]:
+                - generic [ref=e659]: Watch run
+                - img [ref=e660]
+  - alert [ref=e77]
