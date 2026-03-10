@@ -2,7 +2,7 @@
 
 Next.js monitor for Snowl evaluation runs.
 
-## Local run
+## Local run (standalone)
 
 ```bash
 cd webui
@@ -20,3 +20,5 @@ The CLI wrapper is:
 ```bash
 snowl web monitor --project . --host 127.0.0.1 --port 8765
 ```
+
+`snowl web monitor` runs directly from this webui directory (no runtime cache copy). Install-time build happens during `pip install -e .` / `python setup.py install`.

@@ -58,6 +58,46 @@ def _initial_messages(sample: Mapping[str, Any]) -> list[dict[str, Any]]:
     raise SnowlValidationError("Sample must contain either 'messages' or 'input'.")
 
 
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, Mapping):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_json_safe(v) for v in value]
+    return str(value)
+
+
+def _extract_sample_input(sample: Mapping[str, Any]) -> dict[str, Any]:
+    if "messages" in sample and isinstance(sample["messages"], list):
+        return {"messages": _json_safe(sample["messages"])}
+    if "input" in sample:
+        return {"input": _json_safe(sample["input"])}
+    return {"sample": _json_safe(sample)}
+
+
+def _sample_preview_text(sample: Mapping[str, Any], *, max_chars: int = 240) -> str:
+    text = ""
+    if "input" in sample:
+        text = str(sample.get("input") or "")
+    elif "messages" in sample and isinstance(sample["messages"], list):
+        user_chunks: list[str] = []
+        for msg in sample["messages"]:
+            if not isinstance(msg, Mapping):
+                continue
+            role = str(msg.get("role") or "")
+            if role.lower() != "user":
+                continue
+            user_chunks.append(str(msg.get("content") or ""))
+        text = "\n".join([chunk for chunk in user_chunks if chunk])
+    text = text.strip()
+    if not text:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1] + "…"
+
+
 def _status_from_stop_reason(stop_reason: StopReason | None) -> TaskStatus:
     if stop_reason == StopReason.CANCELLED:
         return TaskStatus.CANCELLED
@@ -100,6 +140,10 @@ async def execute_trial(request: TrialRequest) -> TrialOutcome:
             "agent_id": getattr(request.agent, "agent_id"),
             "variant_id": variant_id,
             "sample_id": sample_id,
+            "message": _sample_preview_text(request.sample),
+            "payload": {
+                "sample_input": _extract_sample_input(request.sample),
+            },
         }
     )
 
@@ -409,6 +453,7 @@ async def execute_trial(request: TrialRequest) -> TrialOutcome:
             "stop_reason": state.stop_reason.value if state.stop_reason else None,
             "variant_id": variant_id,
             "model": variant_model,
+            "sample_input": _extract_sample_input(request.sample),
             **(
                 {"osworld_score": output.get("osworld_score")}
                 if output.get("osworld_score") is not None
@@ -566,6 +611,11 @@ async def execute_trial(request: TrialRequest) -> TrialOutcome:
             "variant_id": variant_id,
             "sample_id": task_result.sample_id,
             "status": task_result.status.value,
+            "message": str((task_result.final_output or {}).get("content") or "")[:240],
+            "payload": {
+                "final_output": _json_safe(task_result.final_output),
+                "scores": {k: float(v.value) for k, v in scores.items()},
+            },
         }
     )
 

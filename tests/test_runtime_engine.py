@@ -310,3 +310,46 @@ def test_execute_trial_artifacts_preserved_when_scorer_errors() -> None:
         assert out.task_result.artifacts[0].name == "recording_mp4"
 
     asyncio.run(_run())
+
+
+def test_execute_trial_emits_trial_input_output_for_detail_view() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"role": "assistant", "content": "agent-output"}}],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+            },
+        )
+
+    client = OpenAICompatibleChatClient(
+        OpenAICompatibleConfig(
+            base_url="https://example.com/v1",
+            api_key="k",
+            model="gpt-test",
+            timeout=5,
+            max_retries=0,
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+    emitted: list[dict] = []
+
+    req = TrialRequest(
+        task=_task(),
+        agent=ChatAgent(model_client=client),
+        scorer=PassScorer(),
+        sample={"id": "s1", "input": "hello-input"},
+        on_event=lambda evt: emitted.append(dict(evt)),
+    )
+
+    async def _run() -> None:
+        out = await execute_trial(req)
+        assert out.task_result.status.value == "success"
+        assert out.task_result.payload.get("sample_input") == {"input": "hello-input"}
+        await client.aclose()
+
+    asyncio.run(_run())
+    start_event = next(evt for evt in emitted if evt.get("event") == "runtime.trial.start")
+    finish_event = next(evt for evt in emitted if evt.get("event") == "runtime.trial.finish")
+    assert ((start_event.get("payload") or {}).get("sample_input") or {}).get("input") == "hello-input"
+    assert ((finish_event.get("payload") or {}).get("final_output") or {}).get("content") == "agent-output"

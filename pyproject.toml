@@ -21,10 +21,6 @@ dev = [
   "build>=1.0.0",
   "twine>=5.0.0",
 ]
-web = [
-  "fastapi>=0.111",
-  "uvicorn>=0.30",
-]
 osworld_eval = [
   "beautifulsoup4",
   "borb",
@@ -70,4 +66,5 @@ include-package-data = true
 include = ["snowl", "snowl.*"]
 
 [tool.setuptools.package-data]
+"snowl" = ["_webui/**", "_webui/**/*"]
 "snowl.ui" = ["panel_configs/*.yml", "panel_configs/*.yaml", "panel_configs/README.md"]

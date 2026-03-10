@@ -33,6 +33,18 @@ type MonitorOptions = {
   maxEventBuffer?: number;
 };
 
+type RuntimeConfig = {
+  project_dir?: string;
+  poll_interval_sec?: number;
+};
+
+type TrialKeyParts = {
+  taskId: string;
+  agentId: string;
+  variantId: string;
+  sampleId: string;
+};
+
 function nowMs(): number {
   return Date.now();
 }
@@ -84,6 +96,37 @@ function parseEventId(value: string | null | undefined): number {
 
 function normalizeDimension(value: string | null | undefined): "agent-first" | "benchmark-first" {
   return value === "benchmark-first" ? "benchmark-first" : "agent-first";
+}
+
+function readRuntimeConfig(): RuntimeConfig {
+  const cfgPath = path.join(process.cwd(), ".snowl-monitor.json");
+  try {
+    const raw = fs.readFileSync(cfgPath, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    const row = parsed as Record<string, unknown>;
+    return {
+      project_dir: typeof row.project_dir === "string" ? row.project_dir : undefined,
+      poll_interval_sec: Number.isFinite(Number(row.poll_interval_sec)) ? Number(row.poll_interval_sec) : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function parseTrialKey(trialKey: string): TrialKeyParts | null {
+  const parts = String(trialKey || "").split("::");
+  if (parts.length < 4) {
+    return null;
+  }
+  return {
+    taskId: parts[0] || "",
+    agentId: parts[1] || "",
+    variantId: parts[2] || "default",
+    sampleId: parts.slice(3).join("::"),
+  };
 }
 
 export class RunMonitorStore {
@@ -588,6 +631,135 @@ export class RunMonitorStore {
     return out;
   }
 
+  private trialMatches(row: JsonRecord, trial: TrialKeyParts): boolean {
+    const taskResult = ((row.task_result as JsonRecord) || {}) as JsonRecord;
+    const payload = ((taskResult.payload as JsonRecord) || {}) as JsonRecord;
+    const taskId = String(taskResult.task_id || "");
+    const agentId = String(taskResult.agent_id || "");
+    const sampleId = String(taskResult.sample_id || "");
+    const variantId = String(payload.variant_id || "default");
+    if (!taskId || !agentId || !sampleId) {
+      return false;
+    }
+    if (taskId !== trial.taskId || agentId !== trial.agentId || sampleId !== trial.sampleId) {
+      return false;
+    }
+    return !trial.variantId || variantId === trial.variantId;
+  }
+
+  private loadTrialOutcome(state: RunState, trial: TrialKeyParts): JsonRecord | null {
+    const trialsPath = path.join(state.runDir, "trials.jsonl");
+    if (fs.existsSync(trialsPath)) {
+      try {
+        const lines = fs.readFileSync(trialsPath, "utf-8").split(/\r?\n/);
+        for (const line of lines) {
+          const row = parseJsonObject(line);
+          if (Object.keys(row).length === 0) {
+            continue;
+          }
+          if (this.trialMatches(row, trial)) {
+            return row;
+          }
+        }
+      } catch {
+        // ignore malformed trials file
+      }
+    }
+
+    const outcomesPath = path.join(state.runDir, "outcomes.json");
+    if (!fs.existsSync(outcomesPath)) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(fs.readFileSync(outcomesPath, "utf-8"));
+      if (!Array.isArray(parsed)) {
+        return null;
+      }
+      for (const row of parsed) {
+        if (!row || typeof row !== "object" || Array.isArray(row)) {
+          continue;
+        }
+        const asRow = row as JsonRecord;
+        if (this.trialMatches(asRow, trial)) {
+          return asRow;
+        }
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  getTrialDetails(opts: { runId: string; trialKey: string }): JsonRecord | null {
+    this.pollOnce();
+    const state = this.runs.get(opts.runId);
+    if (!state) {
+      return null;
+    }
+    const trial = parseTrialKey(opts.trialKey);
+    if (!trial) {
+      return {
+        run_id: opts.runId,
+        trial_key: opts.trialKey,
+        detail_error: "invalid_trial_key",
+      };
+    }
+
+    const rows = this.db
+      .prepare(
+        `
+          SELECT event_name, event_json FROM events
+          WHERE run_id = ? AND trial_key = ?
+          ORDER BY event_index ASC
+        `,
+      )
+      .all(opts.runId, opts.trialKey) as Array<{ event_name: string; event_json: string }>;
+
+    let startEvent: JsonRecord | null = null;
+    let finishEvent: JsonRecord | null = null;
+    let errorEvent: JsonRecord | null = null;
+
+    for (const row of rows) {
+      const parsed = parseJsonObject(row.event_json);
+      if (Object.keys(parsed).length === 0) {
+        continue;
+      }
+      if (row.event_name === "runtime.trial.start" && !startEvent) {
+        startEvent = parsed;
+      } else if (row.event_name === "runtime.trial.finish") {
+        finishEvent = parsed;
+      } else if (row.event_name === "runtime.trial.error") {
+        errorEvent = parsed;
+      }
+    }
+
+    const outcome = this.loadTrialOutcome(state, trial);
+    const taskResult = ((outcome?.task_result as JsonRecord) || {}) as JsonRecord;
+    const taskPayload = ((taskResult.payload as JsonRecord) || {}) as JsonRecord;
+    const finishPayload = (((finishEvent?.payload as JsonRecord) || {}) as JsonRecord);
+    const scores = ((outcome?.scores as JsonRecord) || (finishPayload.scores as JsonRecord) || {}) as JsonRecord;
+    const trace = ((outcome?.trace as JsonRecord) || {}) as JsonRecord;
+    const startPayload = (((startEvent?.payload as JsonRecord) || {}) as JsonRecord);
+
+    return {
+      run_id: opts.runId,
+      trial_key: opts.trialKey,
+      task_id: trial.taskId,
+      agent_id: trial.agentId,
+      variant_id: trial.variantId,
+      sample_id: trial.sampleId,
+      status: String(taskResult.status || finishEvent?.status || errorEvent?.status || ""),
+      sample_input: startPayload.sample_input || taskPayload.sample_input || null,
+      final_output: taskResult.final_output || finishPayload.final_output || null,
+      scores,
+      error: taskResult.error || errorEvent || null,
+      trace,
+      start_event: startEvent,
+      finish_event: finishEvent,
+      error_event: errorEvent,
+    };
+  }
+
   experimentSummary(opts: { experimentId: string; primaryDimension?: string }): JsonRecord {
     const primaryDimension = normalizeDimension(opts.primaryDimension);
     const runs = Array.from(this.runs.values()).filter((state) => state.experimentId === opts.experimentId);
@@ -734,9 +906,10 @@ declare global {
 
 export function getMonitorStore(): RunMonitorStore {
   if (!global.__snowlMonitorStore__) {
+    const runtimeCfg = readRuntimeConfig();
     const store = new RunMonitorStore({
-      projectDir: process.env.SNOWL_PROJECT_DIR,
-      pollIntervalSec: Number(process.env.SNOWL_POLL_INTERVAL_SEC || 0.5),
+      projectDir: process.env.SNOWL_PROJECT_DIR || runtimeCfg.project_dir,
+      pollIntervalSec: Number(process.env.SNOWL_POLL_INTERVAL_SEC || runtimeCfg.poll_interval_sec || 0.5),
       maxEventBuffer: 4000,
     });
     store.start();

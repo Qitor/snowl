@@ -330,7 +330,7 @@ Runtime 分层：
 ## 三、核心命令
 
 - `snowl eval <path>`
-  - 自动发现 `task.py` / `agent.py` / `scorer.py` / `tool.py` 并运行
+  - 自动发现 `task.py` / `agent.py` / `scorer.py` / `tool.py` 并运行（默认 Web UI 流程）
 - `snowl bench run <benchmark> --project <example_dir>`
   - 用 benchmark adapter 加载任务，用本地 agent/scorer 执行
 - `snowl bench list`
@@ -341,20 +341,47 @@ Runtime 分层：
   - 检查 examples 布局规范
 - `snowl web monitor --project <path>`
   - 启动基于 Next.js 的 Web 观测台（SSE 实时流 + experiment 聚合）
+  - 默认使用内置 Next 运行时，并在终端打印 `http://...` 可点击地址
 
 常用参数：
 
 - 过滤：`--task`、`--agent`、`--variant`
 - 并发：`--max-trials`、`--max-sandboxes`、`--max-builds`、`--max-model-calls`
 - 可靠性：`--resume`、`--rerun-failed-only`
-- UI：`--no-ui`、`--ui-mode`、`--ui-theme`、`--ui-refresh-profile`
+- Web 观测：`eval` / `bench run` 默认自动拉起并打印可点击 URL；可用 `--no-web-monitor` 关闭
+- UI：默认 Web 优先；如需旧 CLI 实时面板可用 `--cli-ui`
+  旧面板参数：`--ui-mode`、`--ui-theme`、`--ui-refresh-profile`
   主题值：`contrast`、`quiet`、`research`、`research_redops`
 
 示例（即使是非 docker 任务也强制使用红色系主题）：
 
 ```bash
-snowl eval /absolute/path/to/my-eval --ui-theme research_redops
+snowl eval /absolute/path/to/my-eval
 ```
+
+旧 CLI 实时面板模式：
+
+```bash
+snowl eval /absolute/path/to/my-eval --cli-ui --ui-theme research_redops
+```
+
+推荐启动方式（默认 Web 优先）：
+
+```bash
+snowl eval /absolute/path/to/my-eval
+```
+
+终端会打印：`Web monitor: http://127.0.0.1:8765`（或你配置的 host/port）。
+
+Web 观测台启动说明：
+
+- 在 `pip install -e .` / `python setup.py install` 安装阶段会自动执行 `npm ci` + `next build`
+- 运行时不再复制到缓存目录，monitor 直接使用仓库/包内 webui 目录
+- 设置 `SNOWL_WEB_DEV=1` 可切换到 Next 开发模式
+- 默认端口被占用时，Snowl 会自动回退到下一个可用端口并打印最终 URL
+- 若检测到同项目旧版 monitor 进程，Snowl 会自动刷新（或回退新端口并打印最新地址）
+- 如需临时跳过安装阶段 Web 构建，可设置 `SNOWL_SKIP_WEBUI_BUILD=1`
+- 若启动失败，可直接运行 `snowl web monitor --project <path>` 查看分阶段日志
 
 ## 四、项目架构（维护视角）
 
@@ -581,8 +608,8 @@ snowl eval examples/<example_name>
   - 先确认 `docker compose version` 可用
   - 看 `run.log` 中 `terminalbench.container.*`、`runtime.env.command.*`
 - UI 看不到细节
-  - 尝试 `--ui-mode ops_dense`
-  - 或 `--no-ui` 先看纯日志跑通链路
+  - 默认先在 Web UI 看细节（`snowl eval` 启动后终端会打印 URL）
+  - 如需旧 CLI 面板，可加 `--cli-ui --ui-mode ops_dense`
 
 ## 九、相关设计文档
 

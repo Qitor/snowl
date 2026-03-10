@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getMonitorStore } from "@/server/monitor";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function GET(request: Request, context: { params: { runId: string } }) {
   const url = new URL(request.url);

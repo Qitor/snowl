@@ -310,26 +310,53 @@ So env vars can always override local file settings.
 
 Main commands:
 
-- `snowl eval <path>`: auto-discover `task.py/agent.py/scorer.py/tool.py` and run
+- `snowl eval <path>`: auto-discover `task.py/agent.py/scorer.py/tool.py` and run (default Web UI workflow)
 - `snowl bench run <benchmark> --project <example_dir>`: load benchmark tasks + local agent/scorer
 - `snowl bench list`: list adapters
 - `snowl bench check <benchmark>`: adapter conformance checks
 - `snowl examples check [examples_dir]`: validate example layout
 - `snowl web monitor --project <path>`: start Next.js-based Web observability UI (SSE + experiment aggregation)
+  built-in Next runtime mode is used; terminal prints `http://...` URL for click-to-open.
 
 Useful eval flags:
 
 - filtering: `--task`, `--agent`, `--variant`
 - runtime limits: `--max-trials`, `--max-sandboxes`, `--max-builds`, `--max-model-calls`
 - reliability: `--resume`, `--rerun-failed-only`
-- UI: `--no-ui`, `--ui-mode`, `--ui-theme`, `--ui-refresh-profile`
+- web monitor: auto-starts on `eval`/`bench run` and prints clickable URL; disable with `--no-web-monitor`
+- UI: Web-first by default; use `--cli-ui` to enable legacy live CLI panels
+  legacy panel tuning: `--ui-mode`, `--ui-theme`, `--ui-refresh-profile`
   theme values: `contrast`, `quiet`, `research`, `research_redops`
 
 Example (force red ops theme even for non-docker tasks):
 
 ```bash
-snowl eval /absolute/path/to/my-eval --ui-theme research_redops
+snowl eval /absolute/path/to/my-eval
 ```
+
+Legacy CLI panel mode:
+
+```bash
+snowl eval /absolute/path/to/my-eval --cli-ui --ui-theme research_redops
+```
+
+Recommended startup (Web-first default):
+
+```bash
+snowl eval /absolute/path/to/my-eval
+```
+
+The terminal prints `Web monitor: http://127.0.0.1:8765` (or your configured host/port).
+
+Web monitor bootstrap notes:
+
+- install-time build runs `npm ci` + `next build` automatically on `pip install -e .` / `python setup.py install`
+- no runtime cache copy is used; monitor runs directly from packaged/repo webui directory
+- set `SNOWL_WEB_DEV=1` to run monitor in Next dev mode
+- if the default port is occupied, Snowl auto-selects the next free port and prints the final URL
+- if a stale monitor process is detected for the same project, Snowl auto-refreshes it (or starts an upgraded port and prints the new URL)
+- if you need to skip install-time web build temporarily, set `SNOWL_SKIP_WEBUI_BUILD=1`
+- if bootstrap fails, run `snowl web monitor --project <path>` directly for stage-by-stage logs
 
 ## Project Architecture
 

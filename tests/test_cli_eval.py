@@ -206,8 +206,445 @@ scorer = S()
 
 
 def test_cli_web_monitor_missing_deps_returns_2(monkeypatch, tmp_path: Path) -> None:
-    import shutil
+    import snowl.cli as cli_mod
+    from snowl.web.runtime import WebRuntimeError
 
-    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    monkeypatch.setattr(cli_mod, "ensure_next_runtime", lambda log=None: (_ for _ in ()).throw(WebRuntimeError("node missing")))
     rc = main(["web", "monitor", "--project", str(tmp_path)])
     assert rc == 2
+
+
+def test_auto_web_monitor_prints_url_when_port_is_ready(monkeypatch, tmp_path: Path, capsys) -> None:
+    import snowl.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(cli_mod, "_expected_web_monitor_cache_key", lambda: "k1")
+    monkeypatch.setattr(cli_mod, "_port_listening", lambda host, port, timeout_sec=0.25: True)
+    monkeypatch.setattr(
+        cli_mod,
+        "_monitor_health",
+        lambda host, port, timeout_sec=0.35: {"project_dir": str(tmp_path), "monitor_runtime": "next", "cache_key": "k1"},
+    )
+    cli_mod._maybe_autostart_web_monitor(
+        project=str(tmp_path),
+        host="127.0.0.1",
+        port=8765,
+        poll_interval_sec=0.5,
+        enabled=True,
+    )
+    out = capsys.readouterr().out
+    assert "http://127.0.0.1:8765" in out
+
+
+def test_cli_web_monitor_prints_url(monkeypatch, tmp_path: Path, capsys) -> None:
+    import snowl.cli as cli_mod
+
+    launched: dict[str, object] = {}
+
+    class _Runtime:
+        app_dir = tmp_path
+        cache_key = "cache-1"
+        source_dir = tmp_path / "src"
+        source_mode = "repo"
+
+    monkeypatch.setattr(cli_mod, "ensure_next_runtime", lambda log=None: _Runtime())
+    monkeypatch.setattr(cli_mod, "ensure_next_build", lambda runtime, log=None: None)
+
+    def _fake_run(cmd, cwd=None, env=None, check=False):
+        launched["cmd"] = list(cmd)
+        launched["cwd"] = cwd
+        launched["env"] = dict(env or {})
+        launched["check"] = check
+        class _Done:
+            returncode = 0
+        return _Done()
+
+    monkeypatch.setattr(cli_mod.subprocess, "run", _fake_run)
+
+    rc = main(["web", "monitor", "--project", str(tmp_path), "--host", "127.0.0.1", "--port", "9999"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "http://127.0.0.1:9999" in out
+    assert launched["cmd"] == ["npm", "run", "start", "--", "--hostname", "127.0.0.1", "--port", "9999"]
+    assert launched["cwd"] == str(tmp_path)
+    assert launched["env"]["SNOWL_PROJECT_DIR"] == str(tmp_path.resolve())
+    assert launched["env"]["SNOWL_WEB_CACHE_KEY"] == "cache-1"
+    assert launched["env"]["SNOWL_WEB_SOURCE_MODE"] == "repo"
+    cfg = json.loads((tmp_path / ".snowl-monitor.json").read_text(encoding="utf-8"))
+    assert cfg["project_dir"] == str(tmp_path.resolve())
+    assert float(cfg["poll_interval_sec"]) == 0.5
+    assert cfg["cache_key"] == "cache-1"
+    assert cfg["source_mode"] == "repo"
+
+
+def test_cli_web_monitor_dev_mode_skips_build(monkeypatch, tmp_path: Path, capsys) -> None:
+    import snowl.cli as cli_mod
+
+    class _Runtime:
+        app_dir = tmp_path
+        cache_key = "cache-dev"
+        source_dir = tmp_path / "src"
+        source_mode = "repo"
+
+    monkeypatch.setattr(cli_mod, "ensure_next_runtime", lambda log=None: _Runtime())
+    called = {"build": 0}
+
+    def _fake_build(runtime, log=None):
+        _ = runtime, log
+        called["build"] += 1
+
+    def _fake_run(cmd, cwd=None, env=None, check=False):
+        _ = cwd, env, check
+        class _Done:
+            returncode = 0
+        assert cmd[2] == "dev"
+        return _Done()
+
+    monkeypatch.setattr(cli_mod, "ensure_next_build", _fake_build)
+    monkeypatch.setattr(cli_mod.subprocess, "run", _fake_run)
+    monkeypatch.setenv("SNOWL_WEB_DEV", "1")
+
+    rc = main(["web", "monitor", "--project", str(tmp_path), "--host", "127.0.0.1", "--port", "8876"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "ensure build: skipped" in out
+    assert called["build"] == 0
+
+
+def test_autostart_stale_monitor_same_project_uses_fallback(monkeypatch, tmp_path: Path, capsys) -> None:
+    import snowl.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(cli_mod, "_expected_web_monitor_cache_key", lambda: "new-cache")
+    monkeypatch.setattr(
+        cli_mod,
+        "_port_listening",
+        lambda host, port, timeout_sec=0.25: bool(int(port) in {8765}),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_monitor_health",
+        lambda host, port, timeout_sec=0.35: {"project_dir": str(tmp_path), "monitor_runtime": "next", "cache_key": "old-cache"},
+    )
+    monkeypatch.setattr(cli_mod, "_try_stop_monitor_process", lambda pid, host, port, timeout_sec=2.0: False)
+    monkeypatch.setattr(cli_mod, "_try_free_port_listener", lambda host, port, timeout_sec=2.0: False)
+
+    launched = {}
+
+    class _P:
+        def __init__(self) -> None:
+            self.pid = 2026
+
+    def _fake_popen(cmd, stdout=None, stderr=None, env=None, start_new_session=None):
+        _ = (stdout, stderr, env, start_new_session)
+        launched["cmd"] = list(cmd)
+        return _P()
+
+    monkeypatch.setattr(cli_mod.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(cli_mod.time, "sleep", lambda _x: None)
+    ticks = {"n": 0}
+
+    def _fake_time() -> float:
+        ticks["n"] += 1
+        return ticks["n"] * 0.5
+
+    monkeypatch.setattr(cli_mod.time, "time", _fake_time)
+
+    cli_mod._maybe_autostart_web_monitor(
+        project=str(tmp_path),
+        host="127.0.0.1",
+        port=8765,
+        poll_interval_sec=0.5,
+        enabled=True,
+    )
+    out = capsys.readouterr().out
+    assert "is outdated" in out
+    assert "http://127.0.0.1:8766" in out
+    assert launched["cmd"][launched["cmd"].index("--port") + 1] == "8766"
+
+
+def test_autostart_stale_monitor_same_project_reclaims_same_port(monkeypatch, tmp_path: Path, capsys) -> None:
+    import snowl.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(cli_mod, "_expected_web_monitor_cache_key", lambda: "new-cache")
+
+    state = {"occupied": True}
+
+    def _fake_port_listening(host, port, timeout_sec=0.25):
+        _ = (host, timeout_sec)
+        if int(port) == 8765:
+            return bool(state["occupied"])
+        return False
+
+    monkeypatch.setattr(cli_mod, "_port_listening", _fake_port_listening)
+    monkeypatch.setattr(
+        cli_mod,
+        "_monitor_health",
+        lambda host, port, timeout_sec=0.35: {"project_dir": str(tmp_path), "monitor_runtime": "next", "cache_key": "old-cache"},
+    )
+    monkeypatch.setattr(cli_mod, "_try_stop_monitor_process", lambda pid, host, port, timeout_sec=2.0: False)
+
+    def _fake_free(host, port, timeout_sec=2.0):
+        _ = (host, timeout_sec)
+        if int(port) == 8765:
+            state["occupied"] = False
+            return True
+        return False
+
+    monkeypatch.setattr(cli_mod, "_try_free_port_listener", _fake_free)
+
+    launched = {}
+
+    class _P:
+        def __init__(self) -> None:
+            self.pid = 2333
+
+    def _fake_popen(cmd, stdout=None, stderr=None, env=None, start_new_session=None):
+        _ = (stdout, stderr, env, start_new_session)
+        launched["cmd"] = list(cmd)
+        return _P()
+
+    monkeypatch.setattr(cli_mod.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(cli_mod.time, "sleep", lambda _x: None)
+    ticks = {"n": 0}
+
+    def _fake_time() -> float:
+        ticks["n"] += 1
+        return ticks["n"] * 0.5
+
+    monkeypatch.setattr(cli_mod.time, "time", _fake_time)
+
+    cli_mod._maybe_autostart_web_monitor(
+        project=str(tmp_path),
+        host="127.0.0.1",
+        port=8765,
+        poll_interval_sec=0.5,
+        enabled=True,
+    )
+    out = capsys.readouterr().out
+    assert "is outdated" in out
+    assert launched["cmd"][launched["cmd"].index("--port") + 1] == "8765"
+
+
+def test_autostart_prints_starting_url_when_bootstrap_slow(monkeypatch, tmp_path: Path, capsys) -> None:
+    import snowl.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(cli_mod, "_port_listening", lambda host, port, timeout_sec=0.25: False)
+
+    class _P:
+        def __init__(self) -> None:
+            self.pid = 3030
+
+    monkeypatch.setattr(cli_mod.subprocess, "Popen", lambda *args, **kwargs: _P())
+    monkeypatch.setattr(cli_mod.time, "sleep", lambda _x: None)
+    ticks = {"n": 0}
+
+    def _fake_time() -> float:
+        ticks["n"] += 1
+        return ticks["n"] * 0.6
+
+    monkeypatch.setattr(cli_mod.time, "time", _fake_time)
+
+    cli_mod._maybe_autostart_web_monitor(
+        project=str(tmp_path),
+        host="127.0.0.1",
+        port=8765,
+        poll_interval_sec=0.5,
+        enabled=True,
+    )
+    out = capsys.readouterr().out
+    assert "Web monitor (starting): http://127.0.0.1:8765" in out
+    assert "first bootstrap may take minutes" in out
+
+
+def test_eval_default_is_web_first_without_cli_renderer(monkeypatch, tmp_path: Path) -> None:
+    import snowl.cli as cli_mod
+
+    seen = {"renderer_is_none": None}
+
+    class _Summary:
+        total = 1
+        success = 1
+        incorrect = 0
+        error = 0
+        limit_exceeded = 0
+        cancelled = 0
+
+    class _Result:
+        summary = _Summary()
+        artifacts_dir = str(tmp_path / ".snowl" / "runs" / "r")
+        rerun_command = "snowl eval ."
+
+    async def _fake_run_eval(*_args, **kwargs):
+        seen["renderer_is_none"] = kwargs.get("renderer") is None
+        return _Result()
+
+    monkeypatch.setattr(cli_mod, "run_eval", _fake_run_eval)
+    rc = main(["eval", str(tmp_path), "--no-web-monitor"])
+    assert rc == 0
+    assert seen["renderer_is_none"] is True
+
+
+def test_eval_cli_ui_flag_enables_legacy_renderer(monkeypatch, tmp_path: Path) -> None:
+    import snowl.cli as cli_mod
+
+    seen = {"renderer_is_none": None}
+
+    class _Summary:
+        total = 1
+        success = 1
+        incorrect = 0
+        error = 0
+        limit_exceeded = 0
+        cancelled = 0
+
+    class _Result:
+        summary = _Summary()
+        artifacts_dir = str(tmp_path / ".snowl" / "runs" / "r")
+        rerun_command = "snowl eval ."
+
+    async def _fake_run_eval(*_args, **kwargs):
+        seen["renderer_is_none"] = kwargs.get("renderer") is None
+        return _Result()
+
+    monkeypatch.setattr(cli_mod, "run_eval", _fake_run_eval)
+    rc = main(["eval", str(tmp_path), "--cli-ui", "--no-web-monitor"])
+    assert rc == 0
+    assert seen["renderer_is_none"] is False
+
+
+def test_autostart_web_monitor_uses_fallback_port_for_other_project(monkeypatch, tmp_path: Path, capsys) -> None:
+    import snowl.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(
+        cli_mod,
+        "_port_listening",
+        lambda host, port, timeout_sec=0.25: bool(int(port) in {8765, 8766}),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_monitor_health",
+        lambda host, port, timeout_sec=0.35: {"project_dir": "/tmp/another-project"} if int(port) == 8765 else None,
+    )
+    launched = {}
+
+    class _P:
+        def __init__(self) -> None:
+            self.pid = 12345
+
+    def _fake_popen(cmd, stdout=None, stderr=None, env=None, start_new_session=None):
+        _ = (stdout, stderr, env, start_new_session)
+        launched["cmd"] = list(cmd)
+        return _P()
+
+    monkeypatch.setattr(cli_mod.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(cli_mod.time, "sleep", lambda _x: None)
+    ticks = {"n": 0}
+    def _fake_time() -> float:
+        ticks["n"] += 1
+        return ticks["n"] * 0.5
+    monkeypatch.setattr(cli_mod.time, "time", _fake_time)
+
+    cli_mod._maybe_autostart_web_monitor(
+        project=str(tmp_path),
+        host="127.0.0.1",
+        port=8765,
+        poll_interval_sec=0.5,
+        enabled=True,
+    )
+    out = capsys.readouterr().out
+    assert "bound to /tmp/another-project" in out
+    assert "http://127.0.0.1:8767" in out
+    assert launched["cmd"][launched["cmd"].index("--port") + 1] == "8767"
+
+
+def test_autostart_web_monitor_legacy_same_project_uses_fallback(monkeypatch, tmp_path: Path, capsys) -> None:
+    import snowl.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(
+        cli_mod,
+        "_port_listening",
+        lambda host, port, timeout_sec=0.25: bool(int(port) in {8765, 8766}),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "_monitor_health",
+        lambda host, port, timeout_sec=0.35: {"project_dir": str(tmp_path)} if int(port) == 8765 else None,
+    )
+    launched = {}
+
+    class _P:
+        def __init__(self) -> None:
+            self.pid = 2222
+
+    def _fake_popen(cmd, stdout=None, stderr=None, env=None, start_new_session=None):
+        _ = (stdout, stderr, env, start_new_session)
+        launched["cmd"] = list(cmd)
+        return _P()
+
+    monkeypatch.setattr(cli_mod.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(cli_mod.time, "sleep", lambda _x: None)
+    ticks = {"n": 0}
+
+    def _fake_time() -> float:
+        ticks["n"] += 1
+        return ticks["n"] * 0.5
+
+    monkeypatch.setattr(cli_mod.time, "time", _fake_time)
+
+    cli_mod._maybe_autostart_web_monitor(
+        project=str(tmp_path),
+        host="127.0.0.1",
+        port=8765,
+        poll_interval_sec=0.5,
+        enabled=True,
+    )
+    out = capsys.readouterr().out
+    assert "legacy/unknown monitor" in out
+    assert "http://127.0.0.1:8767" in out
+    assert launched["cmd"][launched["cmd"].index("--port") + 1] == "8767"
+
+
+def test_eval_autostart_web_monitor_uses_project_base_dir(monkeypatch, tmp_path: Path) -> None:
+    import snowl.cli as cli_mod
+
+    nested = tmp_path / "nested"
+    nested.mkdir(parents=True, exist_ok=True)
+    fake_file = nested / "tasks.json"
+    fake_file.write_text("{}", encoding="utf-8")
+
+    captured: dict[str, object] = {}
+
+    def _fake_autostart(*, project, host, port, poll_interval_sec, enabled):
+        captured["project"] = project
+        captured["host"] = host
+        captured["port"] = port
+        captured["enabled"] = enabled
+        _ = poll_interval_sec
+
+    class _Summary:
+        total = 1
+        success = 1
+        incorrect = 0
+        error = 0
+        limit_exceeded = 0
+        cancelled = 0
+
+    class _Result:
+        summary = _Summary()
+        artifacts_dir = str(tmp_path / ".snowl" / "runs" / "r")
+        rerun_command = "snowl eval ."
+
+    async def _fake_run_eval(*_args, **_kwargs):
+        return _Result()
+
+    monkeypatch.setattr(cli_mod, "_maybe_autostart_web_monitor", _fake_autostart)
+    monkeypatch.setattr(cli_mod, "run_eval", _fake_run_eval)
+
+    rc = main(["eval", str(fake_file), "--no-ui"])
+    assert rc == 0
+    assert captured["project"] == str(nested.resolve())
