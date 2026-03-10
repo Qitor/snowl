@@ -158,3 +158,74 @@ agent_variants = [
     )
     rc = main(["eval", str(tmp_path), "--variant", "v1", "--no-ui"])
     assert rc == 0
+
+
+def test_cli_variant_filter_works_with_project_model_matrix(tmp_path: Path) -> None:
+    _write_task_and_scorer(tmp_path)
+    (tmp_path / "model.yml").write_text(
+        """
+provider:
+  kind: openai_compatible
+  base_url: https://example.com/v1
+  api_key: sk-test
+  timeout: 8
+  max_retries: 1
+agent_matrix:
+  models:
+    - id: alpha
+      model: model-alpha
+    - id: beta
+      model: model-beta
+judge:
+  model: judge-model
+        """,
+        encoding="utf-8",
+    )
+    (tmp_path / "agent.py").write_text(
+        """
+from pathlib import Path
+
+from snowl.agents import build_model_variants
+from snowl.core import StopReason, agent
+
+
+class VAgent:
+    def __init__(self, model_name):
+        self.model_name = model_name
+
+    async def run(self, state, context, tools=None):
+        _ = (context, tools)
+        state.output = {
+            "message": {"role": "assistant", "content": self.model_name},
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+            "trace_events": [],
+        }
+        state.stop_reason = StopReason.COMPLETED
+        return state
+
+
+def _factory(model_entry, provider):
+    _ = provider
+    return VAgent(model_entry.model)
+
+
+@agent(agent_id="chat")
+def agents():
+    return build_model_variants(
+        base_dir=Path(__file__).parent,
+        agent_id="chat",
+        factory=_factory,
+    )
+""",
+        encoding="utf-8",
+    )
+
+    rc = main(["eval", str(tmp_path), "--variant", "beta", "--no-ui", "--no-web-monitor"])
+    assert rc == 0
+
+    run_roots = sorted((tmp_path / ".snowl" / "runs" / "by_run_id").iterdir())
+    latest = run_roots[-1]
+    aggregate = json.loads((latest / "aggregate.json").read_text(encoding="utf-8"))
+    matrix = aggregate["matrix"]["t1"]
+    assert "chat#beta" in matrix
+    assert "chat#alpha" not in matrix

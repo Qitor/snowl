@@ -2,64 +2,69 @@
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
-Snowl is a general agent evaluation framework built around a simple contract:
+Snowl is an agent evaluation framework that is trying to grow into an industrial-grade evaluation platform.
+
+Its core contract is intentionally small:
 
 - define `Task`
 - define `Agent`
 - define `Scorer`
-- run with one command: `snowl eval ...`
+- run with `snowl eval ...`
 
-It is designed for both custom evals and benchmark adaptation, with container/runtime complexity handled by the framework as much as possible.
+Everything else is platform work around that core:
 
-## Name Origin
+- benchmark adaptation
+- multi-model expansion
+- runtime orchestration
+- container lifecycle management
+- scoring and aggregation
+- artifacts and observability
+- Web-based run monitoring
 
-`snowl` comes from **Snow Owl**.
+## Project Docs
 
-We chose this name because it conveys:
+- [START_HERE.md](./START_HERE.md): fastest repo orientation
+- [ARCHITECTURE.md](./ARCHITECTURE.md): current system architecture and industrialization direction
+- [PLANS.md](./PLANS.md): product and engineering roadmap
+- [AGENTS.md](./AGENTS.md): repo operating rules for coding agents
+- [docs/codex_best_practices.md](./docs/codex_best_practices.md): Codex guidance for this repo
 
-- sharp observation and signal detection in complex environments
-- calm, reliable operation in difficult conditions
-- a strong semantic fit with agent safety and AI safety evaluation workflows
+## What Snowl Supports Today
 
-## What Snowl Solves
+Snowl already has a real shared platform layer, not just one-off benchmark scripts.
 
-- Unified eval contract across very different benchmarks (QA, terminal, GUI)
-- Agent + Task are both first-class evaluation objects
-- Multi-metric scoring (including model-as-judge)
-- Built-in benchmark adapters (`strongreject`, `terminalbench`, `osworld`, `toolemu`, `agentsafetybench`)
-- Research-friendly artifacts (`trials.jsonl`, `events.jsonl`, `metrics_wide.csv`, diagnostics)
-- Live interactive CLI for long-running experiments
+Current product shape:
 
-## CLI UI Preview
+- custom eval folders via `snowl eval <path>`
+- benchmark adapters via `snowl bench run <benchmark> --project <path>`
+- project-level model matrix authoring via `model.yml`
+- built-in benchmark coverage:
+  - `strongreject`
+  - `terminalbench`
+  - `osworld`
+  - `toolemu`
+  - `agentsafetybench`
+- live artifacts under `.snowl/runs/`
+- Next.js Web monitor with run gallery, run workspace, SSE runtime logs, and compare view
+- container-aware execution for terminal / GUI benchmarks
+- resume and rerun-failed flows
 
-![Snowl CLI Agent View](./assets/cli_agent.png)
-![Snowl CLI Model View](./assets/cli_model.png)
-
-## Core Roadmap
-
-1. Adapt more benchmarks: expand first-party adapters for additional widely used agent benchmarks.
-2. Faster concurrency in runtime/engine: improve scheduling, parallelism, and throughput for large-scale evaluation runs.
-3. Complete Web UI: deliver a full web-based experience for run monitoring, drill-down, and result comparison.
-4. Support more agent frameworks: add adapters/integration paths for more external agent ecosystems.
-5. More built-in evaluation toolkits: add richer built-in scorer/tool packs for common eval patterns.
-
-## Current Status (P0 + P1 Mainline)
-
-Implemented in this repo now:
-
-- Core contracts: `Task`, `Agent`, `Scorer`, `ToolSpec`, `EnvSpec`, `TaskResult`
-- Decorators: `@task`, `@agent`, `@scorer`, `@tool`
-- Built-in agents: `ChatAgent`, `ReActAgent`
-- Built-in scorer library: text-match family, model-as-judge, composition, unit-test scorer
-- Benchmark adapters: `strongreject`, `terminalbench`, `osworld`, `toolemu`, `agentsafetybench`
-- Container-aware runtime orchestration (`ContainerRuntime`) for terminal/gui benchmarks
-- Live CLI + run artifacts + resume/rerun-failed support
+Current deployment target is local single-machine evaluation with strong observability.
 
 ## Quick Start
 
-## 1) Prepare benchmark references (required)
+### 1. Install
 
-Snowl expects benchmark sources under `references/` with fixed folder names:
+```bash
+cd /Users/morinop/coding/snowl_v2
+pip install -e .
+```
+
+This install also builds the bundled Web UI.
+
+### 2. Prepare benchmark references
+
+Some official examples depend on external benchmark repos checked out under fixed paths:
 
 - `references/terminal-bench`
 - `references/OSWorld`
@@ -67,7 +72,7 @@ Snowl expects benchmark sources under `references/` with fixed folder names:
 - `references/ToolEmu`
 - `references/Agent-SafetyBench`
 
-From repo root:
+Example:
 
 ```bash
 cd /Users/morinop/coding/snowl_v2
@@ -78,62 +83,22 @@ git clone <TOOLEMU_GIT_URL> references/ToolEmu
 git clone <AGENT_SAFETY_BENCH_GIT_URL> references/Agent-SafetyBench
 ```
 
-If your team uses internal mirrors, replace the URLs but keep the target directories unchanged.
-
-## 2) Create conda environment and install
-
-```bash
-cd /Users/morinop/coding/snowl_v2
-conda create -n snowl python=3.11 -y
-conda activate snowl
-pip install -U pip
-pip install -e .
-```
-
-Or run without install:
-
-```bash
-python -m snowl.cli --help
-```
-
-## 2.1) PyPI packaging and release
-
-This project is packaged as `snowl` for PyPI release.
-
-Build/check locally:
-
-```bash
-cd /Users/morinop/coding/snowl_v2
-./scripts/release_pypi.sh
-```
-
-Release guide:
-
-- `/Users/morinop/coding/snowl_v2/docs/pypi_release.md`
-
-## 3) Run an Example
+### 3. Run an example
 
 ```bash
 snowl eval /Users/morinop/coding/snowl_v2/examples/strongreject-official
 ```
 
+Other official examples:
+
 ```bash
 snowl eval /Users/morinop/coding/snowl_v2/examples/terminalbench-official
-```
-
-```bash
 snowl eval /Users/morinop/coding/snowl_v2/examples/osworld-official
-```
-
-```bash
 snowl eval /Users/morinop/coding/snowl_v2/examples/toolemu-official
-```
-
-```bash
 snowl eval /Users/morinop/coding/snowl_v2/examples/agentsafetybench-official
 ```
 
-## 4) Run via Benchmark Adapter
+### 4. Run through a benchmark adapter
 
 ```bash
 snowl bench list
@@ -145,21 +110,62 @@ snowl bench run terminalbench \
   --split test
 ```
 
-## One-Click Eval Folder Contract
+## Default Runtime UX
 
-Snowl is designed so users can package an eval target in one folder and run it directly.
+The default CLI behavior is now:
 
-Recommended minimal layout:
+- foreground: plain terminal progress / logging for the eval itself
+- background: auto-started Web monitor sidecar
+- optional: `--cli-ui` enables the legacy live CLI panels
+
+Typical flow:
+
+```bash
+snowl eval /absolute/path/to/my-eval
+```
+
+What happens:
+
+1. terminal prints run bootstrap info and progress
+2. once the run is actually initialized, Snowl prints a Web URL like `http://127.0.0.1:8765`
+3. the eval stays in the foreground
+4. stopping the eval also stops that auto-started monitor sidecar
+
+Useful flags:
+
+- filtering: `--task`, `--agent`, `--variant`
+- limits: `--max-trials`, `--max-sandboxes`, `--max-builds`, `--max-model-calls`
+- reliability: `--resume`, `--rerun-failed-only`
+- monitor: `--no-web-monitor`
+- legacy live CLI: `--cli-ui`
+
+Manual monitor mode is still available:
+
+```bash
+snowl web monitor --project /absolute/path/to/my-eval --host 127.0.0.1 --port 8765
+```
+
+## Eval Folder Contract
+
+Recommended eval folder layout:
 
 ```text
 my-eval/
   task.py
   agent.py
   scorer.py
-  model.yml        # optional
+  model.yml        # recommended
   tool.py          # optional
-  panels.yml       # optional (UI panel override)
+  panels.yml       # optional
 ```
+
+Autodiscovery contract:
+
+- `task.py`: exports one or more `Task` objects or factories
+- `agent.py`: exports one or more `Agent` / `AgentVariant` objects or factories
+- `scorer.py`: exports scorer objects or factories
+- `model.yml`: project-level provider + tested-model + optional judge config
+- `tool.py`: optional tool definitions
 
 Then run:
 
@@ -167,508 +173,197 @@ Then run:
 snowl eval /absolute/path/to/my-eval
 ```
 
-Discovery contract:
+## Multi-Model Authoring
 
-- `task.py` exports one or more `Task` objects/factories
-- `agent.py` exports one or more `Agent` / `AgentVariant` objects/factories
-- `scorer.py` exports scorer object/factory
-- `tool.py` is optional and can auto-register tools via `@tool`
-
-For benchmark mode:
-
-- adapter loads benchmark tasks
-- your project folder still provides agent/scorer/tool
-- run with `snowl bench run <benchmark> --project <your-folder> ...`
-
-## Automatic Matrix Expansion (Core Eval Idea)
-
-Snowl plan expansion is designed around matrix execution rather than manual scripting.
-
-Conceptual target matrix:
-
-- `Task x AgentVariant x Scorer x Sample`
-
-Current implementation status:
-
-- automatic: `Task x AgentVariant x Sample`
-- scorer execution: one active scorer per run (first discovered scorer object)
-- multi-metric in one run: supported via one scorer returning multiple metric keys
-
-Practical recommendation today:
-
-1. Use multiple agents/variants in `agent.py` and let Snowl auto-expand compare runs.
-2. Put related metrics into one scorer output map (e.g. `accuracy`, `safety`, `latency_score`).
-3. If you need strict scorer-isolation comparison now, run separate evals with scorer filtering/export conventions.
-
-Roadmap direction:
-
-- first-class `Task x AgentVariant x Scorer` expansion so multiple scorers can be compared in one orchestrated run.
-
-Planning mode examples:
-
-- `1 Task x 1 AgentVariant` -> single
-- `N Task x 1 AgentVariant` -> task_sweep
-- `1 Task x M AgentVariant` -> compare
-- `N Task x M AgentVariant` -> matrix
-
-## Authoring Patterns (Decorator-First)
-
-Snowl supports two discovery patterns:
-
-1. Decorator-first (recommended)
-2. Fallback object discovery (compatibility)
-
-Decorator-first examples:
-
-```python
-from snowl.core import task, agent, scorer, Task, EnvSpec, Score
-
-@task(task_id="demo:test")
-def build_task():
-    return Task(
-        task_id="demo:test",
-        env_spec=EnvSpec(env_type="local"),
-        sample_iter_factory=lambda: iter([{"id": "s1", "input": "hello"}]),
-    )
-
-@agent(agent_id="demo_agent")
-class DemoAgent:
-    async def run(self, state, context, tools=None):
-        state.output = {"message": {"role": "assistant", "content": "ok"}}
-        return state
-
-@scorer(scorer_id="demo_scorer")
-class DemoScorer:
-    def score(self, task_result, trace, context):
-        return {"pass": Score(value=1.0)}
-```
-
-Why decorators are preferred:
-
-- explicit identity (`task_id`, `agent_id`, `scorer_id`)
-- deterministic discovery order
-- lower boilerplate in examples and benchmark ports
-- easier static review for maintainers
-
-## Runtime / Env / Tool Design Rationale
-
-Snowl intentionally separates evaluation orchestration from environment mechanics.
-
-Core ideas:
-
-1. `Task + Agent + Scorer` as stable contracts.
-2. `TaskResult` has fixed core fields and extensible `payload`.
-3. tools declare `required_ops`; env declares `provided_ops`; runtime checks compatibility before execution.
-4. heavy environment logic is centralized in runtime/env layers, not leaked to end-user task authoring.
-
-`EnvSpec` design intent:
-
-- `env_type` indicates execution domain (`local`, `terminal`, `gui`, ...)
-- `provided_ops` defines capability surface
-- optional `sandbox_spec` captures container/sandbox requirements
-
-Tool-env safety rule:
-
-- if tool requires ops not provided by env, trial fails fast with explicit preflight error
-
-Runtime layering:
-
-- planner (`eval.py`) expands trials
-- trial engine (`runtime/engine.py`) executes one trial
-- container orchestration (`runtime/container_runtime.py`) handles benchmark container lifecycle
-- concrete command/action execution lives in env implementations (`envs/`)
-
-Why this matters:
-
-- benchmark authors can focus on task loading and scoring semantics
-- agent authors can focus on behavior, not compose lifecycle scripts
-- maintainers can optimize runtime centrally (parallelism, retries, logging, diagnostics)
-
-## Model Configuration
-
-Snowl supports OpenAI-compatible model config from either env vars or `model.yml`.
+Snowl's official multi-model path is project-level model matrix configuration.
 
 Example `model.yml`:
 
 ```yaml
-openai_compatible:
+provider:
+  kind: openai_compatible
   base_url: https://api.siliconflow.cn/v1
   api_key: sk-...
-  model: Qwen/Qwen3-32B
   timeout: 30
   max_retries: 2
+
+agent_matrix:
+  models:
+    - id: qwen25_7b
+      model: Qwen/Qwen2.5-7B-Instruct
+    - id: qwen3_32b
+      model: Qwen/Qwen3-32B
+
+judge:
+  model: gpt-4.1-mini
 ```
 
-Resolution precedence:
+Semantics:
 
-1. explicit environment variables (`OPENAI_*`)
-2. `model.yml` / `model.yaml`
+- `provider`: the example's single provider config
+- `agent_matrix.models`: the tested agent models
+- `judge.model`: optional scorer/judge model, separate from tested models
 
-So env vars can always override local file settings.
-
-## CLI Overview
-
-Main commands:
-
-- `snowl eval <path>`: auto-discover `task.py/agent.py/scorer.py/tool.py` and run (default Web UI workflow)
-- `snowl bench run <benchmark> --project <example_dir>`: load benchmark tasks + local agent/scorer
-- `snowl bench list`: list adapters
-- `snowl bench check <benchmark>`: adapter conformance checks
-- `snowl examples check [examples_dir]`: validate example layout
-- `snowl web monitor --project <path>`: start Next.js-based Web observability UI (SSE + experiment aggregation)
-  built-in Next runtime mode is used; terminal prints `http://...` URL for click-to-open.
-
-Useful eval flags:
-
-- filtering: `--task`, `--agent`, `--variant`
-- runtime limits: `--max-trials`, `--max-sandboxes`, `--max-builds`, `--max-model-calls`
-- reliability: `--resume`, `--rerun-failed-only`
-- web monitor: auto-starts on `eval`/`bench run` and prints clickable URL; disable with `--no-web-monitor`
-- UI: Web-first by default; use `--cli-ui` to enable legacy live CLI panels
-  legacy panel tuning: `--ui-mode`, `--ui-theme`, `--ui-refresh-profile`
-  theme values: `contrast`, `quiet`, `research`, `research_redops`
-
-Example (force red ops theme even for non-docker tasks):
-
-```bash
-snowl eval /absolute/path/to/my-eval
-```
-
-Legacy CLI panel mode:
-
-```bash
-snowl eval /absolute/path/to/my-eval --cli-ui --ui-theme research_redops
-```
-
-Recommended startup (Web-first default):
-
-```bash
-snowl eval /absolute/path/to/my-eval
-```
-
-The terminal prints `Web monitor: http://127.0.0.1:8765` (or your configured host/port).
-
-Web monitor bootstrap notes:
-
-- install-time build runs `npm ci` + `next build` automatically on `pip install -e .` / `python setup.py install`
-- no runtime cache copy is used; monitor runs directly from packaged/repo webui directory
-- set `SNOWL_WEB_DEV=1` to run monitor in Next dev mode
-- if the default port is occupied, Snowl auto-selects the next free port and prints the final URL
-- if a stale monitor process is detected for the same project, Snowl auto-refreshes it (or starts an upgraded port and prints the new URL)
-- if you need to skip install-time web build temporarily, set `SNOWL_SKIP_WEBUI_BUILD=1`
-- if bootstrap fails, run `snowl web monitor --project <path>` directly for stage-by-stage logs
-
-## Project Architecture
-
-The architecture follows `Task + Agent + Scorer` as the core eval unit (`Task x AgentVariant x Sample`).
-
-```text
-                         +----------------------+
-task.py ---------------->|                      |
-agent.py --------------->|      Eval Planner    |
-scorer.py -------------->|                      |
-tool.py (optional) ----->|                      |
-                         +----------+-----------+
-                                    |
-                                    v
-                         +----------+-----------+
-                         |      Runtime Engine  |
-                         +----+-----+-----+-----+
-                              |     |     |
-                              |     |     +------------------------+
-                              |     |                              |
-                              v     v                              v
-                  +-----------+--+  +-------------+     +----------+-----------+
-                  |ContainerRuntime| |SandboxRuntime|    |      Agent.run      |
-                  +-----------+--+  +-------------+     +----------+-----------+
-                                                                  |        |
-                                                                  v        v
-                                                         +--------+--+  +--+------+
-                                                         |Model Client|  | Tools  |
-                                                         +-----------+  +---------+
-                                                                  |
-                                                                  v
-                                                         +--------+-----------+
-                                                         |  TaskResult+Trace  |
-                                                         +--------+-----------+
-                                                                  |
-                                                                  v
-                                                         +--------+-----------+
-                                                         |    Scorer.score    |
-                                                         +--------+-----------+
-                                                                  |
-                                                                  v
-                                                         +--------+-----------+
-                                                         |       Metrics      |
-                                                         +--------+-----------+
-                                                                  |
-                                                                  v
-                                                         +--------+-----------+
-                                                         |      Aggregator    |
-                                                         +--------+-----------+
-                                                                  |
-                                                                  v
-                                                         +--------+-----------+
-                                                         | Artifacts + Live UI|
-                                                         +--------------------+
-```
-
-## Layered Module Map
-
-- `snowl/core/`
-- Protocols and contracts (`Task`, `Agent`, `Scorer`, `EnvSpec`, `ToolSpec`, `TaskResult`)
-- Decorators for autodiscovery
-
-- `snowl/eval.py`
-- Project autodiscovery
-- Eval planning and orchestration
-- checkpoint/resume/rerun-failed
-- artifact writing and run logging
-
-- `snowl/runtime/`
-- Trial execution engine (`execute_trial`)
-- Shared `ContainerRuntime` for benchmark container lifecycle
-
-- `snowl/envs/`
-- Concrete env implementations (`TerminalEnv`, `GuiEnv`, sandbox runtime)
-- Docker compose command execution and streaming hooks
-
-- `snowl/model/`
-- OpenAI-compatible model client
-- timeout/retry/error formatting
-
-- `snowl/scorer/`
-- Shared scorer building blocks (text, model judge, composition, unit-test)
-
-- `snowl/benchmarks/`
-- Benchmark adapters and registry
-- currently: `strongreject`, `terminalbench`, `osworld`, `toolemu`, `agentsafetybench`, plus generic `jsonl/csv`
-
-- `snowl/ui/`
-- Live CLI renderer, controls, panel system
-
-- `snowl/aggregator/`
-- Cross-trial metric aggregation and schema metadata
-
-## Runtime Execution Model
-
-For each trial:
-
-1. Validate `Task/Agent/Scorer/EnvSpec`
-2. Build agent context from sample + task metadata
-3. Prepare environment/container if required (via `ContainerRuntime`)
-4. Run `agent.run(...)`
-5. Build `TaskResult` + trace
-6. Run scorer to produce metric map
-7. Emit live events and append logs/artifacts
-
-For docker-like tasks, Snowl enforces safer defaults (e.g. serial/low parallelism) and exposes build/start/stop diagnostics through event stream and log files.
-
-## Artifacts and Observability
-
-Every run writes to:
-
-- `<project>/.snowl/runs/<timestamp>/`
-- `<project>/.snowl/runs/by_run_id/run-...` (symlink/pointer to run dir)
-
-Main outputs:
-
-- `run.log`: append-first full runtime log
-- `plan.json`, `summary.json`, `aggregate.json`, `outcomes.json`
-- `trials.jsonl`: one JSON row per trial result
-- `events.jsonl`: event stream rows
-- `metrics_wide.csv`: flattened metrics table
-- `diagnostics/*.json` + `diagnostics_index.json`
-- `report.html`
-- `profiling.json`
-
-This layout is designed for both human debugging and downstream research analysis pipelines.
-
-### Real-time Logging and What Is Captured
-
-Snowl now logs **runtime events + full model I/O** in a replayable format.
-
-- `run.log` is created at run start and appended in real time.
-- `events.jsonl` stores structured events for machine analysis.
-- `trials.jsonl` stores per-trial final result rows.
-
-Agent/model observability events (key ones):
-
-- `runtime.agent.step`: per-step agent execution progress
-- `runtime.model.query.start|finish|error`: model call lifecycle
-- `runtime.model.io`: full OpenAI-compatible request/response payload
-  - request includes full `messages` and generation kwargs
-  - response includes model `message`, `raw` JSON, `usage`, `timing`
-- `runtime.env.command.start|stdout|stderr|finish|timeout`: container/env command stream
-
-Quick debugging commands:
-
-```bash
-# resolve run dir by run_id
-ls -la <project>/.snowl/runs/by_run_id/
-
-# stream runtime log
-tail -f <project>/.snowl/runs/by_run_id/run-.../run.log
-
-# inspect model I/O events only
-rg "runtime.model.io|runtime.model.query.error" \
-  <project>/.snowl/runs/by_run_id/run-.../run.log
-```
-
-## Extension Guide
-
-## Add a New Agent
-
-Place in your example or library code:
+In `agent.py`, the recommended pattern is:
 
 ```python
+from pathlib import Path
+
+from snowl.agents import build_model_variants
 from snowl.core import agent
 
-@agent(agent_id="my_agent")
-class MyAgent:
-    async def run(self, state, context, tools=None):
-        ...
-        return state
-```
 
-Or export multiple variants with `make_agent_variant(...)` and filter by `--variant`.
+def build_agent_for_model(model_entry, provider_config):
+    ...
 
-## Add a New Task
 
-```python
-from snowl.core import Task, EnvSpec, task
-
-@task(task_id="my_task:test")
-def build_task():
-    return Task(
-        task_id="my_task:test",
-        env_spec=EnvSpec(env_type="local"),
-        sample_iter_factory=lambda: iter([{"id": "s1", "input": "hello"}]),
-        metadata={"benchmark": "my_task"},
+@agent(agent_id="demo_agent")
+def agents():
+    return build_model_variants(
+        base_dir=Path(__file__).parent,
+        agent_id="demo_agent",
+        factory=build_agent_for_model,
     )
 ```
 
-## Add a New Scorer
+This same pattern is what now powers QA-style examples and container-heavy examples like TerminalBench and OSWorld.
 
-```python
-from snowl.core import scorer, Score
+## Execution Model
 
-@scorer(scorer_id="my_scorer")
-class MyScorer:
-    def score(self, task_result, trace, context):
-        return {"accuracy": Score(value=1.0)}
-```
+The current execution unit is:
 
-## Add a Tool with Auto Schema
+- `Task x AgentVariant x Sample`
 
-```python
-from snowl.core import tool
+That is the real planning and runtime matrix Snowl executes today.
 
-@tool(required_ops=("terminal.exec",))
-def run_cmd(cmd: str) -> str:
-    """Run shell command.
+Conceptually, a full evaluation run has these stages:
 
-    Args:
-      cmd: Command to execute.
-    """
-    ...
-```
+1. project discovery
+2. model matrix expansion into `AgentVariant`s
+3. plan construction
+4. runtime scheduling
+5. trial execution
+6. scoring and aggregation
+7. artifact persistence
+8. Web/CLI observability
 
-`@tool` will parse signature/docstring and auto-register into default `ToolRegistry`.
+Important current constraints:
 
-## Add a New Benchmark Adapter
+- one active scorer per run
+- experiment-level comparison is done across runs, not by one giant multi-benchmark scheduler
+- concurrency is local-machine only today
 
-Create `snowl/benchmarks/<name>/adapter.py` implementing adapter contract similar to existing ones:
+## Artifacts And Observability
 
-- expose `info`
-- implement `list_splits()`
-- implement `load_tasks(split, limit, filters) -> list[Task]`
-- map benchmark rows to Snowl `Task` samples
-- keep benchmark-specific quirks minimal; preserve task loading and scoring semantics
-
-Then register in `snowl/benchmarks/registry.py`.
-
-## Example System Convention
-
-All runnable examples are top-level under `examples/` (not under `snowl/`):
+Each run writes under:
 
 ```text
-examples/
-  <example_name>/
-    task.py
-    agent.py
-    scorer.py
-    tool.py      # optional
-    model.yml    # optional
+<project>/.snowl/runs/<timestamp>/
 ```
 
-Run:
+Important artifacts:
 
-```bash
-snowl eval examples/<example_name>
-```
+- `run.log`: human-readable run log
+- `events.jsonl`: structured live event stream
+- `manifest.json`: run metadata and artifact contract
+- `summary.json`: final summary counts
+- `aggregate.json`: comparison/metric aggregation
+- `profiling.json`: runtime and task monitor details
+- `trials.jsonl`: trial-level results
+- `metrics_wide.csv`: analysis-friendly metric export
 
-## Built-in Benchmarks in This Repo
+The Web UI is built around these run artifacts plus the live event stream.
 
-- `strongreject`
-- No container path
-- dataset from `references/strongreject/...`
+## Web UI
 
-- `terminalbench`
-- terminal + docker compose path
-- task metadata includes compose/test assets
+The built-in monitor is a Next.js app embedded in the package.
 
-- `osworld`
-- GUI/container path
-- env and action-loop integration via Snowl runtime
+Current UX structure:
 
-## Testing and Development
+- `/`: run gallery landing
+- `/runs/[runId]`: run workspace
+- `/compare`: experiment/history comparison
 
-Run tests:
+Primary workflows:
 
-```bash
-pytest -q
-```
+- pick a run from the gallery
+- inspect model-level and task-level status
+- drill into runtime logs and pretask diagnostics
+- compare experiments separately when needed
 
-Targeted tests:
+The UI is intentionally run-first, not experiment-first.
 
-```bash
-pytest -q tests/test_live_cli_p1.py
-pytest -q tests/test_terminalbench_benchmark.py
-```
+## Current Architecture Direction
 
-Validate examples layout:
+Snowl is no longer just about “supporting more benchmarks.”
+The hard next problem is making the runtime and orchestration layer industrial-grade.
 
-```bash
-snowl examples check /Users/morinop/coding/snowl_v2/examples
-```
+That means the next serious work is around:
 
-## Maintenance Notes
+- concurrency scheduling
+- build / sandbox / model-call backpressure
+- container lifecycle robustness
+- resumability under failure
+- stronger artifact contracts
+- clearer observability across long-running runs
 
-- Prefer changing shared logic in `snowl/` over adding wrappers in `examples/`.
-- Keep benchmark-specific code inside `snowl/benchmarks/<name>/`.
-- Keep shared scoring primitives in `snowl/scorer/`.
-- Keep event names and artifact schema stable; downstream analysis relies on them.
-- For long-running/container debugging, always check `run.log` and `events.jsonl` first.
+If you are working on those problems, read [ARCHITECTURE.md](./ARCHITECTURE.md) first.
 
-## Related Docs in This Repo
+## Repo Map
 
-- `/Users/morinop/coding/snowl_v2/DESIGN.md`
-- `/Users/morinop/coding/snowl_v2/task_p0.md`
-- `/Users/morinop/coding/snowl_v2/task_p1.md`
-- `/Users/morinop/coding/snowl_v2/todo_list.md`
-- `/Users/morinop/coding/snowl_v2/todo_list_p1.md`
-- `/Users/morinop/coding/snowl_v2/ui_tasks.md`
-- `/Users/morinop/coding/snowl_v2/ux_next.md`
+Core framework:
 
----
+- `snowl/core/`
+- `snowl/eval.py`
+- `snowl/runtime/`
+- `snowl/envs/`
+- `snowl/model/`
+- `snowl/agents/`
 
-If you are onboarding as a maintainer, start with:
+Monitoring and UI:
 
-1. `snowl/cli.py` (entrypoints)
-2. `snowl/eval.py` (discovery/planning/artifacts)
-3. `snowl/runtime/engine.py` + `snowl/runtime/container_runtime.py`
-4. one benchmark adapter (`snowl/benchmarks/terminalbench/adapter.py`)
-5. one example (`examples/terminalbench-official/`)
+- `snowl/cli.py`
+- `snowl/web/`
+- `webui/`
+- `snowl/_webui/`
 
-This path gives you the fastest end-to-end mental model.
+Benchmarks and examples:
+
+- `snowl/benchmarks/`
+- `examples/`
+- `references/`
+
+Validation and packaging:
+
+- `tests/`
+- `pyproject.toml`
+- `setup.py`
+
+## Recommended Read Order For Contributors
+
+1. [AGENTS.md](./AGENTS.md)
+2. [START_HERE.md](./START_HERE.md)
+3. [ARCHITECTURE.md](./ARCHITECTURE.md)
+4. [PLANS.md](./PLANS.md)
+5. the subsystem code you are modifying
+
+## Status Honesty
+
+Snowl already has a strong base, but it is not yet an industrial scheduler.
+
+What is strong already:
+
+- shared eval contract
+- official benchmark coverage
+- multi-model authoring
+- container-aware trial execution
+- artifacts and monitoring
+
+What is still the hardest unfinished work:
+
+- industrial-grade runtime scheduling
+- stronger fairness and backpressure across resources
+- better fault isolation and recovery for container-heavy runs
+- scaling beyond a single machine without breaking contracts
+
+That is the work this repo is now moving toward.

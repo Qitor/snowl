@@ -45,6 +45,17 @@ type TrialKeyParts = {
   sampleId: string;
 };
 
+type IdentityRow = {
+  taskId: string;
+  agentId: string;
+  variantId: string;
+  model: string | null;
+  displayId: string;
+  count: number;
+  statusCounts: Record<string, number>;
+  metrics: Record<string, number>;
+};
+
 function nowMs(): number {
   return Date.now();
 }
@@ -66,6 +77,14 @@ function readJsonObject(filePath: string): JsonRecord {
     return parseJsonObject(fs.readFileSync(filePath, "utf-8"));
   } catch {
     return {};
+  }
+}
+
+function fileMtimeMs(filePath: string): number {
+  try {
+    return fs.statSync(filePath).mtimeMs;
+  } catch {
+    return 0;
   }
 }
 
@@ -94,8 +113,8 @@ function parseEventId(value: string | null | undefined): number {
   return Math.trunc(parsed);
 }
 
-function normalizeDimension(value: string | null | undefined): "agent-first" | "benchmark-first" {
-  return value === "benchmark-first" ? "benchmark-first" : "agent-first";
+function normalizeDimension(value: string | null | undefined): "variant-first" | "benchmark-first" {
+  return value === "benchmark-first" ? "benchmark-first" : "variant-first";
 }
 
 function readRuntimeConfig(): RuntimeConfig {
@@ -127,6 +146,23 @@ function parseTrialKey(trialKey: string): TrialKeyParts | null {
     variantId: parts[2] || "default",
     sampleId: parts.slice(3).join("::"),
   };
+}
+
+function makeDisplayId(input: { agentId?: string | null; variantId?: string | null; model?: string | null }): string {
+  const agentId = String(input.agentId || "unknown").trim() || "unknown";
+  const variantId = String(input.variantId || "default").trim() || "default";
+  const model = String(input.model || "").trim();
+  if (variantId !== "default") {
+    return `${agentId} / ${variantId}`;
+  }
+  if (model) {
+    return `${agentId} / ${model}`;
+  }
+  return agentId;
+}
+
+function makeIdentityKey(input: { agentId?: string | null; variantId?: string | null; model?: string | null }): string {
+  return `${String(input.agentId || "")}::${String(input.variantId || "default")}::${String(input.model || "")}`;
 }
 
 export class RunMonitorStore {
@@ -326,8 +362,21 @@ export class RunMonitorStore {
     state.experimentId = this.inferExperimentId(state.runId, manifest, state.profiling);
     state.benchmark = this.inferBenchmark(manifest, state.profiling);
     state.status = Object.keys(state.summary).length > 0 ? "completed" : "running";
-    state.updatedAtMs = nowMs();
+    state.updatedAtMs = this.computeRunUpdatedAt(state);
     this.upsertRunRow(state, manifest);
+  }
+
+  private computeRunUpdatedAt(state: RunState): number {
+    const candidates = [
+      fileMtimeMs(state.runDir),
+      fileMtimeMs(state.eventsPath),
+      fileMtimeMs(state.manifestPath),
+      fileMtimeMs(state.summaryPath),
+      fileMtimeMs(state.planPath),
+      fileMtimeMs(state.aggregatePath),
+      fileMtimeMs(state.profilingPath),
+    ];
+    return Math.max(...candidates, state.updatedAtMs || 0, 0);
   }
 
   private emitEvent(runId: string, event: JsonRecord): void {
@@ -419,7 +468,7 @@ export class RunMonitorStore {
     }
 
     if (ingested > 0) {
-      state.updatedAtMs = nowMs();
+      state.updatedAtMs = this.computeRunUpdatedAt(state);
     }
     return ingested;
   }
@@ -490,6 +539,240 @@ export class RunMonitorStore {
     return { done: asInt(doneRow?.c, 0), total, failed: asInt(failRow?.c, 0) };
   }
 
+  private collectIdentityRowsFromAggregate(state: RunState): IdentityRow[] {
+    if (!fs.existsSync(state.aggregatePath)) {
+      return [];
+    }
+    const aggregate = readJsonObject(state.aggregatePath);
+    const byTaskAgent = (aggregate.by_task_agent as JsonRecord) || {};
+    const rows: IdentityRow[] = [];
+    for (const row of Object.values(byTaskAgent)) {
+      if (!row || typeof row !== "object" || Array.isArray(row)) {
+        continue;
+      }
+      const asRow = row as JsonRecord;
+      const agentId = String(asRow.agent_id || "unknown");
+      const variantId = String(asRow.variant_id || "default");
+      const model = String(asRow.model || "").trim() || null;
+      const metrics = ((asRow.metrics as JsonRecord) || {}) as JsonRecord;
+      const statusCounts = ((asRow.status_counts as JsonRecord) || {}) as JsonRecord;
+      rows.push({
+        taskId: String(asRow.task_id || "-"),
+        agentId,
+        variantId,
+        model,
+        displayId: makeDisplayId({ agentId, variantId, model }),
+        count: asInt(asRow.count, 0),
+        statusCounts: Object.fromEntries(
+          Object.entries(statusCounts).map(([key, value]) => [key, asInt(value, 0)]),
+        ),
+        metrics: Object.fromEntries(
+          Object.entries(metrics)
+            .map(([key, value]) => [key, Number(value)])
+            .filter((entry) => Number.isFinite(entry[1])),
+        ),
+      });
+    }
+    return rows;
+  }
+
+  private collectIdentityRowsFromTaskMonitor(state: RunState): IdentityRow[] {
+    const taskMonitor = Array.isArray(state.profiling.task_monitor) ? state.profiling.task_monitor : [];
+    const grouped = new Map<string, IdentityRow>();
+    for (const row of taskMonitor) {
+      if (!row || typeof row !== "object" || Array.isArray(row)) {
+        continue;
+      }
+      const asRow = row as JsonRecord;
+      const taskId = String(asRow.task_id || "-");
+      const agentId = String(asRow.agent_id || "unknown");
+      const variantId = String(asRow.variant_id || "default");
+      const model = String(asRow.model || "").trim() || null;
+      const key = `${taskId}::${makeIdentityKey({ agentId, variantId, model })}`;
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          taskId,
+          agentId,
+          variantId,
+          model,
+          displayId: makeDisplayId({ agentId, variantId, model }),
+          count: 0,
+          statusCounts: {},
+          metrics: {},
+        });
+      }
+      const slot = grouped.get(key) as IdentityRow;
+      slot.count += 1;
+      const status = String(asRow.status || "queued").toLowerCase();
+      slot.statusCounts[status] = (slot.statusCounts[status] || 0) + 1;
+      const metrics = ((asRow.scorer_metrics as JsonRecord) || {}) as JsonRecord;
+      for (const [metricName, metricValue] of Object.entries(metrics)) {
+        const numeric = Number(metricValue);
+        if (!Number.isFinite(numeric)) {
+          continue;
+        }
+        slot.metrics[metricName] = numeric;
+      }
+    }
+    return Array.from(grouped.values());
+  }
+
+  private collectIdentityRows(state: RunState): IdentityRow[] {
+    const aggregateRows = this.collectIdentityRowsFromAggregate(state);
+    if (aggregateRows.length > 0) {
+      return aggregateRows;
+    }
+    return this.collectIdentityRowsFromTaskMonitor(state);
+  }
+
+  private collectRunIdentities(state: RunState): Array<{ display_id: string; agent_id: string; variant_id: string; model: string | null }> {
+    const seen = new Map<string, { display_id: string; agent_id: string; variant_id: string; model: string | null }>();
+    for (const row of this.collectIdentityRows(state)) {
+      const key = makeIdentityKey({ agentId: row.agentId, variantId: row.variantId, model: row.model });
+      if (!seen.has(key)) {
+        seen.set(key, {
+          display_id: row.displayId,
+          agent_id: row.agentId,
+          variant_id: row.variantId,
+          model: row.model,
+        });
+      }
+    }
+    if (seen.size === 0) {
+      const planAgentIds = Array.isArray(state.plan.agent_ids) ? state.plan.agent_ids : [];
+      const planVariantIds = Array.isArray(state.plan.variant_ids) ? state.plan.variant_ids : [];
+      for (const agentValue of planAgentIds) {
+        for (const variantValue of planVariantIds.length > 0 ? planVariantIds : ["default"]) {
+          const agentId = String(agentValue || "unknown");
+          const variantId = String(variantValue || "default");
+          const key = makeIdentityKey({ agentId, variantId, model: null });
+          if (!seen.has(key)) {
+            seen.set(key, {
+              display_id: makeDisplayId({ agentId, variantId, model: null }),
+              agent_id: agentId,
+              variant_id: variantId,
+              model: null,
+            });
+          }
+        }
+      }
+    }
+    return Array.from(seen.values()).sort((a, b) => a.display_id.localeCompare(b.display_id));
+  }
+
+  private buildRunSummary(state: RunState, primaryDimension: "variant-first" | "benchmark-first"): JsonRecord {
+    const progress = this.computeProgress(state);
+    const identityRows = this.collectIdentityRows(state);
+    const identities = this.collectRunIdentities(state);
+    const metricSums = new Map<string, Map<string, number>>();
+    const metricCounts = new Map<string, Map<string, number>>();
+    const metadata = new Map<string, { display_id: string; agent_id: string; variant_id: string; model: string | null; count: number; status_counts: Record<string, number> }>();
+    const matrix: Record<string, Record<string, number>> = {};
+
+    for (const row of identityRows) {
+      const key = makeIdentityKey({ agentId: row.agentId, variantId: row.variantId, model: row.model });
+      if (!metricSums.has(key)) {
+        metricSums.set(key, new Map());
+        metricCounts.set(key, new Map());
+        metadata.set(key, {
+          display_id: row.displayId,
+          agent_id: row.agentId,
+          variant_id: row.variantId,
+          model: row.model,
+          count: 0,
+          status_counts: {},
+        });
+      }
+      const sums = metricSums.get(key) as Map<string, number>;
+      const counts = metricCounts.get(key) as Map<string, number>;
+      const meta = metadata.get(key) as {
+        display_id: string;
+        agent_id: string;
+        variant_id: string;
+        model: string | null;
+        count: number;
+        status_counts: Record<string, number>;
+      };
+      meta.count += row.count;
+      for (const [statusName, statusCount] of Object.entries(row.statusCounts)) {
+        meta.status_counts[statusName] = (meta.status_counts[statusName] || 0) + asInt(statusCount, 0);
+      }
+      let primaryMetric: number | null = null;
+      for (const [metricName, metricValue] of Object.entries(row.metrics)) {
+        const numeric = Number(metricValue);
+        if (!Number.isFinite(numeric)) {
+          continue;
+        }
+        sums.set(metricName, (sums.get(metricName) || 0) + numeric);
+        counts.set(metricName, (counts.get(metricName) || 0) + 1);
+        if (primaryMetric === null) {
+          primaryMetric = numeric;
+        }
+      }
+      const rowKey = primaryDimension === "benchmark-first" ? row.taskId : row.displayId;
+      const colKey = primaryDimension === "benchmark-first" ? row.displayId : row.taskId;
+      if (primaryMetric !== null) {
+        if (!matrix[rowKey]) {
+          matrix[rowKey] = {};
+        }
+        matrix[rowKey][colKey] = primaryMetric;
+      }
+    }
+
+    const agents = Array.from(metricSums.entries()).map(([key, sums]) => {
+      const counts = metricCounts.get(key) || new Map<string, number>();
+      const meta = metadata.get(key) as {
+        display_id: string;
+        agent_id: string;
+        variant_id: string;
+        model: string | null;
+        count: number;
+        status_counts: Record<string, number>;
+      };
+      const metrics: Record<string, number> = {};
+      for (const [metricName, total] of sums.entries()) {
+        const count = Math.max(1, counts.get(metricName) || 1);
+        metrics[metricName] = total / count;
+      }
+      const rankScore = Object.values(metrics).length > 0 ? Math.max(...Object.values(metrics)) : 0;
+      return {
+        display_id: meta.display_id,
+        agent_id: meta.agent_id,
+        variant_id: meta.variant_id,
+        model: meta.model,
+        metrics,
+        rank_score: rankScore,
+        count: meta.count,
+        status_counts: meta.status_counts,
+      };
+    });
+    agents.sort((a, b) => b.rank_score - a.rank_score || a.display_id.localeCompare(b.display_id));
+
+    const models = Array.from(new Set(identities.map((row) => row.model).filter((value): value is string => Boolean(value)))).sort();
+    const completed = state.status === "completed" ? 1 : 0;
+    const running = state.status === "running" ? 1 : 0;
+
+    return {
+      run_id: state.runId,
+      experiment_id: state.experimentId,
+      benchmark: state.benchmark,
+      status: state.status,
+      primary_dimension: primaryDimension,
+      variant_count: identities.length,
+      models,
+      identities,
+      global_progress: {
+        done: progress.done,
+        total: progress.total,
+        failed: progress.failed,
+        running,
+        completed,
+      },
+      agents,
+      matrix,
+    };
+  }
+
   listRuns(opts: { experimentId?: string } = {}): JsonRecord[] {
     this.pollOnce();
     const out: JsonRecord[] = [];
@@ -498,6 +781,8 @@ export class RunMonitorStore {
         continue;
       }
       const progress = this.computeProgress(state);
+      const identities = this.collectRunIdentities(state);
+      const models = Array.from(new Set(identities.map((row) => row.model).filter((value): value is string => Boolean(value)))).sort();
       out.push({
         run_id: state.runId,
         experiment_id: state.experimentId,
@@ -508,6 +793,9 @@ export class RunMonitorStore {
         failed: progress.failed,
         updated_at_ms: state.updatedAtMs,
         path: state.runDir,
+        variant_count: identities.length,
+        models,
+        is_live: state.status === "running",
       });
     }
     return out.sort((a, b) => asInt(b.updated_at_ms, 0) - asInt(a.updated_at_ms, 0));
@@ -559,6 +847,7 @@ export class RunMonitorStore {
       return null;
     }
     const progress = this.computeProgress(state);
+    const identities = this.collectRunIdentities(state);
     return {
       run_id: state.runId,
       experiment_id: state.experimentId,
@@ -574,7 +863,20 @@ export class RunMonitorStore {
       updated_at_ms: state.updatedAtMs,
       last_event_id: state.lastEventIndex > 0 ? `${state.runId}:${state.lastEventIndex}` : null,
       path: state.runDir,
+      variant_count: identities.length,
+      models: Array.from(new Set(identities.map((row) => row.model).filter((value): value is string => Boolean(value)))).sort(),
+      identities,
     };
+  }
+
+  runSummary(opts: { runId: string; primaryDimension?: string }): JsonRecord | null {
+    this.pollOnce();
+    const state = this.runs.get(opts.runId);
+    if (!state) {
+      return null;
+    }
+    const primaryDimension = opts.primaryDimension === "benchmark-first" ? "benchmark-first" : "variant-first";
+    return this.buildRunSummary(state, primaryDimension);
   }
 
   backfillEvents(opts: { runId: string; lastEventId?: string | null; limit?: number }): JsonRecord[] {
@@ -761,13 +1063,14 @@ export class RunMonitorStore {
   }
 
   experimentSummary(opts: { experimentId: string; primaryDimension?: string }): JsonRecord {
-    const primaryDimension = normalizeDimension(opts.primaryDimension);
+    const primaryDimension = opts.primaryDimension === "benchmark-first" ? "benchmark-first" : "variant-first";
     const runs = Array.from(this.runs.values()).filter((state) => state.experimentId === opts.experimentId);
 
     const metricSums = new Map<string, Map<string, number>>();
     const metricCounts = new Map<string, Map<string, number>>();
     const matrixSums = new Map<string, Map<string, number>>();
     const matrixCounts = new Map<string, Map<string, number>>();
+    const metadata = new Map<string, { display_id: string; agent_id: string; variant_id: string; model: string | null }>();
 
     let globalDone = 0;
     let globalTotal = 0;
@@ -789,29 +1092,24 @@ export class RunMonitorStore {
       if (!fs.existsSync(state.aggregatePath)) {
         continue;
       }
-      const aggregate = readJsonObject(state.aggregatePath);
-      const byTaskAgent = (aggregate.by_task_agent as JsonRecord) || {};
-      for (const row of Object.values(byTaskAgent)) {
-        if (!row || typeof row !== "object" || Array.isArray(row)) {
-          continue;
-        }
-        const asRow = row as JsonRecord;
-        const agentId = String(asRow.agent_id || "unknown");
-        const metrics = (asRow.metrics as JsonRecord) || {};
-
-        let metricNames = metricSums.get(agentId);
-        if (!metricNames) {
-          metricNames = new Map();
-          metricSums.set(agentId, metricNames);
-        }
-        let metricCountNames = metricCounts.get(agentId);
-        if (!metricCountNames) {
-          metricCountNames = new Map();
-          metricCounts.set(agentId, metricCountNames);
+      const rows = this.collectIdentityRows(state);
+      for (const row of rows) {
+        const identityKey = makeIdentityKey({ agentId: row.agentId, variantId: row.variantId, model: row.model });
+        if (!metricSums.has(identityKey)) {
+          metricSums.set(identityKey, new Map());
+          metricCounts.set(identityKey, new Map());
+          metadata.set(identityKey, {
+            display_id: row.displayId,
+            agent_id: row.agentId,
+            variant_id: row.variantId,
+            model: row.model,
+          });
         }
 
+        const metricNames = metricSums.get(identityKey) as Map<string, number>;
+        const metricCountNames = metricCounts.get(identityKey) as Map<string, number>;
         let primaryMetric: number | null = null;
-        for (const [metricName, metricValue] of Object.entries(metrics)) {
+        for (const [metricName, metricValue] of Object.entries(row.metrics)) {
           const numeric = Number(metricValue);
           if (!Number.isFinite(numeric)) {
             continue;
@@ -824,21 +1122,27 @@ export class RunMonitorStore {
         }
 
         if (primaryMetric !== null) {
-          if (!matrixSums.has(agentId)) {
-            matrixSums.set(agentId, new Map());
-            matrixCounts.set(agentId, new Map());
+          if (!matrixSums.has(identityKey)) {
+            matrixSums.set(identityKey, new Map());
+            matrixCounts.set(identityKey, new Map());
           }
-          const agentRow = matrixSums.get(agentId) as Map<string, number>;
-          const agentCount = matrixCounts.get(agentId) as Map<string, number>;
+          const rowSums = matrixSums.get(identityKey) as Map<string, number>;
+          const rowCounts = matrixCounts.get(identityKey) as Map<string, number>;
           const benchmark = state.benchmark || "custom";
-          agentRow.set(benchmark, (agentRow.get(benchmark) || 0) + primaryMetric);
-          agentCount.set(benchmark, (agentCount.get(benchmark) || 0) + 1);
+          rowSums.set(benchmark, (rowSums.get(benchmark) || 0) + primaryMetric);
+          rowCounts.set(benchmark, (rowCounts.get(benchmark) || 0) + 1);
         }
       }
     }
 
-    const agents = Array.from(metricSums.entries()).map(([agentId, sums]) => {
-      const counts = metricCounts.get(agentId) || new Map<string, number>();
+    const agents = Array.from(metricSums.entries()).map(([identityKey, sums]) => {
+      const counts = metricCounts.get(identityKey) || new Map<string, number>();
+      const meta = metadata.get(identityKey) || {
+        display_id: identityKey,
+        agent_id: "unknown",
+        variant_id: "default",
+        model: null,
+      };
       const metrics: Record<string, number> = {};
       for (const [metricName, total] of sums.entries()) {
         const count = Math.max(1, counts.get(metricName) || 1);
@@ -846,30 +1150,36 @@ export class RunMonitorStore {
       }
       const rankScore = Object.values(metrics).length > 0 ? Math.max(...Object.values(metrics)) : 0;
       return {
-        agent_id: agentId,
+        display_id: meta.display_id,
+        agent_id: meta.agent_id,
+        variant_id: meta.variant_id,
+        model: meta.model,
         metrics,
         rank_score: rankScore,
       };
     });
-    agents.sort((a, b) => b.rank_score - a.rank_score);
+    agents.sort((a, b) => b.rank_score - a.rank_score || String(a.display_id).localeCompare(String(b.display_id)));
 
-    const agentFirstMatrix: Record<string, Record<string, number>> = {};
-    for (const [agentId, values] of matrixSums.entries()) {
-      const counts = matrixCounts.get(agentId) || new Map<string, number>();
-      agentFirstMatrix[agentId] = {};
+    const variantFirstMatrix: Record<string, Record<string, number>> = {};
+    for (const [identityKey, values] of matrixSums.entries()) {
+      const counts = matrixCounts.get(identityKey) || new Map<string, number>();
+      const meta = metadata.get(identityKey) || {
+        display_id: identityKey,
+      };
+      variantFirstMatrix[meta.display_id] = {};
       for (const [benchmark, sum] of values.entries()) {
         const count = Math.max(1, counts.get(benchmark) || 1);
-        agentFirstMatrix[agentId][benchmark] = sum / count;
+        variantFirstMatrix[meta.display_id][benchmark] = sum / count;
       }
     }
 
     const benchmarkFirstMatrix: Record<string, Record<string, number>> = {};
-    for (const [agentId, benchmarkRows] of Object.entries(agentFirstMatrix)) {
+    for (const [displayId, benchmarkRows] of Object.entries(variantFirstMatrix)) {
       for (const [benchmark, value] of Object.entries(benchmarkRows)) {
         if (!benchmarkFirstMatrix[benchmark]) {
           benchmarkFirstMatrix[benchmark] = {};
         }
-        benchmarkFirstMatrix[benchmark][agentId] = value;
+        benchmarkFirstMatrix[benchmark][displayId] = value;
       }
     }
 
@@ -885,7 +1195,7 @@ export class RunMonitorStore {
         completed,
       },
       agents,
-      matrix: primaryDimension === "benchmark-first" ? benchmarkFirstMatrix : agentFirstMatrix,
+      matrix: primaryDimension === "benchmark-first" ? benchmarkFirstMatrix : variantFirstMatrix,
       runs: runs
         .slice()
         .sort((a, b) => b.updatedAtMs - a.updatedAtMs)

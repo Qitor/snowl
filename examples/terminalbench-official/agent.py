@@ -7,9 +7,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from snowl.agents import build_model_variants
 from snowl.core import AgentContext, AgentState, EnvSpec, StopReason, agent as declare_agent
 from snowl.envs import TerminalEnv
-from snowl.model import OpenAICompatibleChatClient, load_openai_compatible_config
+from snowl.model import (
+    OpenAICompatibleChatClient,
+    OpenAICompatibleConfig,
+    ProjectModelEntry,
+    ProjectProviderConfig,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -88,6 +94,7 @@ def _tail(text: Any, limit: int = 240) -> str:
 
 @dataclass
 class TerminusOfficialAgent:
+    model_config: OpenAICompatibleConfig
     agent_id: str = "terminalbench_official_agent"
     max_episodes: int = 8
     max_parse_retries: int = 3
@@ -128,26 +135,33 @@ class TerminusOfficialAgent:
     def _ensure_client(self) -> OpenAICompatibleChatClient:
         if self._client is not None:
             return self._client
-        cfg = load_openai_compatible_config(env=os.environ)
-        self._client = OpenAICompatibleChatClient(cfg)
+        self._client = OpenAICompatibleChatClient(self.model_config)
         return self._client
 
     def _should_block_tmux_command(self, keystrokes: str, is_blocking: bool) -> bool:
         stripped = keystrokes.strip()
         return is_blocking and not (stripped.endswith("EOF") or stripped.endswith("&"))
 
+    def _normalize_keystrokes(self, keystrokes: str, *, is_blocking: bool) -> str:
+        text = str(keystrokes or "")
+        if is_blocking and text and not text.endswith("\n"):
+            return text + "\n"
+        return text
+
     def _build_env(self, context: AgentContext) -> TerminalEnv:
         sample = dict(context.metadata.get("sample", {}))
         sample_meta = dict(sample.get("metadata", {}))
         task_id = str(sample_meta.get("task_id") or "task")
         sample_id = str(sample.get("id") or "sample")
+        variant_id = str(context.metadata.get("variant_id") or "default")
         safe_task = re.sub(r"[^a-zA-Z0-9._-]+", "-", task_id).strip("-") or "task"
         safe_sample = re.sub(r"[^a-zA-Z0-9._-]+", "-", sample_id).strip("-") or "sample"
-        trial_name = f"snowl-tb-{safe_task}-{safe_sample[:16]}"
+        safe_variant = re.sub(r"[^a-zA-Z0-9._-]+", "-", variant_id).strip("-") or "default"
+        trial_name = f"snowl-tb-{safe_task}-{safe_sample[:12]}-{safe_variant[:12]}"
         workdir = sample_meta.get("task_root") or str(ROOT)
         workdir_path = Path(str(workdir)).resolve()
-        logs_root = workdir_path / ".snowl_logs" / safe_sample
-        agent_logs_root = workdir_path / ".snowl_agent_logs" / safe_sample
+        logs_root = workdir_path / ".snowl_logs" / safe_sample / safe_variant
+        agent_logs_root = workdir_path / ".snowl_agent_logs" / safe_sample / safe_variant
         logs_root.mkdir(parents=True, exist_ok=True)
         agent_logs_root.mkdir(parents=True, exist_ok=True)
         docker_compose_path = str(sample_meta.get("docker_compose_path") or "").strip()
@@ -155,8 +169,8 @@ class TerminusOfficialAgent:
         compose_build = os.getenv("SNOWL_TB_COMPOSE_BUILD", "1") == "1"
         compose_env = {
             "T_BENCH_TASK_DOCKER_CLIENT_CONTAINER_NAME": trial_name,
-            "T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME": f"tb__{safe_task}__client",
-            "T_BENCH_TASK_DOCKER_NAME_PREFIX": f"tb__{safe_task}",
+            "T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME": f"tb__{safe_task}__{safe_variant}__client",
+            "T_BENCH_TASK_DOCKER_NAME_PREFIX": f"tb__{safe_task}__{safe_variant}",
             "T_BENCH_CONTAINER_LOGS_PATH": "/var/log/tbench",
             "T_BENCH_CONTAINER_AGENT_LOGS_PATH": "/agent-logs",
             "T_BENCH_TEST_DIR": "/tests",
@@ -195,8 +209,8 @@ class TerminusOfficialAgent:
         usage_total: dict[str, int],
         episode: int,
     ) -> dict[str, Any]:
+        traj.append({"role": "user", "content": prompt})
         for parse_attempt in range(1, self.max_parse_retries + 1):
-            traj.append({"role": "user", "content": prompt})
             emit(
                 {
                     "event": "runtime.model.query.start",
@@ -208,7 +222,7 @@ class TerminusOfficialAgent:
             )
             try:
                 resp = await client.generate(
-                    [{"role": "user", "content": prompt}],
+                    list(traj),
                     temperature=self.temperature,
                 )
             except Exception as exc:
@@ -285,7 +299,6 @@ class TerminusOfficialAgent:
         usage_total = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
         terminal_state = env.capture()
-        history = ""
         test_output = terminal_state
 
         def emit_cmd(event_name: str, out: Mapping[str, Any] | None = None, **extra: Any) -> None:
@@ -355,11 +368,15 @@ class TerminusOfficialAgent:
                 )
 
             for episode in range(1, self.max_episodes + 1):
-                prompt = self._prompt_template.format(
-                    response_schema=self._response_schema,
-                    instruction=instruction,
-                    history=history,
-                    terminal_state=terminal_state,
+                prompt = (
+                    self._prompt_template.format(
+                        response_schema=self._response_schema,
+                        instruction=instruction,
+                        history="",
+                        terminal_state=terminal_state,
+                    )
+                    if episode == 1
+                    else terminal_state
                 )
                 parsed = await self._llm_query_handler(
                     client=client,
@@ -377,12 +394,13 @@ class TerminusOfficialAgent:
                 for cmd in commands:
                     if not isinstance(cmd, Mapping):
                         continue
-                    keystrokes = str(cmd.get("keystrokes", ""))
+                    raw_keystrokes = str(cmd.get("keystrokes", ""))
                     requested_blocking = bool(cmd.get("is_blocking", False))
                     is_blocking = self._should_block_tmux_command(
-                        keystrokes,
+                        raw_keystrokes,
                         requested_blocking,
                     )
+                    keystrokes = self._normalize_keystrokes(raw_keystrokes, is_blocking=is_blocking)
                     timeout_sec = float(cmd.get("timeout_sec", 180.0))
                     try:
                         out = env.send_keys(
@@ -431,8 +449,6 @@ class TerminusOfficialAgent:
                     terminal_state = timeout_message
                 else:
                     terminal_state = env.capture()
-
-                history += f"\n[Episode {episode}] {parsed.get('explanation', '')}\n"
                 if bool(parsed.get("is_task_complete", False)):
                     break
 
@@ -485,6 +501,18 @@ class TerminusOfficialAgent:
         return state
 
 
-@declare_agent()
-def agent() -> TerminusOfficialAgent:
-    return TerminusOfficialAgent()
+def _build_terminalbench_agent(
+    model_entry: ProjectModelEntry,
+    provider: ProjectProviderConfig,
+) -> TerminusOfficialAgent:
+    _ = provider
+    return TerminusOfficialAgent(model_config=model_entry.config)
+
+
+@declare_agent(agent_id="terminalbench_official_agent")
+def agents():
+    return build_model_variants(
+        base_dir=Path(__file__).parent,
+        agent_id="terminalbench_official_agent",
+        factory=_build_terminalbench_agent,
+    )

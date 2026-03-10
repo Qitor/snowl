@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -15,9 +16,9 @@ import time
 import urllib.request
 
 from snowl.bench import check_benchmark_conformance, list_benchmarks, run_benchmark
-from snowl.eval import run_eval
+from snowl.eval import EvalRunBootstrap, run_eval
 from snowl.examples_lint import validate_examples_layout
-from snowl.ui import InteractionController, LiveConsoleRenderer
+from snowl.ui import ConsoleRenderer, InteractionController, LiveConsoleRenderer
 from snowl.web.runtime import WebRuntimeError, current_webui_cache_key, ensure_next_build, ensure_next_runtime
 
 
@@ -198,6 +199,146 @@ def _next_available_port(host: str, start_port: int, *, max_tries: int = 32) -> 
     return None
 
 
+class _ManagedWebMonitor:
+    def __init__(
+        self,
+        *,
+        project: str,
+        host: str,
+        port: int,
+        poll_interval_sec: float,
+        enabled: bool,
+    ) -> None:
+        self.project = str(Path(project).resolve())
+        self.host = str(host)
+        self.requested_port = int(port)
+        self.poll_interval_sec = float(poll_interval_sec)
+        self.enabled = bool(enabled)
+        self.process: subprocess.Popen[bytes] | None = None
+        self.port: int | None = None
+
+    def maybe_start(self) -> str | None:
+        if not self.enabled:
+            return None
+        if os.getenv("SNOWL_AUTO_WEB_BOOTSTRAP", "1").lower() in {"0", "false", "off", "no"}:
+            return None
+        if not sys.stdout.isatty():
+            return None
+        if self.process is not None:
+            return f"http://{self.host}:{self.port}"
+
+        target_port = _next_available_port(self.host, self.requested_port)
+        if target_port is None:
+            return None
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "snowl.cli",
+            "web",
+            "monitor",
+            "--project",
+            self.project,
+            "--host",
+            self.host,
+            "--port",
+            str(target_port),
+            "--poll-interval-sec",
+            str(self.poll_interval_sec),
+        ]
+        env = dict(os.environ)
+        env["SNOWL_AUTO_WEB_BOOTSTRAP"] = "0"
+        try:
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=env,
+                start_new_session=True,
+            )
+        except Exception:
+            self.process = None
+            return None
+
+        self.port = target_port
+        url = f"http://{self.host}:{target_port}"
+        deadline = time.time() + 2.0
+        while time.time() < deadline:
+            if _port_listening(self.host, target_port, timeout_sec=0.15):
+                return url
+            time.sleep(0.1)
+        return url
+
+    def stop(self) -> None:
+        proc = self.process
+        if proc is None:
+            return
+        self.process = None
+        try:
+            if proc.poll() is not None:
+                return
+        except Exception:
+            pass
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        deadline = time.time() + 2.0
+        while time.time() < deadline:
+            try:
+                if proc.poll() is not None:
+                    return
+            except Exception:
+                return
+            time.sleep(0.1)
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+@contextlib.contextmanager
+def _interrupt_on_sigterm():
+    handlers: dict[int, object] = {}
+
+    def _handler(_signum, _frame):
+        raise KeyboardInterrupt
+
+    for sig_name in ("SIGTERM",):
+        sig = getattr(signal, sig_name, None)
+        if sig is None:
+            continue
+        try:
+            handlers[int(sig)] = signal.getsignal(sig)
+            signal.signal(sig, _handler)
+        except Exception:
+            continue
+    try:
+        yield
+    finally:
+        for sig_num, handler in handlers.items():
+            try:
+                signal.signal(signal.Signals(sig_num), handler)
+            except Exception:
+                continue
+
+
+def _print_run_bootstrap(prefix: str, info: EvalRunBootstrap) -> None:
+    print(f"{prefix}: run_id={info.run_id} benchmark={info.benchmark} experiment_id={info.experiment_id}")
+    print(
+        "{prefix}: tasks={tasks} agents={agents} variants={variants} samples={samples} total_trials={trials}".format(
+            prefix=prefix,
+            tasks=info.task_count,
+            agents=info.agent_count,
+            variants=info.variant_count,
+            samples=info.sample_count,
+            trials=info.total_trials,
+        )
+    )
+    print(f"{prefix}: artifacts={info.artifacts_dir}")
+    print(f"{prefix}: log={info.log_path}")
+
+
 def _maybe_autostart_web_monitor(
     *,
     project: str,
@@ -312,6 +453,36 @@ def _maybe_autostart_web_monitor(
     )
 
 
+def _build_renderer(
+    *,
+    no_ui: bool,
+    cli_ui: bool,
+    ui_refresh_ms: int | None,
+    ui_max_events: int | None,
+    ui_max_failures: int | None,
+    ui_max_active_trials: int | None,
+    ui_refresh_profile: str | None,
+    ui_theme: str | None,
+    ui_mode: str | None,
+    ui_no_banner: bool,
+):
+    if cli_ui:
+        return LiveConsoleRenderer(
+            verbose=True,
+            refresh_interval_ms=(ui_refresh_ms if ui_refresh_ms is not None else 80),
+            max_events=(ui_max_events if ui_max_events is not None else 240),
+            max_failures=(ui_max_failures if ui_max_failures is not None else 120),
+            max_active_trials=(ui_max_active_trials if ui_max_active_trials is not None else 48),
+            ui_refresh_profile=(ui_refresh_profile or "balanced"),
+            theme_mode=(ui_theme or "research"),
+            ui_mode=(ui_mode or "auto"),
+            show_banner=(not ui_no_banner),
+        )
+    if no_ui:
+        return None
+    return ConsoleRenderer(verbose=True)
+
+
 def _cmd_eval(
     path: str,
     *,
@@ -342,58 +513,84 @@ def _cmd_eval(
     web_monitor_poll_interval_sec: float,
     cli_ui: bool,
 ) -> int:
-    _maybe_autostart_web_monitor(
-        project=str(_project_base_dir(path)),
-        host=web_monitor_host,
-        port=int(web_monitor_port),
-        poll_interval_sec=float(web_monitor_poll_interval_sec),
-        enabled=bool(web_monitor),
+    project_dir = _project_base_dir(path)
+    renderer = _build_renderer(
+        no_ui=bool(no_ui),
+        cli_ui=bool(cli_ui),
+        ui_refresh_ms=ui_refresh_ms,
+        ui_max_events=ui_max_events,
+        ui_max_failures=ui_max_failures,
+        ui_max_active_trials=ui_max_active_trials,
+        ui_refresh_profile=ui_refresh_profile,
+        ui_theme=ui_theme,
+        ui_mode=ui_mode,
+        ui_no_banner=ui_no_banner,
     )
-    effective_no_ui = bool(no_ui or (not cli_ui))
-    renderer = None
-    if not effective_no_ui:
-        renderer = LiveConsoleRenderer(
-            verbose=True,
-            refresh_interval_ms=(ui_refresh_ms if ui_refresh_ms is not None else 80),
-            max_events=(ui_max_events if ui_max_events is not None else 240),
-            max_failures=(ui_max_failures if ui_max_failures is not None else 120),
-            max_active_trials=(ui_max_active_trials if ui_max_active_trials is not None else 48),
-            ui_refresh_profile=(ui_refresh_profile or "balanced"),
-            theme_mode=(ui_theme or "research"),
-            ui_mode=(ui_mode or "auto"),
-            show_banner=(not ui_no_banner),
-        )
     controller = InteractionController(theme_mode=(ui_theme or "research"))
     if keys:
         tokens = [tok.strip() for tok in keys.replace(";", ",").split(",") if tok.strip()]
         if len(tokens) == 1 and "=" not in tokens[0] and " " not in tokens[0]:
             tokens = list(tokens[0])
         controller.queued_inputs = tokens
-    try:
-        result = asyncio.run(
-            run_eval(
-                path,
-                task_filter=_split_csv(task),
-                agent_filter=_split_csv(agent),
-                variant_filter=_split_csv(variant),
-                renderer=renderer,
-                resume=resume,
-                rerun_failed_only=rerun_failed_only,
-                checkpoint_key=checkpoint_key,
-                interaction_controller=controller,
-                max_trials=max_trials,
-                max_sandboxes=max_sandboxes,
-                max_builds=max_builds,
-                max_model_calls=max_model_calls,
-                experiment_id=experiment_id,
+    if not cli_ui and not no_ui:
+        print(f"Snowl Eval: project={project_dir}")
+        print(
+            "Snowl Eval: example={example} task_filter={task} agent_filter={agent} variant_filter={variant}".format(
+                example=project_dir.name,
+                task=(task or "*"),
+                agent=(agent or "*"),
+                variant=(variant or "*"),
             )
         )
+    monitor = _ManagedWebMonitor(
+        project=str(project_dir),
+        host=web_monitor_host,
+        port=int(web_monitor_port),
+        poll_interval_sec=float(web_monitor_poll_interval_sec),
+        enabled=bool(web_monitor),
+    )
+    sidecar_started = {"done": False}
+
+    def _on_run_bootstrap(info: EvalRunBootstrap) -> None:
+        if not cli_ui and not no_ui:
+            _print_run_bootstrap("Snowl Eval", info)
+        if sidecar_started["done"]:
+            return
+        sidecar_started["done"] = True
+        url = monitor.maybe_start()
+        if url:
+            print(f"Web monitor: {url}")
+
+    try:
+        with _interrupt_on_sigterm():
+            result = asyncio.run(
+                run_eval(
+                    path,
+                    task_filter=_split_csv(task),
+                    agent_filter=_split_csv(agent),
+                    variant_filter=_split_csv(variant),
+                    renderer=renderer,
+                    resume=resume,
+                    rerun_failed_only=rerun_failed_only,
+                    checkpoint_key=checkpoint_key,
+                    interaction_controller=controller,
+                    max_trials=max_trials,
+                    max_sandboxes=max_sandboxes,
+                    max_builds=max_builds,
+                    max_model_calls=max_model_calls,
+                    experiment_id=experiment_id,
+                    on_run_bootstrap=_on_run_bootstrap,
+                )
+            )
     except KeyboardInterrupt:
         _close_renderer(renderer)
-        _print_interrupt_log_hint(_project_base_dir(path))
+        monitor.stop()
+        _print_interrupt_log_hint(project_dir)
         return 130
+    finally:
+        monitor.stop()
 
-    if effective_no_ui:
+    if renderer is None:
         summary = result.summary
         print(
             "Snowl Eval Summary: total={total} success={success} incorrect={incorrect} "
@@ -470,52 +667,79 @@ def _cmd_bench_run(
     web_monitor_poll_interval_sec: float,
     cli_ui: bool,
 ) -> int:
-    _maybe_autostart_web_monitor(
-        project=str(_project_base_dir(project)),
+    project_dir = _project_base_dir(project)
+    renderer = _build_renderer(
+        no_ui=bool(no_ui),
+        cli_ui=bool(cli_ui),
+        ui_refresh_ms=ui_refresh_ms,
+        ui_max_events=ui_max_events,
+        ui_max_failures=ui_max_failures,
+        ui_max_active_trials=ui_max_active_trials,
+        ui_refresh_profile=ui_refresh_profile,
+        ui_theme=ui_theme,
+        ui_mode=ui_mode,
+        ui_no_banner=ui_no_banner,
+    )
+    if not cli_ui and not no_ui:
+        print(f"Snowl Benchmark Run: project={project_dir}")
+        print(
+            "Snowl Benchmark Run: benchmark={benchmark} split={split} task_filter={task} agent_filter={agent} variant_filter={variant}".format(
+                benchmark=benchmark,
+                split=split,
+                task=(task or "*"),
+                agent=(agent or "*"),
+                variant=(variant or "*"),
+            )
+        )
+    monitor = _ManagedWebMonitor(
+        project=str(project_dir),
         host=web_monitor_host,
         port=int(web_monitor_port),
         poll_interval_sec=float(web_monitor_poll_interval_sec),
         enabled=bool(web_monitor),
     )
-    effective_no_ui = bool(no_ui or (not cli_ui))
-    renderer = None
-    if not effective_no_ui:
-        renderer = LiveConsoleRenderer(
-            verbose=True,
-            refresh_interval_ms=(ui_refresh_ms if ui_refresh_ms is not None else 80),
-            max_events=(ui_max_events if ui_max_events is not None else 240),
-            max_failures=(ui_max_failures if ui_max_failures is not None else 120),
-            max_active_trials=(ui_max_active_trials if ui_max_active_trials is not None else 48),
-            ui_refresh_profile=(ui_refresh_profile or "balanced"),
-            theme_mode=(ui_theme or "research"),
-            ui_mode=(ui_mode or "auto"),
-            show_banner=(not ui_no_banner),
-        )
+    sidecar_started = {"done": False}
+
+    def _on_run_bootstrap(info: EvalRunBootstrap) -> None:
+        if not cli_ui and not no_ui:
+            _print_run_bootstrap("Snowl Benchmark Run", info)
+        if sidecar_started["done"]:
+            return
+        sidecar_started["done"] = True
+        url = monitor.maybe_start()
+        if url:
+            print(f"Web monitor: {url}")
+
     try:
-        result = asyncio.run(
-            run_benchmark(
-                benchmark,
-                project_path=project,
-                split=split,
-                limit=limit,
-                benchmark_args=adapter_arg,
-                benchmark_filters=benchmark_filter,
-                task_filter=_split_csv(task),
-                agent_filter=_split_csv(agent),
-                variant_filter=_split_csv(variant),
-                renderer=renderer,
-                max_trials=max_trials,
-                max_sandboxes=max_sandboxes,
-                max_builds=max_builds,
-                max_model_calls=max_model_calls,
-                experiment_id=experiment_id,
+        with _interrupt_on_sigterm():
+            result = asyncio.run(
+                run_benchmark(
+                    benchmark,
+                    project_path=project,
+                    split=split,
+                    limit=limit,
+                    benchmark_args=adapter_arg,
+                    benchmark_filters=benchmark_filter,
+                    task_filter=_split_csv(task),
+                    agent_filter=_split_csv(agent),
+                    variant_filter=_split_csv(variant),
+                    renderer=renderer,
+                    max_trials=max_trials,
+                    max_sandboxes=max_sandboxes,
+                    max_builds=max_builds,
+                    max_model_calls=max_model_calls,
+                    experiment_id=experiment_id,
+                    on_run_bootstrap=_on_run_bootstrap,
+                )
             )
-        )
     except KeyboardInterrupt:
         _close_renderer(renderer)
-        _print_interrupt_log_hint(_project_base_dir(project))
+        monitor.stop()
+        _print_interrupt_log_hint(project_dir)
         return 130
-    if effective_no_ui:
+    finally:
+        monitor.stop()
+    if renderer is None:
         return _print_summary(result)
     return 0 if result.summary.error == 0 else 1
 
@@ -620,12 +844,12 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser.add_argument(
         "--cli-ui",
         action="store_true",
-        help="Enable legacy live CLI renderer (default uses Web UI + terminal summary).",
+        help="Enable legacy live CLI renderer (default uses plain terminal logs + background Web monitor).",
     )
     eval_parser.add_argument(
         "--no-ui",
         action="store_true",
-        help="Disable legacy live CLI renderer (compat flag; default already disabled).",
+        help="Disable terminal progress output (keeps Web monitor auto-start unless --no-web-monitor is set).",
     )
     eval_parser.add_argument("--resume", action="store_true", help="Resume from checkpoint.")
     eval_parser.add_argument(
@@ -713,12 +937,12 @@ def build_parser() -> argparse.ArgumentParser:
     bench_run.add_argument(
         "--cli-ui",
         action="store_true",
-        help="Enable legacy live CLI renderer (default uses Web UI + terminal summary).",
+        help="Enable legacy live CLI renderer (default uses plain terminal logs + background Web monitor).",
     )
     bench_run.add_argument(
         "--no-ui",
         action="store_true",
-        help="Disable legacy live CLI renderer (compat flag; default already disabled).",
+        help="Disable terminal progress output (keeps Web monitor auto-start unless --no-web-monitor is set).",
     )
     bench_run.add_argument("--max-trials", type=int, default=None, help="Max concurrent trials.")
     bench_run.add_argument("--max-sandboxes", type=int, default=None, help="Max concurrent sandboxes.")

@@ -32,3 +32,31 @@ export function makeTrialKey(input: {
   const sample = input.sample_id || "-";
   return `${task}::${agent}::${variant}::${sample}`;
 }
+
+export function makeIdentityKey(input: {
+  agent_id?: string | null;
+  variant_id?: string | null;
+  model?: string | null;
+}): string {
+  const agent = String(input.agent_id || "-").trim() || "-";
+  const variant = String(input.variant_id || "default").trim() || "default";
+  const model = String(input.model || "").trim();
+  return `${agent}::${variant}::${model}`;
+}
+
+export function makeDisplayId(input: {
+  agent_id?: string | null;
+  variant_id?: string | null;
+  model?: string | null;
+}): string {
+  const agent = String(input.agent_id || "unknown").trim() || "unknown";
+  const variant = String(input.variant_id || "default").trim() || "default";
+  const model = String(input.model || "").trim();
+  if (variant !== "default") {
+    return `${agent} / ${variant}`;
+  }
+  if (model) {
+    return `${agent} / ${model}`;
+  }
+  return agent;
+}

@@ -67,8 +67,8 @@ htmlcov/
 !.env.example
 model.yml
 model.yaml
-examples/*/model.yml
-examples/*/model.yaml
+!examples/*/model.yml
+!examples/*/model.yaml
 
 # -----------------------------
 # Notebook / misc

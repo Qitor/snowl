@@ -16,8 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Protocol, TypeVar
-import yaml
+from typing import Any, Callable, Protocol, TypeVar
 
 from snowl.aggregator import (
     AGGREGATE_SCHEMA_URI,
@@ -43,7 +42,7 @@ from snowl.core.declarations import Declaration, get_declaration, has_declaratio
 from snowl.errors import SnowlValidationError
 from snowl.envs import WarmPoolSandboxRuntime
 from snowl.envs.terminal_env import set_compose_build_slot_factory
-from snowl.model import OpenAICompatibleChatClient
+from snowl.model import OpenAICompatibleChatClient, apply_project_judge_env, load_project_model_matrix
 from snowl.runtime import TrialOutcome, TrialRequest, execute_trial
 from snowl.runtime.resource_scheduler import ResourceScheduler
 from snowl.ui.contracts import TaskMonitor, normalize_ui_event
@@ -110,6 +109,20 @@ class EvalRunResult:
 
 
 @dataclass(frozen=True)
+class EvalRunBootstrap:
+    run_id: str
+    experiment_id: str
+    benchmark: str
+    artifacts_dir: str
+    log_path: str
+    task_count: int
+    agent_count: int
+    variant_count: int
+    sample_count: int
+    total_trials: int
+
+
+@dataclass(frozen=True)
 class ProjectComponents:
     tasks: list[Task]
     agents: list[Agent]
@@ -118,48 +131,28 @@ class ProjectComponents:
 
 
 def _apply_model_config_env(base_dir: Path) -> dict[str, str]:
-    model_file = None
     for name in ("model.yml", "model.yaml"):
-        path = base_dir / name
-        if path.exists():
-            model_file = path
-            break
-    if model_file is None:
-        return {}
+        if (base_dir / name).exists():
+            return apply_project_judge_env(base_dir)
+    return {}
 
-    try:
-        data = yaml.safe_load(model_file.read_text(encoding="utf-8")) or {}
-    except Exception as exc:
-        raise SnowlValidationError(f"Failed to parse model config: {model_file}: {exc}") from exc
 
-    if not isinstance(data, dict):
-        raise SnowlValidationError(f"model config must be a mapping: {model_file}")
-
-    section = data.get("openai_compatible", data)
-    if not isinstance(section, dict):
-        raise SnowlValidationError(f"'openai_compatible' must be a mapping in {model_file}")
-
-    key_map = {
-        "base_url": "OPENAI_BASE_URL",
-        "api_key": "OPENAI_API_KEY",
-        "model": "OPENAI_MODEL",
-        "timeout": "OPENAI_TIMEOUT",
-        "max_retries": "OPENAI_MAX_RETRIES",
+def _build_initial_model_profile(base_dir: Path) -> dict[str, Any]:
+    for name in ("model.yml", "model.yaml"):
+        if not (base_dir / name).exists():
+            continue
+        matrix = load_project_model_matrix(base_dir)
+        model_label = matrix.models[0].model if len(matrix.models) == 1 else f"{len(matrix.models)} agent models"
+        return {
+            "model": model_label,
+            "base_url": matrix.provider.base_url,
+            "models": [entry.model for entry in matrix.models],
+            "judge_model": matrix.judge.model if matrix.judge is not None else None,
+        }
+    return {
+        "model": os.getenv("OPENAI_MODEL", ""),
+        "base_url": os.getenv("OPENAI_BASE_URL", ""),
     }
-    applied: dict[str, str] = {}
-    for src_key, env_key in key_map.items():
-        if src_key not in section or section.get(src_key) is None:
-            continue
-        # Keep env vars highest priority so user can override model.yml.
-        existing = os.environ.get(env_key)
-        if existing is not None and str(existing).strip():
-            continue
-        value = str(section.get(src_key)).strip()
-        if not value:
-            continue
-        os.environ[env_key] = value
-        applied[env_key] = value
-    return applied
 
 
 def _load_module(module_name: str, file_path: Path) -> ModuleType:
@@ -1329,6 +1322,7 @@ async def run_eval_with_components(
     max_builds: int | None = None,
     max_model_calls: int | None = None,
     experiment_id: str | None = None,
+    on_run_bootstrap: Callable[[EvalRunBootstrap], None] | None = None,
 ) -> EvalRunResult:
     tasks = _select_by_id(tasks, task_filter, lambda t: t.task_id)
     agents = _select_by_id(agents, agent_filter, lambda a: getattr(a, "agent_id"))
@@ -1436,6 +1430,21 @@ async def run_eval_with_components(
     task_monitor = TaskMonitor()
     benchmark_names = sorted({_benchmark_name_for_task(task) for task in tasks})
     benchmark_hint = benchmark_names[0] if len(benchmark_names) == 1 else "mixed"
+    if on_run_bootstrap is not None:
+        on_run_bootstrap(
+            EvalRunBootstrap(
+                run_id=run_id,
+                experiment_id=str(experiment_id),
+                benchmark=benchmark_hint,
+                artifacts_dir=str(artifacts_dir_live),
+                log_path=str(live_run_log_path),
+                task_count=len(plan.task_ids),
+                agent_count=len(plan.agent_ids),
+                variant_count=len(plan.variant_ids),
+                sample_count=plan.sample_count,
+                total_trials=len(plan.trials),
+            )
+        )
 
     def _log(message: str) -> None:
         ts = datetime.now(timezone.utc).isoformat()
@@ -1470,27 +1479,18 @@ async def run_eval_with_components(
                 event_rows.append(dict(persisted_synth))
         return persisted
 
+    model_profile = _build_initial_model_profile(base_dir)
     model_profile_evt = normalize_ui_event(
         {
             "event": "runtime.model.profile",
             "phase": "runtime",
-            "model": os.getenv("OPENAI_MODEL", ""),
-            "base_url": os.getenv("OPENAI_BASE_URL", ""),
+            **model_profile,
         },
         run_id=run_id,
         ts_ms=int(datetime.now(timezone.utc).timestamp() * 1000),
     ).to_dict()
     _record_event(dict(model_profile_evt))
-    _log(
-        "model_profile "
-        + json.dumps(
-            {
-                "model": os.getenv("OPENAI_MODEL", ""),
-                "base_url": os.getenv("OPENAI_BASE_URL", ""),
-            },
-            ensure_ascii=False,
-        )
-    )
+    _log("model_profile " + json.dumps(model_profile, ensure_ascii=False))
     if renderer and hasattr(renderer, "render_runtime_event"):
         renderer.render_runtime_event(model_profile_evt)
     completed = checkpoint.get("completed", {})
@@ -1898,6 +1898,7 @@ async def run_eval(
     max_builds: int | None = None,
     max_model_calls: int | None = None,
     experiment_id: str | None = None,
+    on_run_bootstrap: Callable[[EvalRunBootstrap], None] | None = None,
 ) -> EvalRunResult:
     base = Path(path).resolve()
     base_dir = base if base.is_dir() else base.parent
@@ -1928,4 +1929,5 @@ async def run_eval(
         max_builds=max_builds,
         max_model_calls=max_model_calls,
         experiment_id=experiment_id,
+        on_run_bootstrap=on_run_bootstrap,
     )

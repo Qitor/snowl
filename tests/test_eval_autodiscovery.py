@@ -90,12 +90,18 @@ def test_run_eval_loads_model_yml_into_env(tmp_path: Path, monkeypatch) -> None:
 
     (tmp_path / "model.yml").write_text(
         """
-openai_compatible:
+provider:
+  kind: openai_compatible
   base_url: https://example.com/v1
   api_key: sk-test
-  model: test-model
   timeout: 12
   max_retries: 1
+agent_matrix:
+  models:
+    - id: tested_model
+      model: tested-model
+judge:
+  model: judge-model
         """,
         encoding="utf-8",
     )
@@ -134,7 +140,7 @@ from snowl.core import Score
 class S:
     scorer_id = "s1"
     def score(self, task_result, trace, context):
-        ok = (task_result.final_output.get("content") == "test-model")
+        ok = (task_result.final_output.get("content") == "judge-model")
         return {"accuracy": Score(value=1.0 if ok else 0.0)}
 
 scorer = S()
@@ -144,7 +150,7 @@ scorer = S()
 
     result = asyncio.run(run_eval(tmp_path))
     assert result.summary.success == 1
-    assert os.environ.get("OPENAI_MODEL") == "test-model"
+    assert os.environ.get("OPENAI_MODEL") == "judge-model"
 
 
 def test_model_yml_overrides_whitespace_env_value(tmp_path: Path, monkeypatch) -> None:
@@ -154,10 +160,14 @@ def test_model_yml_overrides_whitespace_env_value(tmp_path: Path, monkeypatch) -
 
     (tmp_path / "model.yml").write_text(
         """
-openai_compatible:
+provider:
+  kind: openai_compatible
   base_url: https://example.com/v1
   api_key: sk-fixed
-  model: test-model
+agent_matrix:
+  models:
+    - id: tested_model
+      model: tested-model
         """,
         encoding="utf-8",
     )
@@ -201,3 +211,95 @@ scorer = S()
     result = asyncio.run(run_eval(tmp_path))
     assert result.summary.success == 1
     assert os.environ.get("OPENAI_API_KEY") == "sk-fixed"
+
+
+def test_run_eval_expands_agent_matrix_variants(tmp_path: Path) -> None:
+    (tmp_path / "model.yml").write_text(
+        """
+provider:
+  kind: openai_compatible
+  base_url: https://example.com/v1
+  api_key: sk-test
+  timeout: 8
+  max_retries: 1
+agent_matrix:
+  models:
+    - id: alpha
+      model: model-alpha
+    - id: beta
+      model: model-beta
+judge:
+  model: judge-model
+        """,
+        encoding="utf-8",
+    )
+    (tmp_path / "task.py").write_text(
+        """
+from snowl.core import EnvSpec, Task
+
+task = Task(
+    task_id="t1",
+    env_spec=EnvSpec(env_type="local"),
+    sample_iter_factory=lambda: iter([{"id": "s1", "input": "x"}]),
+)
+        """,
+        encoding="utf-8",
+    )
+    (tmp_path / "agent.py").write_text(
+        """
+from pathlib import Path
+
+from snowl.agents import build_model_variants
+from snowl.core import StopReason, agent
+
+
+class ModelAwareAgent:
+    def __init__(self, model_name: str) -> None:
+        self.model_name = model_name
+
+    async def run(self, state, context, tools=None):
+        state.output = {
+            "message": {"role": "assistant", "content": self.model_name},
+            "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+            "trace_events": [],
+        }
+        state.stop_reason = StopReason.COMPLETED
+        return state
+
+
+def _factory(model_entry, provider):
+    _ = provider
+    return ModelAwareAgent(model_entry.model)
+
+
+@agent(agent_id="matrix_agent")
+def agents():
+    return build_model_variants(
+        base_dir=Path(__file__).parent,
+        agent_id="matrix_agent",
+        factory=_factory,
+    )
+        """,
+        encoding="utf-8",
+    )
+    (tmp_path / "scorer.py").write_text(
+        """
+from snowl.core import Score
+
+
+class S:
+    scorer_id = "s1"
+
+    def score(self, task_result, trace, context):
+        return {"accuracy": Score(value=1.0)}
+
+
+scorer = S()
+        """,
+        encoding="utf-8",
+    )
+
+    result = asyncio.run(run_eval(tmp_path))
+    assert len(result.outcomes) == 2
+    models = sorted(str((outcome.task_result.payload or {}).get("model") or "") for outcome in result.outcomes)
+    assert models == ["model-alpha", "model-beta"]

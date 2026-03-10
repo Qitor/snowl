@@ -1,27 +1,44 @@
 # strongreject-official
 
-Official-style StrongReject example with Snowl primitives:
+Official StrongReject example using Snowl's project-level model matrix authoring.
 
-- `task.py`: load StrongReject tasks from CSV and wrap each prompt with `AIM.txt`.
-- `agent.py`: auto-register multiple `ChatAgent` variants for multi-model comparison.
-- `scorer.py`: benchmark-specific StrongReject scorer (judge model + formula).
+- `task.py`: loads StrongReject prompts and wraps them with `AIM.txt`
+- `agent.py`: uses `build_model_variants(...)` to expand one provider into multiple tested models
+- `scorer.py`: uses `judge.model` from `model.yml` for the StrongReject judge
 
-## Run
+## Model authoring
 
-Set env:
+`model.yml` is the source of truth:
 
-```bash
-export OPENAI_BASE_URL="https://api.openai.com/v1"
-export OPENAI_API_KEY="..."
-export SNOWL_AGENT_MODELS="gpt-4o-mini,qwen2.5-72b-instruct"
-export OPENAI_MODEL="gpt-4o-mini"   # judge model for scorer
+```yaml
+provider:
+  kind: openai_compatible
+  base_url: https://api.openai.com/v1
+  api_key: sk-...
+  timeout: 30
+  max_retries: 2
+
+agent_matrix:
+  models:
+    - id: qwen25_7b
+      model: Qwen/Qwen2.5-7B-Instruct
+    - id: qwen3_32b
+      model: Qwen/Qwen3-32B
+
+judge:
+  model: gpt-4o-mini
 ```
 
-Run:
+Rules:
+
+- `agent_matrix.models` = tested agent models
+- `judge.model` = scorer judge model
+- these are intentionally separate
+
+## Run
 
 ```bash
 snowl eval examples/strongreject-official
 ```
 
-Because `agent.py` exposes multiple agents, Snowl auto-expands to `1 Task x M Agents`
-and shows model comparison results in one run.
+Snowl will expand the project into `Task x AgentVariant x Sample`, so one run compares all declared models.

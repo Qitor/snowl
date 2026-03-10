@@ -17,6 +17,7 @@ from snowl.benchmarks.terminalbench import (
 )
 from snowl.core import AgentContext, AgentState, EnvSpec, ScoreContext, StopReason, TaskResult, TaskStatus
 from snowl.envs import TerminalEnv
+from snowl.model import OpenAICompatibleConfig
 from snowl.tools import build_terminal_tools
 
 
@@ -303,6 +304,16 @@ def _build_context(tmp_path: Path, env: _FakeTerminalEnv, events: list[dict[str,
     )
 
 
+def _terminal_model_config() -> OpenAICompatibleConfig:
+    return OpenAICompatibleConfig(
+        base_url="https://example.com/v1",
+        api_key="sk-test",
+        model="test-model",
+        timeout=30,
+        max_retries=1,
+    )
+
+
 def test_terminalbench_official_agent_retries_parse_error_then_recovers(tmp_path: Path) -> None:
     module = _load_terminalbench_official_agent_module()
     valid_payload = json.dumps(
@@ -314,7 +325,7 @@ def test_terminalbench_official_agent_retries_parse_error_then_recovers(tmp_path
         }
     )
     fake_client = _FakeModelClient(["not-json", "{bad", valid_payload])
-    agent = module.TerminusOfficialAgent(max_episodes=1, max_parse_retries=3)
+    agent = module.TerminusOfficialAgent(model_config=_terminal_model_config(), max_episodes=1, max_parse_retries=3)
     agent._client = fake_client
 
     env = _FakeTerminalEnv()
@@ -335,7 +346,7 @@ def test_terminalbench_official_agent_retries_parse_error_then_recovers(tmp_path
 def test_terminalbench_official_agent_fails_after_parse_retry_exhausted(tmp_path: Path) -> None:
     module = _load_terminalbench_official_agent_module()
     fake_client = _FakeModelClient(["invalid-1", "invalid-2", "invalid-3"])
-    agent = module.TerminusOfficialAgent(max_episodes=1, max_parse_retries=3)
+    agent = module.TerminusOfficialAgent(model_config=_terminal_model_config(), max_episodes=1, max_parse_retries=3)
     agent._client = fake_client
 
     env = _FakeTerminalEnv()
@@ -359,7 +370,7 @@ def test_terminalbench_official_agent_records_raw_model_traj(tmp_path: Path) -> 
         }
     )
     fake_client = _FakeModelClient([response])
-    agent = module.TerminusOfficialAgent(max_episodes=1)
+    agent = module.TerminusOfficialAgent(model_config=_terminal_model_config(), max_episodes=1)
     agent._client = fake_client
 
     env = _FakeTerminalEnv()
@@ -403,7 +414,7 @@ def test_terminalbench_official_agent_uses_official_message_history_progression(
         }
     )
     fake_client = _FakeModelClient([first_response, second_response])
-    agent = module.TerminusOfficialAgent(max_episodes=2)
+    agent = module.TerminusOfficialAgent(model_config=_terminal_model_config(), max_episodes=2)
     agent._client = fake_client
 
     env = _FakeTerminalEnv(captures=["initial-screen", "after-episode-1", "after-episode-2"])
@@ -455,7 +466,7 @@ def test_terminalbench_official_agent_appends_newline_for_blocking_shell_command
         }
     )
     fake_client = _FakeModelClient([response])
-    agent = module.TerminusOfficialAgent(max_episodes=1)
+    agent = module.TerminusOfficialAgent(model_config=_terminal_model_config(), max_episodes=1)
     agent._client = fake_client
 
     env = _FakeTerminalEnv()
@@ -488,7 +499,7 @@ def test_terminalbench_official_agent_does_not_block_on_background_tmux_command(
         }
     )
     fake_client = _FakeModelClient([response])
-    agent = module.TerminusOfficialAgent(max_episodes=1)
+    agent = module.TerminusOfficialAgent(model_config=_terminal_model_config(), max_episodes=1)
     agent._client = fake_client
 
     env = _FakeTerminalEnv()
@@ -521,7 +532,7 @@ def test_terminalbench_official_agent_does_not_block_on_heredoc_terminator(tmp_p
         }
     )
     fake_client = _FakeModelClient([response])
-    agent = module.TerminusOfficialAgent(max_episodes=1)
+    agent = module.TerminusOfficialAgent(model_config=_terminal_model_config(), max_episodes=1)
     agent._client = fake_client
 
     env = _FakeTerminalEnv()

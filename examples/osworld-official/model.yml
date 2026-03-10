@@ -1,0 +1,13 @@
+provider:
+  kind: openai_compatible
+  base_url: https://api.siliconflow.cn/v1
+  api_key: sk-...
+  timeout: 60
+  max_retries: 2
+
+agent_matrix:
+  models:
+    - id: qwen3_32b
+      model: Qwen/Qwen3-32B
+    - id: qwen25_7b
+      model: Qwen/Qwen2.5-7B-Instruct

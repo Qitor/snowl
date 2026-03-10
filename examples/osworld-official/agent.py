@@ -13,9 +13,15 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from snowl.benchmarks.osworld.evaluator import evaluate_task, run_setup_config
+from snowl.agents import build_model_variants
 from snowl.core import AgentContext, AgentState, EnvSpec, StopReason, agent as declare_agent
 from snowl.envs import GuiEnv
-from snowl.model import OpenAICompatibleChatClient, OpenAICompatibleConfig
+from snowl.model import (
+    OpenAICompatibleChatClient,
+    OpenAICompatibleConfig,
+    ProjectModelEntry,
+    ProjectProviderConfig,
+)
 
 
 def _extract_json(text: str) -> dict[str, Any] | None:
@@ -75,10 +81,9 @@ def _clip_text(value: str, limit: int = 600) -> str:
     return text[: limit - 1] + "..."
 
 
-def _resolve_observation_type() -> str:
+def _resolve_observation_type(model_name: str) -> str:
     env_raw = os.getenv("SNOWL_OSWORLD_OBSERVATION_TYPE")
     if env_raw is None or not str(env_raw).strip():
-        model_name = os.getenv("OPENAI_MODEL", "")
         return "screenshot" if _supports_vision(model_name) else "a11y_tree"
     raw = str(env_raw).strip().lower()
     if raw not in {"screenshot", "a11y_tree", "screenshot_a11y_tree"}:
@@ -236,6 +241,7 @@ def _ensure_screenshot_for_vlm(
 def _save_observation_frame(
     *,
     sample_id: str,
+    variant_id: str,
     step: int,
     screenshot_bytes: bytes,
 ) -> str | None:
@@ -247,7 +253,11 @@ def _save_observation_frame(
     }
     if not enabled or not screenshot_bytes:
         return None
-    out_dir = Path(os.getenv("SNOWL_OSWORLD_OBS_FRAMES_DIR", ".snowl/observations")) / _safe_name(sample_id or "sample")
+    out_dir = (
+        Path(os.getenv("SNOWL_OSWORLD_OBS_FRAMES_DIR", ".snowl/observations"))
+        / _safe_name(sample_id or "sample")
+        / _safe_name(variant_id or "default")
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"step_{int(step):03d}.png"
     path.write_bytes(screenshot_bytes)
@@ -340,19 +350,13 @@ def _extract_actions_and_status(content: str) -> tuple[list[Any], bool | None, s
 
 @dataclass
 class OSWorldOfficialAgent:
+    model_config: OpenAICompatibleConfig
     agent_id: str = "osworld_official_agent"
     max_steps: int = int(os.getenv("SNOWL_OSWORLD_MAX_STEPS", "15"))
     temperature: float = float(os.getenv("SNOWL_OSWORLD_TEMPERATURE", "0.2"))
 
     def __post_init__(self) -> None:
-        cfg = OpenAICompatibleConfig(
-            base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-            api_key=os.getenv("OPENAI_API_KEY", "DUMMY_API_KEY_FOR_IMPORT"),
-            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-            timeout=float(os.getenv("OPENAI_TIMEOUT", "60")),
-            max_retries=int(os.getenv("OPENAI_MAX_RETRIES", "2")),
-        )
-        self._client = OpenAICompatibleChatClient(cfg)
+        self._client = OpenAICompatibleChatClient(self.model_config)
         self._client_password = str(os.getenv("SNOWL_OSWORLD_CLIENT_PASSWORD", "password"))
 
     async def run(self, state: AgentState, context: AgentContext, tools=None) -> AgentState:
@@ -362,6 +366,7 @@ class OSWorldOfficialAgent:
         container_session = context.metadata.get("__snowl_container_session")
         sample = dict(context.metadata.get("sample", {}))
         sample_meta = dict(sample.get("metadata", {}))
+        variant_id = str(context.metadata.get("variant_id") or "default")
 
         managed_env = (
             getattr(container_session, "env", None)
@@ -397,7 +402,7 @@ class OSWorldOfficialAgent:
         done_status = "in_progress"
         final_score = 0.0
         action_history: list[Any] = []
-        observation_type = _resolve_observation_type()
+        observation_type = _resolve_observation_type(self.model_config.model)
         system_prompt_base = _inject_client_password(
             _resolve_system_prompt(observation_type),
             self._client_password,
@@ -497,6 +502,7 @@ class OSWorldOfficialAgent:
                 screenshot_bytes = bytes(obs.get("screenshot") or b"")
                 saved_frame_path = _save_observation_frame(
                     sample_id=str(sample.get("id") or context.sample_id or ""),
+                    variant_id=variant_id,
                     step=step,
                     screenshot_bytes=screenshot_bytes,
                 )
@@ -741,7 +747,8 @@ class OSWorldOfficialAgent:
                 if rec_bytes:
                     rec_dir = Path(os.getenv("SNOWL_OSWORLD_RECORDINGS_DIR", ".snowl/recordings"))
                     sample_token = _safe_name(str(sample.get("id") or context.sample_id or "sample"))
-                    rec_name = f"osworld__{sample_token}__{int(time.time() * 1000)}.mp4"
+                    variant_token = _safe_name(variant_id)
+                    rec_name = f"osworld__{sample_token}__{variant_token}__{int(time.time() * 1000)}.mp4"
                     rec_path = rec_dir / rec_name
                     rec_path.parent.mkdir(parents=True, exist_ok=True)
                     rec_path.write_bytes(rec_bytes)
@@ -795,6 +802,18 @@ class OSWorldOfficialAgent:
         return state
 
 
-@declare_agent()
-def agent() -> OSWorldOfficialAgent:
-    return OSWorldOfficialAgent()
+def _build_osworld_agent(
+    model_entry: ProjectModelEntry,
+    provider: ProjectProviderConfig,
+) -> OSWorldOfficialAgent:
+    _ = provider
+    return OSWorldOfficialAgent(model_config=model_entry.config)
+
+
+@declare_agent(agent_id="osworld_official_agent")
+def agents():
+    return build_model_variants(
+        base_dir=Path(__file__).parent,
+        agent_id="osworld_official_agent",
+        factory=_build_osworld_agent,
+    )

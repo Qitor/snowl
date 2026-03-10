@@ -10,6 +10,7 @@ examples/
     task.py
     agent.py
     scorer.py
+    model.yml      # recommended for provider + agent matrix
     tool.py        # optional
     README.md      # optional but recommended
 ```
@@ -61,5 +62,6 @@ Authoring rule (default):
 - Avoid wrapper classes/functions unless they add real runtime logic
   (e.g., lazy external resource initialization or stateful orchestration).
 - Fallback (non-decorator) discovery still works for compatibility.
-- For multi-model compare, return multiple agents from a decorated factory
-  or export `agent_variants` with `make_agent_variant(...)`.
+- For multi-model compare, declare models in `model.yml` under `agent_matrix.models`
+  and use `build_model_variants(...)` from `snowl.agents`.
+- Keep `judge.model` separate from tested agent models when a scorer uses a judge.

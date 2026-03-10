@@ -118,13 +118,15 @@ class TerminalBenchProvider:
         sample_meta = dict(context.sample.get("metadata", {}) or {})
         task_id = str(sample_meta.get("task_id") or "task")
         sample_id = str(context.sample.get("id") or "sample")
+        variant_id = str(context.variant_id or "default")
         safe_task = re.sub(r"[^a-zA-Z0-9._-]+", "-", task_id).strip("-") or "task"
         safe_sample = re.sub(r"[^a-zA-Z0-9._-]+", "-", sample_id).strip("-") or "sample"
-        trial_name = f"snowl-tb-{safe_task}-{safe_sample[:16]}"
+        safe_variant = re.sub(r"[^a-zA-Z0-9._-]+", "-", variant_id).strip("-") or "default"
+        trial_name = f"snowl-tb-{safe_task}-{safe_sample[:12]}-{safe_variant[:12]}"
         workdir = sample_meta.get("task_root") or str(Path.cwd())
         workdir_path = Path(str(workdir)).resolve()
-        logs_root = workdir_path / ".snowl_logs" / safe_sample
-        agent_logs_root = workdir_path / ".snowl_agent_logs" / safe_sample
+        logs_root = workdir_path / ".snowl_logs" / safe_sample / safe_variant
+        agent_logs_root = workdir_path / ".snowl_agent_logs" / safe_sample / safe_variant
         logs_root.mkdir(parents=True, exist_ok=True)
         agent_logs_root.mkdir(parents=True, exist_ok=True)
         docker_compose_path = str(sample_meta.get("docker_compose_path") or "").strip()
@@ -132,8 +134,8 @@ class TerminalBenchProvider:
         compose_build = os.getenv("SNOWL_TB_COMPOSE_BUILD", "1") == "1"
         compose_env = {
             "T_BENCH_TASK_DOCKER_CLIENT_CONTAINER_NAME": trial_name,
-            "T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME": f"tb__{safe_task}__client",
-            "T_BENCH_TASK_DOCKER_NAME_PREFIX": f"tb__{safe_task}",
+            "T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME": f"tb__{safe_task}__{safe_variant}__client",
+            "T_BENCH_TASK_DOCKER_NAME_PREFIX": f"tb__{safe_task}__{safe_variant}",
             "T_BENCH_CONTAINER_LOGS_PATH": "/var/log/tbench",
             "T_BENCH_CONTAINER_AGENT_LOGS_PATH": "/agent-logs",
             "T_BENCH_TEST_DIR": "/tests",

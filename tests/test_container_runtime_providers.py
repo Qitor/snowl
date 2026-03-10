@@ -140,6 +140,10 @@ def test_terminalbench_provider_emits_compatible_lifecycle_events(monkeypatch, t
 
     session = provider.prepare(context)
     assert session.kind == "terminal_compose"
+    assert session.env.compose_env["T_BENCH_TASK_DOCKER_CLIENT_CONTAINER_NAME"].endswith("-v1")
+    assert session.env.compose_env["T_BENCH_TASK_DOCKER_NAME_PREFIX"].endswith("__v1")
+    assert session.env.compose_env["T_BENCH_TASK_LOGS_PATH"].endswith("/sample-1/v1")
+    assert session.env.compose_env["T_BENCH_TASK_AGENT_LOGS_PATH"].endswith("/sample-1/v1")
     provider.close(context, session)
 
     names = [str(evt.get("event")) for evt in events]
@@ -149,6 +153,60 @@ def test_terminalbench_provider_emits_compatible_lifecycle_events(monkeypatch, t
     assert "terminalbench.container.stopping" in names
     assert "terminalbench.container.stopped" in names
     assert "runtime.env.command.finish" in names
+
+
+def test_terminalbench_provider_isolates_resources_per_variant(monkeypatch, tmp_path: Path) -> None:
+    compose_file = tmp_path / "docker-compose.yaml"
+    compose_file.write_text("services: {client: {image: busybox}}\n", encoding="utf-8")
+
+    class _FakeTerminalEnv:
+        def __init__(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.compose_project = kwargs.get("compose_project")
+            self.compose_env = dict(kwargs.get("compose_env") or {})
+            self.compose_file = kwargs.get("compose_file")
+            self.compose_service = kwargs.get("compose_service")
+            self.compose_build = bool(kwargs.get("compose_build", True))
+            self.use_docker_compose = bool(kwargs.get("use_docker_compose", False))
+
+        def compose_up(self, on_event=None):  # type: ignore[no-untyped-def]
+            _ = on_event
+            return {"event": "terminal.compose.up", "exit_code": 0, "duration_ms": 1, "stdout": "", "stderr": ""}
+
+        def compose_down(self, on_event=None):  # type: ignore[no-untyped-def]
+            _ = on_event
+            return {"event": "terminal.compose.down", "exit_code": 0, "duration_ms": 1, "stdout": "", "stderr": ""}
+
+    monkeypatch.setattr("snowl.runtime.container_providers.TerminalEnv", _FakeTerminalEnv)
+    monkeypatch.setattr("snowl.runtime.container_providers.shutil.which", lambda _name: "/usr/bin/docker")
+
+    provider = TerminalBenchProvider()
+
+    def _context(variant_id: str) -> ContainerProviderContext:
+        return ContainerProviderContext(
+            task_id="task-1",
+            agent_id="agent-1",
+            variant_id=variant_id,
+            task_env_type="terminal",
+            task_metadata={"benchmark": "terminalbench"},
+            sample={
+                "id": "sample-1",
+                "metadata": {
+                    "task_id": "tb-task",
+                    "task_root": str(tmp_path),
+                    "docker_compose_path": str(compose_file),
+                    "compose_service": "client",
+                },
+            },
+            emit=lambda _evt: None,
+        )
+
+    session_v1 = provider.prepare(_context("v1"))
+    session_v2 = provider.prepare(_context("v2"))
+
+    assert session_v1.env.compose_project != session_v2.env.compose_project
+    assert session_v1.env.compose_env["T_BENCH_TASK_LOGS_PATH"] != session_v2.env.compose_env["T_BENCH_TASK_LOGS_PATH"]
+    assert session_v1.env.compose_env["T_BENCH_TASK_AGENT_LOGS_PATH"] != session_v2.env.compose_env["T_BENCH_TASK_AGENT_LOGS_PATH"]
+    assert session_v1.env.compose_env["T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME"] != session_v2.env.compose_env["T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME"]
 
 
 def test_osworld_provider_prepare_and_close_emit_events(monkeypatch) -> None:

@@ -5,13 +5,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from snowl.agents import build_model_variants
 from snowl.benchmarks.toolemu import build_tool_emu_llm, execute_tool_emu_case
 from snowl.benchmarks.toolemu.runtime import persist_tool_emu_trajectory
 from snowl.core import AgentContext, AgentState, StopReason, agent as declare_agent
+from snowl.model import OpenAICompatibleConfig, ProjectModelEntry, ProjectProviderConfig, load_project_model_matrix
 from snowl.utils.env import env_bool, env_int, env_optional_int, env_str
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
+PROJECT_MATRIX = load_project_model_matrix(PROJECT_DIR)
 
 
 def _build_case(sample: dict[str, Any], sample_meta: dict[str, Any]) -> dict[str, Any]:
@@ -31,18 +34,14 @@ def _build_case(sample: dict[str, Any], sample_meta: dict[str, Any]) -> dict[str
 
 @dataclass
 class ToolEmuOfficialAgent:
+    model_config: OpenAICompatibleConfig
+    simulator_config: OpenAICompatibleConfig
     agent_id: str = "toolemu_official_agent"
     agent_type: str = field(default_factory=lambda: env_str("SNOWL_TOOLEMU_AGENT_TYPE", "naive") or "naive")
     simulator_type: str = field(default_factory=lambda: env_str("SNOWL_TOOLEMU_SIMULATOR_TYPE", "adv_thought") or "adv_thought")
     max_iterations: int = field(default_factory=lambda: env_int("SNOWL_TOOLEMU_MAX_ITERATIONS", 15))
     verbose: bool = field(default_factory=lambda: env_bool("SNOWL_TOOLEMU_VERBOSE"))
-    agent_model_name: str = field(default_factory=lambda: env_str("SNOWL_TOOLEMU_AGENT_MODEL", "Qwen/Qwen3-8B"))
-    agent_api_key: str | None = field(default_factory=lambda: (env_str("SNOWL_TOOLEMU_AGENT_API_KEY") or ""))
-    agent_base_url: str | None = field(default_factory=lambda: (env_str("SNOWL_TOOLEMU_AGENT_BASE_URL", "https://api.siliconflow.cn/v1") or "https://api.siliconflow.cn/v1"))
     agent_max_tokens: int | None = field(default_factory=lambda: env_optional_int("SNOWL_TOOLEMU_AGENT_MAX_TOKENS"))
-    simulator_model_name: str = field(default_factory=lambda: env_str("SNOWL_TOOLEMU_SIMULATOR_MODEL", "Qwen/Qwen3-8B"))
-    simulator_api_key: str | None = field(default_factory=lambda: (env_str("SNOWL_TOOLEMU_SIMULATOR_API_KEY") or ""))
-    simulator_base_url: str | None = field(default_factory=lambda: (env_str("SNOWL_TOOLEMU_SIMULATOR_BASE_URL", "https://api.siliconflow.cn/v1") or "https://api.siliconflow.cn/v1"))
     simulator_max_tokens: int | None = field(default_factory=lambda: env_optional_int("SNOWL_TOOLEMU_SIMULATOR_MAX_TOKENS"))
     _agent_llm: Any = field(default=None, init=False, repr=False)
     _simulator_llm: Any = field(default=None, init=False, repr=False)
@@ -51,17 +50,21 @@ class ToolEmuOfficialAgent:
         if self._agent_llm is None:
             self._agent_llm = build_tool_emu_llm(
                 "agent",
-                model_name=self.agent_model_name,
-                openai_api_key=self.agent_api_key,
-                openai_api_base=self.agent_base_url,
+                model_name=self.model_config.model,
+                openai_api_key=self.model_config.api_key,
+                openai_api_base=self.model_config.base_url,
+                request_timeout=int(self.model_config.timeout),
+                max_retries=self.model_config.max_retries,
                 max_tokens=self.agent_max_tokens,
             )
         if self._simulator_llm is None:
             self._simulator_llm = build_tool_emu_llm(
                 "simulator",
-                model_name=self.simulator_model_name,
-                openai_api_key=self.simulator_api_key,
-                openai_api_base=self.simulator_base_url,
+                model_name=self.simulator_config.model,
+                openai_api_key=self.simulator_config.api_key,
+                openai_api_base=self.simulator_config.base_url,
+                request_timeout=int(self.simulator_config.timeout),
+                max_retries=self.simulator_config.max_retries,
                 max_tokens=self.simulator_max_tokens,
             )
         return self._agent_llm, self._simulator_llm
@@ -97,6 +100,9 @@ class ToolEmuOfficialAgent:
                 "agent_type": self.agent_type,
                 "simulator_type": self.simulator_type,
                 "sample_id": sample_id,
+                "variant_id": str(context.metadata.get("variant_id") or "default"),
+                "agent_model": self.model_config.model,
+                "simulator_model": self.simulator_config.model,
             },
         )
 
@@ -122,7 +128,23 @@ class ToolEmuOfficialAgent:
         state.stop_reason = StopReason.COMPLETED
         return state
 
+def _build_toolemu_agent(
+    model_entry: ProjectModelEntry,
+    provider: ProjectProviderConfig,
+) -> ToolEmuOfficialAgent:
+    _ = provider
+    if PROJECT_MATRIX.judge is None:
+        raise RuntimeError("toolemu-official requires judge.model in model.yml for simulator/evaluator roles")
+    return ToolEmuOfficialAgent(
+        model_config=model_entry.config,
+        simulator_config=PROJECT_MATRIX.judge.config,
+    )
 
-@declare_agent()
-def agent() -> ToolEmuOfficialAgent:
-    return ToolEmuOfficialAgent()
+
+@declare_agent(agent_id="toolemu_official_agent")
+def agents():
+    return build_model_variants(
+        base_dir=PROJECT_DIR,
+        agent_id="toolemu_official_agent",
+        factory=_build_toolemu_agent,
+    )

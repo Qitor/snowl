@@ -154,6 +154,8 @@ async def execute_trial(request: TrialRequest) -> TrialOutcome:
         metadata={
             "sample": dict(request.sample),
             "task_metadata": request.task.metadata,
+            "variant_id": variant_id,
+            "model": variant_model,
             "__snowl_emit_event": _emit,
         },
     )

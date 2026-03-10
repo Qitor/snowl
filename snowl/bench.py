@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from snowl.benchmarks import get_default_benchmark_registry, run_conformance
-from snowl.eval import EvalRenderer, EvalRunResult, load_project_components, run_eval_with_components
+from snowl.eval import EvalRenderer, EvalRunBootstrap, EvalRunResult, load_project_components, run_eval_with_components
 
 
 def _parse_filter_kv(values: list[str] | None) -> dict[str, Any]:
@@ -54,6 +54,7 @@ async def run_benchmark(
     max_builds: int | None = None,
     max_model_calls: int | None = None,
     experiment_id: str | None = None,
+    on_run_bootstrap: Callable[[EvalRunBootstrap], None] | None = None,
 ) -> EvalRunResult:
     registry = get_default_benchmark_registry()
     adapter_kwargs = _parse_adapter_kv(benchmark_args)
@@ -102,6 +103,7 @@ async def run_benchmark(
         max_builds=max_builds,
         max_model_calls=max_model_calls,
         experiment_id=experiment_id,
+        on_run_bootstrap=on_run_bootstrap,
     )
 
 

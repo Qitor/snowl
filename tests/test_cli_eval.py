@@ -459,10 +459,10 @@ def test_autostart_prints_starting_url_when_bootstrap_slow(monkeypatch, tmp_path
     assert "first bootstrap may take minutes" in out
 
 
-def test_eval_default_is_web_first_without_cli_renderer(monkeypatch, tmp_path: Path) -> None:
+def test_eval_default_uses_plain_console_renderer(monkeypatch, tmp_path: Path) -> None:
     import snowl.cli as cli_mod
 
-    seen = {"renderer_is_none": None}
+    seen = {"renderer_type": None}
 
     class _Summary:
         total = 1
@@ -478,19 +478,19 @@ def test_eval_default_is_web_first_without_cli_renderer(monkeypatch, tmp_path: P
         rerun_command = "snowl eval ."
 
     async def _fake_run_eval(*_args, **kwargs):
-        seen["renderer_is_none"] = kwargs.get("renderer") is None
+        seen["renderer_type"] = type(kwargs.get("renderer")).__name__
         return _Result()
 
     monkeypatch.setattr(cli_mod, "run_eval", _fake_run_eval)
     rc = main(["eval", str(tmp_path), "--no-web-monitor"])
     assert rc == 0
-    assert seen["renderer_is_none"] is True
+    assert seen["renderer_type"] == "ConsoleRenderer"
 
 
 def test_eval_cli_ui_flag_enables_legacy_renderer(monkeypatch, tmp_path: Path) -> None:
     import snowl.cli as cli_mod
 
-    seen = {"renderer_is_none": None}
+    seen = {"renderer_type": None}
 
     class _Summary:
         total = 1
@@ -506,13 +506,13 @@ def test_eval_cli_ui_flag_enables_legacy_renderer(monkeypatch, tmp_path: Path) -
         rerun_command = "snowl eval ."
 
     async def _fake_run_eval(*_args, **kwargs):
-        seen["renderer_is_none"] = kwargs.get("renderer") is None
+        seen["renderer_type"] = type(kwargs.get("renderer")).__name__
         return _Result()
 
     monkeypatch.setattr(cli_mod, "run_eval", _fake_run_eval)
     rc = main(["eval", str(tmp_path), "--cli-ui", "--no-web-monitor"])
     assert rc == 0
-    assert seen["renderer_is_none"] is False
+    assert seen["renderer_type"] == "LiveConsoleRenderer"
 
 
 def test_autostart_web_monitor_uses_fallback_port_for_other_project(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -609,22 +609,28 @@ def test_autostart_web_monitor_legacy_same_project_uses_fallback(monkeypatch, tm
     assert launched["cmd"][launched["cmd"].index("--port") + 1] == "8767"
 
 
-def test_eval_autostart_web_monitor_uses_project_base_dir(monkeypatch, tmp_path: Path) -> None:
+def test_eval_starts_managed_monitor_on_run_bootstrap(monkeypatch, tmp_path: Path, capsys) -> None:
     import snowl.cli as cli_mod
+    from snowl.eval import EvalRunBootstrap
 
     nested = tmp_path / "nested"
     nested.mkdir(parents=True, exist_ok=True)
     fake_file = nested / "tasks.json"
     fake_file.write_text("{}", encoding="utf-8")
 
-    captured: dict[str, object] = {}
+    captured = {"project": None, "started": 0, "stopped": 0}
 
-    def _fake_autostart(*, project, host, port, poll_interval_sec, enabled):
-        captured["project"] = project
-        captured["host"] = host
-        captured["port"] = port
-        captured["enabled"] = enabled
-        _ = poll_interval_sec
+    class _FakeMonitor:
+        def __init__(self, *, project, host, port, poll_interval_sec, enabled):
+            _ = (host, port, poll_interval_sec, enabled)
+            captured["project"] = project
+
+        def maybe_start(self):
+            captured["started"] += 1
+            return "http://127.0.0.1:8765"
+
+        def stop(self):
+            captured["stopped"] += 1
 
     class _Summary:
         total = 1
@@ -639,12 +645,76 @@ def test_eval_autostart_web_monitor_uses_project_base_dir(monkeypatch, tmp_path:
         artifacts_dir = str(tmp_path / ".snowl" / "runs" / "r")
         rerun_command = "snowl eval ."
 
-    async def _fake_run_eval(*_args, **_kwargs):
+    async def _fake_run_eval(*_args, **kwargs):
+        callback = kwargs["on_run_bootstrap"]
+        callback(
+            EvalRunBootstrap(
+                run_id="run-20260310T150000Z",
+                experiment_id="exp-1",
+                benchmark="strongreject",
+                artifacts_dir=str(tmp_path / ".snowl" / "runs" / "r"),
+                log_path=str(tmp_path / ".snowl" / "runs" / "r" / "run.log"),
+                task_count=1,
+                agent_count=1,
+                variant_count=2,
+                sample_count=50,
+                total_trials=100,
+            )
+        )
         return _Result()
 
-    monkeypatch.setattr(cli_mod, "_maybe_autostart_web_monitor", _fake_autostart)
+    monkeypatch.setattr(cli_mod, "_ManagedWebMonitor", _FakeMonitor)
     monkeypatch.setattr(cli_mod, "run_eval", _fake_run_eval)
 
-    rc = main(["eval", str(fake_file), "--no-ui"])
+    rc = main(["eval", str(fake_file)])
     assert rc == 0
     assert captured["project"] == str(nested.resolve())
+    assert captured["started"] == 1
+    assert captured["stopped"] >= 1
+    out = capsys.readouterr().out
+    assert "Snowl Eval: run_id=run-20260310T150000Z" in out
+    assert "Web monitor: http://127.0.0.1:8765" in out
+
+
+def test_eval_interrupt_stops_managed_monitor(monkeypatch, tmp_path: Path) -> None:
+    import snowl.cli as cli_mod
+    from snowl.eval import EvalRunBootstrap
+
+    captured = {"started": 0, "stopped": 0}
+
+    class _FakeMonitor:
+        def __init__(self, *, project, host, port, poll_interval_sec, enabled):
+            _ = (project, host, port, poll_interval_sec, enabled)
+
+        def maybe_start(self):
+            captured["started"] += 1
+            return "http://127.0.0.1:8765"
+
+        def stop(self):
+            captured["stopped"] += 1
+
+    async def _fake_run_eval(*_args, **kwargs):
+        callback = kwargs["on_run_bootstrap"]
+        callback(
+            EvalRunBootstrap(
+                run_id="run-20260310T150001Z",
+                experiment_id="exp-2",
+                benchmark="strongreject",
+                artifacts_dir=str(tmp_path / ".snowl" / "runs" / "r"),
+                log_path=str(tmp_path / ".snowl" / "runs" / "r" / "run.log"),
+                task_count=1,
+                agent_count=1,
+                variant_count=1,
+                sample_count=1,
+                total_trials=1,
+            )
+        )
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli_mod, "_ManagedWebMonitor", _FakeMonitor)
+    monkeypatch.setattr(cli_mod, "run_eval", _fake_run_eval)
+
+    rc = main(["eval", str(tmp_path)])
+    assert rc == 130
+    assert captured["started"] == 1
+    assert captured["stopped"] >= 1

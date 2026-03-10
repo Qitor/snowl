@@ -15,8 +15,10 @@ function eventToLine(event: RuntimeEvent): string {
   const name = String(event.event || "runtime");
   const taskId = String(event.task_id || "-");
   const agentId = String(event.agent_id || "-");
+  const variantId = String(event.variant_id || "default");
+  const model = String(event.model || "").trim();
   const message = String(event.message || "");
-  return `[${ts}] [${id}] ${name} task=${taskId} agent=${agentId} ${message}`.trim();
+  return `[${ts}] [${id}] ${name} task=${taskId} agent=${agentId} variant=${variantId}${model ? ` model=${model}` : ""} ${message}`.trim();
 }
 
 export function VirtualLogViewer({ events }: VirtualLogViewerProps) {
@@ -26,14 +28,14 @@ export function VirtualLogViewer({ events }: VirtualLogViewerProps) {
   const rowVirtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 28,
+    estimateSize: () => 34,
     overscan: 18,
   });
 
   return (
     <div
       ref={parentRef}
-      className="h-[360px] overflow-auto rounded-md border border-slate-900/70 bg-[#071019] p-2 font-[family-name:var(--font-mono)] text-[13px] leading-6 text-cyan-100"
+      className="h-[420px] overflow-auto rounded-[24px] border border-slate-900/70 bg-[#071019] p-3 font-[family-name:var(--font-mono)] text-[13px] leading-7 text-cyan-100 shadow-inner"
     >
       <div
         style={{
@@ -47,7 +49,7 @@ export function VirtualLogViewer({ events }: VirtualLogViewerProps) {
           return (
             <div
               key={row.key}
-              className="absolute left-0 top-0 w-full whitespace-pre-wrap break-all border-b border-slate-800/50 px-2 py-1"
+              className="absolute left-0 top-0 w-full whitespace-pre-wrap break-all border-b border-slate-800/50 px-3 py-1.5"
               style={{ transform: `translateY(${row.start}px)` }}
             >
               {line}

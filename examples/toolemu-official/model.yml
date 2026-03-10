@@ -1,0 +1,16 @@
+provider:
+  kind: openai_compatible
+  base_url: https://api.openai.com/v1
+  api_key: sk-...
+  timeout: 30
+  max_retries: 2
+
+agent_matrix:
+  models:
+    - id: gpt4o_mini
+      model: gpt-4o-mini
+    - id: qwen3_32b
+      model: Qwen/Qwen3-32B
+
+judge:
+  model: gpt-4.1-mini

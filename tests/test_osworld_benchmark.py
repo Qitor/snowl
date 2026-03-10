@@ -304,3 +304,28 @@ def test_osworld_official_prompt_injection_handles_json_braces() -> None:
     rendered = module._inject_client_password(template, "pw123")
     assert '{"action_type":"CLICK"' in rendered
     assert "pw123" in rendered
+
+
+def test_osworld_observation_frames_are_variant_scoped(tmp_path: Path, monkeypatch) -> None:
+    root = Path(__file__).resolve().parents[1]
+    path = root / "examples" / "osworld-official" / "agent.py"
+    module_name = "example_osw_agent_variant_frames"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+
+    monkeypatch.setenv("SNOWL_OSWORLD_OBS_FRAMES_DIR", str(tmp_path / "frames"))
+    out = module._save_observation_frame(
+        sample_id="sample-1",
+        variant_id="model-a",
+        step=3,
+        screenshot_bytes=b"fake-image",
+    )
+
+    assert out is not None
+    assert "sample-1" in out
+    assert "model-a" in out
+    assert Path(out).exists()
