@@ -89,7 +89,8 @@ Concrete work:
 - provider-aware budgets for agent and judge calls
 - execute/score phase decoupling so scoring does not consume trial execution capacity
 - stronger warm-pool and spec-hash reuse
-- better retry/resume semantics
+- unified `snowl retry <run_id>` semantics with attempt-aware recovery history
+- in-run deferred auto retry so transient non-success trials can be recovered without a second manual command
 - clearer pretask and container lifecycle diagnostics
 - larger-scale reliability tests and synthetic throughput baselines
 

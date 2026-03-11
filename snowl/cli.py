@@ -14,9 +14,10 @@ import subprocess
 import sys
 import time
 import urllib.request
+import webbrowser
 
 from snowl.bench import check_benchmark_conformance, list_benchmarks, run_benchmark
-from snowl.eval import EvalRunBootstrap, run_eval
+from snowl.eval import EvalRunBootstrap, retry_run, run_eval
 from snowl.examples_lint import validate_examples_layout
 from snowl.project_config import find_project_file, load_project_config
 from snowl.ui import ConsoleRenderer, InteractionController, LiveConsoleRenderer
@@ -139,6 +140,16 @@ def _parse_provider_budgets(values: list[str] | None) -> dict[str, int] | None:
         if provider_key and limit is not None:
             budgets[provider_key] = limit
     return budgets or None
+
+
+def _auto_open_browser(url: str | None) -> None:
+    if not url:
+        return
+    try:
+        webbrowser.open(url, new=2, autoraise=True)
+    except Exception:
+        # Best effort only; eval flow should never depend on browser availability.
+        pass
 
 
 def _expected_web_monitor_cache_key() -> str | None:
@@ -582,6 +593,7 @@ def _cmd_eval(
         url = monitor.maybe_start()
         if url:
             print(f"Web monitor: {url}")
+            _auto_open_browser(url)
 
     try:
         with _interrupt_on_sigterm():
@@ -630,6 +642,98 @@ def _cmd_eval(
         print(f"log={result.artifacts_dir}/run.log")
         print(f"rerun={result.rerun_command}")
 
+    return 0 if result.summary.error == 0 else 1
+
+
+def _cmd_retry(
+    run_id: str,
+    *,
+    project: str,
+    no_ui: bool,
+    max_running_trials: int | None,
+    max_container_slots: int | None,
+    max_builds: int | None,
+    max_scoring_tasks: int | None,
+    provider_budget: list[str] | None,
+    ui_refresh_ms: int | None,
+    ui_max_events: int | None,
+    ui_max_failures: int | None,
+    ui_max_active_trials: int | None,
+    ui_refresh_profile: str | None,
+    ui_theme: str | None,
+    ui_mode: str | None,
+    ui_no_banner: bool,
+    experiment_id: str | None,
+    web_monitor: bool,
+    web_monitor_host: str,
+    web_monitor_port: int,
+    web_monitor_poll_interval_sec: float,
+    cli_ui: bool,
+) -> int:
+    project_dir = _project_base_dir(project)
+    renderer = _build_renderer(
+        no_ui=bool(no_ui),
+        cli_ui=bool(cli_ui),
+        ui_refresh_ms=ui_refresh_ms,
+        ui_max_events=ui_max_events,
+        ui_max_failures=ui_max_failures,
+        ui_max_active_trials=ui_max_active_trials,
+        ui_refresh_profile=ui_refresh_profile,
+        ui_theme=ui_theme,
+        ui_mode=ui_mode,
+        ui_no_banner=ui_no_banner,
+    )
+    controller = InteractionController(theme_mode=(ui_theme or "research"))
+    if not cli_ui and not no_ui:
+        print(f"Snowl Retry: run_id={run_id}")
+        print(f"Snowl Retry: project={project_dir}")
+    monitor = _ManagedWebMonitor(
+        project=str(project_dir),
+        host=web_monitor_host,
+        port=int(web_monitor_port),
+        poll_interval_sec=float(web_monitor_poll_interval_sec),
+        enabled=bool(web_monitor),
+    )
+    sidecar_started = {"done": False}
+
+    def _on_run_bootstrap(info: EvalRunBootstrap) -> None:
+        if not cli_ui and not no_ui:
+            _print_run_bootstrap("Snowl Retry", info)
+        if sidecar_started["done"]:
+            return
+        sidecar_started["done"] = True
+        url = monitor.maybe_start()
+        if url:
+            print(f"Web monitor: {url}")
+            _auto_open_browser(url)
+
+    try:
+        with _interrupt_on_sigterm():
+            result = asyncio.run(
+                retry_run(
+                    run_id,
+                    project_path=project,
+                    renderer=renderer,
+                    interaction_controller=controller,
+                    max_running_trials=max_running_trials,
+                    max_container_slots=max_container_slots,
+                    max_builds=max_builds,
+                    max_scoring_tasks=max_scoring_tasks,
+                    provider_budgets=_parse_provider_budgets(provider_budget),
+                    experiment_id=experiment_id,
+                    on_run_bootstrap=_on_run_bootstrap,
+                )
+            )
+    except KeyboardInterrupt:
+        _close_renderer(renderer)
+        monitor.stop()
+        _print_interrupt_log_hint(project_dir)
+        return 130
+    finally:
+        monitor.stop()
+
+    if renderer is None:
+        return _print_summary(result)
     return 0 if result.summary.error == 0 else 1
 
 
@@ -733,6 +837,7 @@ def _cmd_bench_run(
         url = monitor.maybe_start()
         if url:
             print(f"Web monitor: {url}")
+            _auto_open_browser(url)
 
     try:
         with _interrupt_on_sigterm():
@@ -940,6 +1045,71 @@ def build_parser() -> argparse.ArgumentParser:
     )
     eval_parser.add_argument("--ui-no-banner", action="store_true", help="Start with banner collapsed.")
 
+    retry_parser = sub.add_parser("retry", help="Retry unfinished and non-success trials for an existing run.")
+    retry_parser.add_argument("run_id", help="Run id to recover in place.")
+    retry_parser.add_argument("--project", default=".", help="Project root or project.yml used to resolve the run source.")
+    retry_parser.add_argument(
+        "--cli-ui",
+        action="store_true",
+        help="Enable legacy live CLI renderer (default uses plain terminal logs + background Web monitor).",
+    )
+    retry_parser.add_argument(
+        "--no-ui",
+        action="store_true",
+        help="Disable terminal progress output (keeps Web monitor auto-start unless --no-web-monitor is set).",
+    )
+    retry_parser.add_argument("--max-running-trials", type=int, default=None, help="Max concurrently executing trials.")
+    retry_parser.add_argument("--max-container-slots", type=int, default=None, help="Max concurrent container/sandbox slots.")
+    retry_parser.add_argument("--max-builds", type=int, default=None, help="Max concurrent container/image builds.")
+    retry_parser.add_argument("--max-scoring-tasks", type=int, default=None, help="Max concurrent scoring tasks.")
+    retry_parser.add_argument(
+        "--provider-budget",
+        action="append",
+        default=None,
+        help="Provider concurrency budget in the form provider_id=n (repeatable).",
+    )
+    retry_parser.add_argument(
+        "--experiment-id",
+        default=None,
+        help="Optional experiment id override for the recovery session.",
+    )
+    retry_parser.add_argument(
+        "--no-web-monitor",
+        action="store_true",
+        help="Disable auto-start of the web monitor during retry.",
+    )
+    retry_parser.add_argument("--web-monitor-host", default="127.0.0.1", help="Web monitor host.")
+    retry_parser.add_argument("--web-monitor-port", type=int, default=8765, help="Web monitor port.")
+    retry_parser.add_argument(
+        "--web-monitor-poll-interval-sec",
+        type=float,
+        default=0.5,
+        help="Web monitor poll interval for run discovery.",
+    )
+    retry_parser.add_argument("--ui-refresh-ms", type=int, default=None, help="UI refresh interval in milliseconds.")
+    retry_parser.add_argument("--ui-max-events", type=int, default=None, help="UI event buffer max entries.")
+    retry_parser.add_argument("--ui-max-failures", type=int, default=None, help="UI failure buffer max entries.")
+    retry_parser.add_argument("--ui-max-active-trials", type=int, default=None, help="UI active trial buffer max entries.")
+    retry_parser.add_argument(
+        "--ui-refresh-profile",
+        choices=["smooth", "balanced", "low_cpu"],
+        default=None,
+        help="UI refresh profile.",
+    )
+    retry_parser.add_argument(
+        "--ui-theme",
+        choices=["contrast", "quiet", "research", "research_redops"],
+        default="research",
+        help="UI theme mode.",
+    )
+    retry_parser.add_argument(
+        "--ui-mode",
+        choices=["auto", "default", "qa_dense", "ops_dense", "compare_dense"],
+        default=None,
+        help="UI panel mode preset.",
+    )
+    retry_parser.add_argument("--ui-no-banner", action="store_true", help="Start with banner collapsed.")
+
     bench_parser = sub.add_parser("bench", help="Benchmark adapter commands.")
     bench_sub = bench_parser.add_subparsers(dest="bench_command", required=True)
 
@@ -1134,6 +1304,32 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "examples":
         if args.examples_command == "check":
             return _cmd_examples_check(str(Path(args.path)))
+
+    if args.command == "retry":
+        return _cmd_retry(
+            str(args.run_id),
+            project=str(Path(args.project)),
+            no_ui=args.no_ui,
+            max_running_trials=args.max_running_trials,
+            max_container_slots=args.max_container_slots,
+            max_builds=args.max_builds,
+            max_scoring_tasks=args.max_scoring_tasks,
+            provider_budget=args.provider_budget,
+            ui_refresh_ms=args.ui_refresh_ms,
+            ui_max_events=args.ui_max_events,
+            ui_max_failures=args.ui_max_failures,
+            ui_max_active_trials=args.ui_max_active_trials,
+            ui_refresh_profile=args.ui_refresh_profile,
+            ui_theme=args.ui_theme,
+            ui_mode=args.ui_mode,
+            ui_no_banner=args.ui_no_banner,
+            experiment_id=args.experiment_id,
+            web_monitor=(not args.no_web_monitor),
+            web_monitor_host=args.web_monitor_host,
+            web_monitor_port=args.web_monitor_port,
+            web_monitor_poll_interval_sec=args.web_monitor_poll_interval_sec,
+            cli_ui=bool(args.cli_ui),
+        )
 
     if args.command == "web":
         if args.web_command == "monitor":

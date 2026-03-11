@@ -11,7 +11,8 @@ export type RunRow = {
   run_id: string;
   experiment_id: string;
   benchmark: string;
-  status: "running" | "completed" | "cancelled";
+  status: "running" | "completed" | "cancelled" | "zombie";
+  status_reason: string;
   done: number;
   total: number;
   failed: number;
@@ -25,13 +26,21 @@ export type RunRow = {
   has_task_monitor: boolean;
   heartbeat_only: boolean;
   last_progress_ts_ms: number | null;
+  runner_alive: boolean;
+  observer_stale: boolean;
+  recoverable_trials?: number;
+  retried_trials?: number;
+  recovered_trials?: number;
+  still_failing_trials?: number;
+  unfinished_trials?: number;
 };
 
 export type RunSnapshot = {
   run_id: string;
   experiment_id: string;
   benchmark: string;
-  status: "running" | "completed" | "cancelled";
+  status: "running" | "completed" | "cancelled" | "zombie";
+  status_reason: string;
   done: number;
   total: number;
   failed: number;
@@ -48,11 +57,21 @@ export type RunSnapshot = {
   planned_tasks: number;
   visible_task_rows: number;
   scored_trials: number;
+  retry_attempts?: number;
+  recovered_count?: number;
+  outstanding_failures?: number;
+  recoverable_trials?: number;
+  retried_trials?: number;
+  recovered_trials?: number;
+  still_failing_trials?: number;
+  unfinished_trials?: number;
   attention_task_count: number;
   last_progress_ts_ms: number | null;
   last_metric_ts_ms: number | null;
   stalled: boolean;
   heartbeat_only: boolean;
+  runner_alive: boolean;
+  observer_stale: boolean;
   identities: Array<{
     display_id: string;
     agent_id: string;
@@ -78,7 +97,7 @@ export type RunSummaryResponse = {
   run_id: string;
   experiment_id: string;
   benchmark: string;
-  status: "running" | "completed" | "cancelled";
+  status: "running" | "completed" | "cancelled" | "zombie";
   primary_dimension: "variant-first" | "benchmark-first";
   variant_count: number;
   models: string[];
@@ -100,6 +119,11 @@ export type RunSummaryResponse = {
   scored_trials: number;
   scored_trials_by_identity: Record<string, number>;
   metric_counts: Record<string, Record<string, number>>;
+  recoverable_trials?: number;
+  retried_trials?: number;
+  recovered_trials?: number;
+  still_failing_trials?: number;
+  unfinished_trials?: number;
 };
 
 export type ExperimentSummaryResponse = {
@@ -134,4 +158,19 @@ export type RuntimeEvent = Record<string, unknown> & {
   sample_id?: string;
   trial_key?: string;
   message?: string;
+};
+
+export type TrialAttemptRow = {
+  attempt_id?: string;
+  attempt_no?: number;
+  effective?: boolean;
+  failure_class?: string | null;
+  status?: string;
+  started_ts_ms?: number | null;
+  ended_ts_ms?: number | null;
+  duration_ms?: number | null;
+  supersedes_attempt_id?: string | null;
+  superseded_by_attempt_id?: string | null;
+  retry_source?: string | null;
+  scores?: Record<string, unknown>;
 };

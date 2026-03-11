@@ -70,7 +70,7 @@ export function RunGalleryPage() {
       if (statusFilter === "completed" && !(run.status === "completed" && run.attention_count === 0)) {
         return false;
       }
-      if (statusFilter === "failed" && run.attention_count <= 0 && run.status !== "cancelled") {
+      if (statusFilter === "failed" && run.attention_count <= 0 && run.status !== "cancelled" && run.status !== "zombie") {
         return false;
       }
       return true;
@@ -79,7 +79,7 @@ export function RunGalleryPage() {
 
   const runningCount = runs.filter((row) => row.status === "running").length;
   const completedCount = runs.filter((row) => row.status === "completed" && row.attention_count === 0).length;
-  const failedCount = runs.filter((row) => row.attention_count > 0 || row.status === "cancelled").length;
+  const failedCount = runs.filter((row) => row.attention_count > 0 || row.status === "cancelled" || row.status === "zombie").length;
   const benchmarkCount = Math.max(benchmarkTabs.length - 1, 0);
   const continueWatching = runs.find((row) => row.status === "running") || runs.find((row) => row.attention_count > 0) || runs[0] || null;
 
@@ -88,7 +88,7 @@ export function RunGalleryPage() {
       return;
     }
     const hasRunning = runs.some((row) => row.status === "running");
-    const hasAttention = runs.some((row) => row.attention_count > 0 || row.status === "cancelled");
+    const hasAttention = runs.some((row) => row.attention_count > 0 || row.status === "cancelled" || row.status === "zombie");
     const hasCompleted = runs.some((row) => row.status === "completed" && row.attention_count === 0);
     if (statusFilter === "running" && !hasRunning) {
       setStatusFilter(hasAttention ? "failed" : hasCompleted ? "completed" : "all");
@@ -218,7 +218,7 @@ export function RunGalleryPage() {
                     variant={
                       continueWatching.status === "running"
                         ? "warning"
-                        : continueWatching.status === "cancelled" || continueWatching.attention_count > 0
+                        : continueWatching.status === "cancelled" || continueWatching.status === "zombie" || continueWatching.attention_count > 0
                           ? "danger"
                           : "success"
                     }
@@ -227,12 +227,16 @@ export function RunGalleryPage() {
                       ? "running"
                       : continueWatching.status === "cancelled"
                         ? "cancelled"
+                        : continueWatching.status === "zombie"
+                          ? "zombie"
                         : continueWatching.attention_count > 0
                           ? "needs attention"
                           : "completed"}
                   </Badge>
                   {continueWatching.stalled ? <Badge variant="danger">stalled</Badge> : null}
                   {continueWatching.heartbeat_only ? <Badge variant="warning">heartbeat only</Badge> : null}
+                  {continueWatching.observer_stale ? <Badge variant="warning">observer stale</Badge> : null}
+                  {continueWatching.status === "running" && continueWatching.runner_alive ? <Badge variant="outline">runner alive</Badge> : null}
                 </div>
                 <div className="mt-4 font-[family-name:var(--font-mono)] text-xl font-semibold break-all">{continueWatching.run_id}</div>
                 <div className="mt-2 text-base text-muted-foreground">updated {formatDateTime(continueWatching.updated_at_ms)}</div>
@@ -264,6 +268,7 @@ export function RunGalleryPage() {
                   {continueWatching.attention_count > 0 ? <Badge variant="danger">{continueWatching.attention_count} signals need review</Badge> : <Badge variant="success">no active attention signals</Badge>}
                   {!continueWatching.has_task_monitor ? <Badge variant="warning">task monitor missing</Badge> : null}
                   {continueWatching.stalled ? <Badge variant="danger">no recent progress</Badge> : null}
+                  {continueWatching.observer_stale ? <Badge variant="warning">observer lagging behind runner</Badge> : null}
                 </div>
                 <div className="mt-5 text-base leading-7 text-muted-foreground">
                   {continueWatching.attention_count > 0
@@ -357,6 +362,9 @@ export function RunGalleryPage() {
             {filteredRuns.map((run) => {
               const progress = run.total > 0 ? run.done / run.total : 0;
               const needsAttention = run.attention_count > 0;
+              const recoverable = Number(run.recoverable_trials || 0);
+              const recovered = Number(run.recovered_trials || 0);
+              const stillFailing = Number(run.still_failing_trials || 0);
               return (
                 <Link key={run.run_id} href={`/runs/${encodeURIComponent(run.run_id)}`} className="group block">
                   <Card className="h-full overflow-hidden rounded-[30px] border-white/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(249,255,253,0.96))] shadow-[0_16px_60px_rgba(15,23,42,0.06)] transition duration-200 group-hover:-translate-y-1.5 group-hover:shadow-[0_24px_80px_rgba(13,148,136,0.14)]">
@@ -366,19 +374,22 @@ export function RunGalleryPage() {
                           <div className="flex flex-wrap gap-2">
                             <Badge variant="outline" className="bg-white/80 text-sm">{run.benchmark}</Badge>
                             <Badge
-                              variant={run.status === "running" ? "warning" : run.status === "cancelled" || needsAttention ? "danger" : "success"}
+                              variant={run.status === "running" ? "warning" : run.status === "cancelled" || run.status === "zombie" || needsAttention ? "danger" : "success"}
                               className="text-sm"
                             >
                               {run.status === "running"
                                 ? "running"
                                 : run.status === "cancelled"
                                   ? "cancelled"
+                                  : run.status === "zombie"
+                                    ? "zombie"
                                   : needsAttention
                                     ? "needs attention"
                                     : "completed"}
                             </Badge>
                             {run.is_live ? <Badge variant="warning" className="text-sm">live</Badge> : null}
                             {run.stalled ? <Badge variant="danger" className="text-sm">stalled</Badge> : null}
+                            {run.observer_stale ? <Badge variant="warning" className="text-sm">observer stale</Badge> : null}
                           </div>
                           <div>
                             <CardTitle className="font-[family-name:var(--font-mono)] text-xl leading-8 break-all">{run.run_id}</CardTitle>
@@ -413,6 +424,24 @@ export function RunGalleryPage() {
                         </div>
                       </div>
 
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        <div className="rounded-[22px] border bg-muted/25 p-4">
+                          <div className="text-sm text-muted-foreground">Recoverable</div>
+                          <div className={cn("mt-2 text-3xl font-semibold", recoverable > 0 ? "text-warning" : "")}>{recoverable}</div>
+                          <div className="mt-1 text-sm text-muted-foreground">unfinished + non-success</div>
+                        </div>
+                        <div className="rounded-[22px] border bg-muted/25 p-4">
+                          <div className="text-sm text-muted-foreground">Recovered</div>
+                          <div className={cn("mt-2 text-3xl font-semibold", recovered > 0 ? "text-success" : "")}>{recovered}</div>
+                          <div className="mt-1 text-sm text-muted-foreground">latest attempt healthy</div>
+                        </div>
+                        <div className="rounded-[22px] border bg-muted/25 p-4">
+                          <div className="text-sm text-muted-foreground">Still failing</div>
+                          <div className={cn("mt-2 text-3xl font-semibold", stillFailing > 0 ? "text-danger" : "")}>{stillFailing}</div>
+                          <div className="mt-1 text-sm text-muted-foreground">retried but unresolved</div>
+                        </div>
+                      </div>
+
                       <div className="space-y-2">
                         <div className="flex items-center justify-between text-sm text-muted-foreground md:text-base">
                           <span>Execution</span>
@@ -422,7 +451,7 @@ export function RunGalleryPage() {
                           <div
                             className={cn(
                               "h-3.5 rounded-full transition-all",
-                              run.status === "running" ? "bg-amber-500" : run.status === "cancelled" || needsAttention ? "bg-rose-500" : "bg-primary",
+                              run.status === "running" ? "bg-amber-500" : run.status === "cancelled" || run.status === "zombie" || needsAttention ? "bg-rose-500" : "bg-primary",
                             )}
                             style={{ width: `${Math.max(progress > 0 ? 8 : 0, progress * 100)}%` }}
                           />
@@ -439,21 +468,29 @@ export function RunGalleryPage() {
                           <Badge variant="outline">{run.models.length || run.variant_count} models</Badge>
                           {run.is_live ? <Badge variant="warning">live observer</Badge> : <Badge variant="outline">archived run</Badge>}
                           <Badge variant={needsAttention ? "danger" : "success"}>{needsAttention ? "needs review" : "healthy"}</Badge>
+                          {recoverable > 0 ? <Badge variant="warning">{recoverable} recoverable</Badge> : null}
+                          {recovered > 0 ? <Badge variant="success">{recovered} recovered</Badge> : null}
+                          {stillFailing > 0 ? <Badge variant="danger">{stillFailing} still failing</Badge> : null}
                           {!run.has_task_monitor ? <Badge variant="warning">task monitor missing</Badge> : null}
                           {run.heartbeat_only ? <Badge variant="warning">heartbeat only</Badge> : null}
+                          {run.status === "running" && run.runner_alive ? <Badge variant="outline">runner alive</Badge> : null}
                         </div>
                       </div>
 
                       <div className="rounded-[22px] border border-dashed border-primary/25 bg-primary/5 px-4 py-3 text-sm leading-6 text-muted-foreground">
-                        {run.status === "running"
-                          ? run.stalled
-                            ? "Run is alive but no meaningful progress has been observed recently."
-                            : "Run is actively progressing; enter workspace to watch task-level movement."
-                          : run.status === "cancelled"
-                            ? "This run no longer appears active and ended without a final summary."
-                          : needsAttention
-                            ? "This run completed with signals that still need review."
-                            : "This run completed cleanly and is ready for result review."}
+                          {run.status === "running"
+                            ? run.observer_stale
+                              ? "The runner still appears alive, but the observer is lagging behind the latest runtime heartbeat."
+                              : run.stalled
+                                ? "Run is alive but no meaningful progress has been observed recently."
+                                : "Run is actively progressing; enter workspace to watch task-level movement."
+                            : run.status === "cancelled"
+                              ? "This run was explicitly interrupted before writing a final summary."
+                              : run.status === "zombie"
+                                ? "This looks like a stale historical run: the runner is gone, but the run never wrote a terminal summary."
+                                : needsAttention
+                                  ? "This run completed with signals that still need review."
+                                  : "This run completed cleanly and is ready for result review."}
                       </div>
 
                       <div className="flex items-center justify-between rounded-[22px] border border-dashed border-primary/25 bg-primary/5 px-4 py-3 text-base font-medium text-primary transition group-hover:border-primary/45 group-hover:bg-primary/10">

@@ -12,20 +12,26 @@ type RunState = {
   runLogPath: string;
   eventsPath: string;
   manifestPath: string;
+  runtimeStatePath: string;
   summaryPath: string;
   planPath: string;
   aggregatePath: string;
   profilingPath: string;
+  recoveryPath: string;
   eventPos: number;
   eventTail: string;
   lastEventIndex: number;
   updatedAtMs: number;
-  status: "running" | "completed" | "cancelled";
+  status: "running" | "completed" | "cancelled" | "zombie";
+  statusReason: string;
+  runnerAlive: boolean;
+  observerStale: boolean;
   experimentId: string;
   benchmark: string;
   summary: JsonRecord;
   plan: JsonRecord;
   profiling: JsonRecord;
+  runtimeState: JsonRecord;
 };
 
 type MonitorOptions = {
@@ -97,9 +103,19 @@ type RunLiveSignals = {
   lastMetricTsMs: number | null;
 };
 
+type RecoveryCounters = {
+  recoverableTrials: number;
+  retriedTrials: number;
+  recoveredTrials: number;
+  stillFailingTrials: number;
+  unfinishedTrials: number;
+};
+
 const STALLED_PROGRESS_MS = 30_000;
 const LONG_RUNNING_TASK_MS = 45_000;
 const ABANDONED_RUN_MS = 120_000;
+const RUNNER_HEARTBEAT_STALE_MS = 15_000;
+const OBSERVER_STALE_MS = 20_000;
 
 function nowMs(): number {
   return Date.now();
@@ -130,6 +146,18 @@ function fileMtimeMs(filePath: string): number {
     return fs.statSync(filePath).mtimeMs;
   } catch {
     return 0;
+  }
+}
+
+function processAlive(pid: number): boolean {
+  if (!Number.isFinite(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(Math.trunc(pid), 0);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -390,26 +418,113 @@ export class RunMonitorStore {
     return String(row?.benchmark || "").trim().toLowerCase() || "custom";
   }
 
-  private inferRunStatus(state: RunState, manifest: JsonRecord): "running" | "completed" | "cancelled" {
-    if (Object.keys(state.summary).length > 0) {
-      return "completed";
-    }
+  private inferRunStatus(
+    state: RunState,
+    manifest: JsonRecord,
+    runtimeState: JsonRecord,
+  ): {
+    status: "running" | "completed" | "cancelled" | "zombie";
+    statusReason: string;
+    runnerAlive: boolean;
+    observerStale: boolean;
+  } {
     const manifestStatus = String(manifest.status || manifest.run_status || "").trim().toLowerCase();
-    if (manifestStatus === "cancelled" || manifestStatus === "canceled") {
-      return "cancelled";
+    const runtimeStatus = String(runtimeState.status || "").trim().toLowerCase();
+    if (runtimeStatus === "running") {
+      const latestEventRow = this.db
+        .prepare("SELECT ts_ms FROM events WHERE run_id = ? ORDER BY event_index DESC LIMIT 1")
+        .get(state.runId) as { ts_ms?: number } | undefined;
+      const latestEventTs = asInt(latestEventRow?.ts_ms, 0);
+      const updatedAtMs = this.computeRunUpdatedAt(state);
+      const heartbeatTs = asInt(runtimeState.heartbeat_ts_ms, 0);
+      const lastRuntimeEventTs = asInt(runtimeState.last_event_ts_ms, 0);
+      const ownerPid = asInt(runtimeState.owner_pid, 0);
+      const pidAlive = processAlive(ownerPid);
+      const heartbeatFresh = heartbeatTs > 0 && nowMs() - heartbeatTs < RUNNER_HEARTBEAT_STALE_MS;
+      const runnerAlive = pidAlive || heartbeatFresh;
+      const observerSignalTs = Math.max(latestEventTs, lastRuntimeEventTs, fileMtimeMs(state.eventsPath), fileMtimeMs(state.profilingPath), 0);
+      const observerStale =
+        runnerAlive &&
+        heartbeatTs > 0 &&
+        observerSignalTs > 0 &&
+        heartbeatTs - observerSignalTs >= OBSERVER_STALE_MS;
+
+      if (runnerAlive) {
+        return {
+          status: "running",
+          statusReason: observerStale ? "runner_alive_observer_stale" : (pidAlive ? "runner_pid_alive" : "runner_heartbeat_fresh"),
+          runnerAlive,
+          observerStale,
+        };
+      }
+      return {
+        status: "zombie",
+        statusReason: "runtime_running_but_runner_dead",
+        runnerAlive: false,
+        observerStale: false,
+      };
     }
-    if (manifestStatus === "completed") {
-      return "completed";
+
+    if (runtimeStatus === "completed" || manifestStatus === "completed") {
+      return {
+        status: "completed",
+        statusReason: runtimeStatus === "completed" ? "runtime_completed" : "manifest_completed",
+        runnerAlive: false,
+        observerStale: false,
+      };
     }
-    const updatedAtMs = this.computeRunUpdatedAt(state);
+    if (runtimeStatus === "cancelled" || runtimeStatus === "canceled" || manifestStatus === "cancelled" || manifestStatus === "canceled") {
+      return {
+        status: "cancelled",
+        statusReason: runtimeStatus.startsWith("cancel") ? "runtime_cancelled" : "manifest_cancelled",
+        runnerAlive: false,
+        observerStale: false,
+      };
+    }
+
+    if (Object.keys(state.summary).length > 0) {
+      return {
+        status: "completed",
+        statusReason: "summary_present",
+        runnerAlive: false,
+        observerStale: false,
+      };
+    }
+
     const latestEventRow = this.db
       .prepare("SELECT ts_ms FROM events WHERE run_id = ? ORDER BY event_index DESC LIMIT 1")
       .get(state.runId) as { ts_ms?: number } | undefined;
-    const freshestSignalTs = asInt(latestEventRow?.ts_ms, 0) || updatedAtMs;
+    const latestEventTs = asInt(latestEventRow?.ts_ms, 0);
+    const updatedAtMs = this.computeRunUpdatedAt(state);
+    const heartbeatTs = asInt(runtimeState.heartbeat_ts_ms, 0);
+    const lastRuntimeEventTs = asInt(runtimeState.last_event_ts_ms, 0);
+    const ownerPid = asInt(runtimeState.owner_pid, 0);
+    const pidAlive = processAlive(ownerPid);
+    const heartbeatFresh = heartbeatTs > 0 && nowMs() - heartbeatTs < RUNNER_HEARTBEAT_STALE_MS;
+    const runnerAlive = pidAlive || heartbeatFresh;
+    const freshestSignalTs = Math.max(latestEventTs, lastRuntimeEventTs, heartbeatTs, updatedAtMs, 0);
+    const observerSignalTs = Math.max(latestEventTs, lastRuntimeEventTs, fileMtimeMs(state.eventsPath), fileMtimeMs(state.profilingPath), 0);
+    const observerStale =
+      runnerAlive &&
+      heartbeatTs > 0 &&
+      observerSignalTs > 0 &&
+      heartbeatTs - observerSignalTs >= OBSERVER_STALE_MS;
+
     if (freshestSignalTs > 0 && nowMs() - freshestSignalTs >= ABANDONED_RUN_MS) {
-      return "cancelled";
+      return {
+        status: "zombie",
+        statusReason: runtimeState.run_id ? "stale_runtime_state" : "stale_without_terminal_summary",
+        runnerAlive: false,
+        observerStale: false,
+      };
     }
-    return "running";
+
+    return {
+      status: "running",
+      statusReason: "recent_signal",
+      runnerAlive,
+      observerStale,
+    };
   }
 
   private upsertRunRow(state: RunState, manifest: JsonRecord): void {
@@ -441,13 +556,18 @@ export class RunMonitorStore {
 
   private refreshRunMetadata(state: RunState): void {
     const manifest = readJsonObject(state.manifestPath);
+    state.runtimeState = readJsonObject(state.runtimeStatePath);
     state.summary = readJsonObject(state.summaryPath);
     state.plan = readJsonObject(state.planPath);
     state.profiling = readJsonObject(state.profilingPath);
     state.experimentId = this.inferExperimentId(state.runId, manifest, state.profiling);
     state.benchmark = this.inferBenchmark(state, manifest, state.profiling);
     state.updatedAtMs = this.computeRunUpdatedAt(state);
-    state.status = this.inferRunStatus(state, manifest);
+    const inferred = this.inferRunStatus(state, manifest, state.runtimeState);
+    state.status = inferred.status;
+    state.statusReason = inferred.statusReason;
+    state.runnerAlive = inferred.runnerAlive;
+    state.observerStale = inferred.observerStale;
     this.upsertRunRow(state, manifest);
   }
 
@@ -456,6 +576,7 @@ export class RunMonitorStore {
       fileMtimeMs(state.runDir),
       fileMtimeMs(state.eventsPath),
       fileMtimeMs(state.manifestPath),
+      fileMtimeMs(state.runtimeStatePath),
       fileMtimeMs(state.summaryPath),
       fileMtimeMs(state.planPath),
       fileMtimeMs(state.aggregatePath),
@@ -573,20 +694,26 @@ export class RunMonitorStore {
           runLogPath: path.join(pointer.runDir, "run.log"),
           eventsPath: path.join(pointer.runDir, "events.jsonl"),
           manifestPath: path.join(pointer.runDir, "manifest.json"),
+          runtimeStatePath: path.join(pointer.runDir, "runtime_state.json"),
           summaryPath: path.join(pointer.runDir, "summary.json"),
           planPath: path.join(pointer.runDir, "plan.json"),
           aggregatePath: path.join(pointer.runDir, "aggregate.json"),
           profilingPath: path.join(pointer.runDir, "profiling.json"),
+          recoveryPath: path.join(pointer.runDir, "recovery.json"),
           eventPos: 0,
           eventTail: "",
           lastEventIndex: 0,
           updatedAtMs: nowMs(),
           status: "running",
+          statusReason: "discovered",
+          runnerAlive: false,
+          observerStale: false,
           experimentId: pointer.runId,
           benchmark: "custom",
           summary: {},
           plan: {},
           profiling: {},
+          runtimeState: {},
         });
         discovered += 1;
       } else if (existing.runDir !== pointer.runDir) {
@@ -594,10 +721,12 @@ export class RunMonitorStore {
         existing.runLogPath = path.join(pointer.runDir, "run.log");
         existing.eventsPath = path.join(pointer.runDir, "events.jsonl");
         existing.manifestPath = path.join(pointer.runDir, "manifest.json");
+        existing.runtimeStatePath = path.join(pointer.runDir, "runtime_state.json");
         existing.summaryPath = path.join(pointer.runDir, "summary.json");
         existing.planPath = path.join(pointer.runDir, "plan.json");
         existing.aggregatePath = path.join(pointer.runDir, "aggregate.json");
         existing.profilingPath = path.join(pointer.runDir, "profiling.json");
+        existing.recoveryPath = path.join(pointer.runDir, "recovery.json");
       }
 
       const state = this.runs.get(pointer.runId);
@@ -613,6 +742,17 @@ export class RunMonitorStore {
 
   private computeProgress(state: RunState): { done: number; total: number; failed: number } {
     const logProgress = this.readRunLogProgress(state);
+    const effectiveRows = this.effectiveRecoveryRows(state);
+    if (effectiveRows.length > 0) {
+      const total = asInt(state.plan.trial_count, 0) || logProgress.total;
+      const done = effectiveRows.length;
+      const failed = effectiveRows.filter((row) => {
+        const taskResult = ((row.task_result as JsonRecord) || {}) as JsonRecord;
+        const status = String(taskResult.status || row.status || "").trim().toLowerCase();
+        return status !== "success";
+      }).length;
+      return { done, total, failed };
+    }
     if (state.summary && Object.keys(state.summary).length > 0) {
       const summaryTotal = asInt(state.summary.total, 0);
       const planTotal = asInt(state.plan.trial_count, 0);
@@ -708,9 +848,12 @@ export class RunMonitorStore {
     const lastProgressTs = asInt(lastProgressRow?.ts_ms, 0) || null;
     const latestEventName = String(latestEventRow?.event_name || "").toLowerCase();
     const now = nowMs();
-    const heartbeatOnly = Boolean(latestEventName === "ui.heartbeat" && lastProgressTs === null && latestTs > 0);
+    const heartbeatOnly = Boolean(
+      !state.observerStale && latestEventName === "ui.heartbeat" && lastProgressTs === null && latestTs > 0,
+    );
     const stalled =
       state.status === "running" &&
+      !state.observerStale &&
       ((lastProgressTs !== null && now - lastProgressTs >= STALLED_PROGRESS_MS) ||
         (lastProgressTs === null && latestTs > 0 && now - latestTs >= STALLED_PROGRESS_MS));
     const erroredTaskCount = rows.filter((row) => row.status === "error").length;
@@ -1169,6 +1312,7 @@ export class RunMonitorStore {
     const identities = this.collectRunIdentities(state);
     const taskRows = this.collectTaskMonitorRows(state);
     const liveSummary = this.buildLiveSummaryFromTaskRows(taskRows, identities, primaryDimension);
+    const recoveryCounters = this.computeRecoveryCounters(state);
     let agents: Array<Record<string, unknown>>;
     let matrix: Record<string, Record<string, number>>;
 
@@ -1290,6 +1434,11 @@ export class RunMonitorStore {
       scored_trials: liveSummary.scoredTrials,
       scored_trials_by_identity: liveSummary.scoredTrialsByIdentity,
       metric_counts: liveSummary.metricCounts,
+      recoverable_trials: recoveryCounters.recoverableTrials,
+      retried_trials: recoveryCounters.retriedTrials,
+      recovered_trials: recoveryCounters.recoveredTrials,
+      still_failing_trials: recoveryCounters.stillFailingTrials,
+      unfinished_trials: recoveryCounters.unfinishedTrials,
     };
   }
 
@@ -1305,12 +1454,14 @@ export class RunMonitorStore {
       const identities = this.collectRunIdentities(state);
       const models = Array.from(new Set(identities.map((row) => row.model).filter((value): value is string => Boolean(value)))).sort();
       const liveSignals = this.computeRunLiveSignals(state, taskRows);
-      const attentionCount = liveSignals.attentionCount + (state.status === "cancelled" ? 1 : 0);
+      const attentionCount = liveSignals.attentionCount + (state.status === "cancelled" || state.status === "zombie" ? 1 : 0);
+      const recoveryCounters = this.computeRecoveryCounters(state);
       out.push({
         run_id: state.runId,
         experiment_id: state.experimentId,
         benchmark: state.benchmark,
         status: state.status,
+        status_reason: state.statusReason,
         done: progress.done,
         total: progress.total,
         failed: progress.failed,
@@ -1324,6 +1475,13 @@ export class RunMonitorStore {
         has_task_monitor: liveSignals.hasTaskMonitor,
         heartbeat_only: liveSignals.heartbeatOnly,
         last_progress_ts_ms: liveSignals.lastProgressTsMs,
+        runner_alive: state.runnerAlive,
+        observer_stale: state.observerStale,
+        recoverable_trials: recoveryCounters.recoverableTrials,
+        retried_trials: recoveryCounters.retriedTrials,
+        recovered_trials: recoveryCounters.recoveredTrials,
+        still_failing_trials: recoveryCounters.stillFailingTrials,
+        unfinished_trials: recoveryCounters.unfinishedTrials,
       });
     }
     return out.sort((a, b) => {
@@ -1386,11 +1544,19 @@ export class RunMonitorStore {
     const liveSignals = this.computeRunLiveSignals(state, taskRows);
     const identities = this.collectRunIdentities(state);
     const scoredTrials = taskRows.filter((row) => Object.keys(row.scorerMetrics || {}).length > 0).length;
+    const effectiveAttempts = this.effectiveRecoveryRows(state);
+    const recoveryCounters = this.computeRecoveryCounters(state, effectiveAttempts);
+    const recoveredCount = recoveryCounters.recoveredTrials;
+    const outstandingFailures = effectiveAttempts.filter((row) => {
+      const taskResult = ((row.task_result as JsonRecord) || {}) as JsonRecord;
+      return String(taskResult.status || row.status || "").trim().toLowerCase() !== "success";
+    }).length;
     return {
       run_id: state.runId,
       experiment_id: state.experimentId,
       benchmark: state.benchmark,
       status: state.status,
+      status_reason: state.statusReason,
       done: progress.done,
       total: progress.total,
       failed: progress.failed,
@@ -1424,11 +1590,21 @@ export class RunMonitorStore {
         new Set(taskRows.map((row) => row.taskId)).size,
       visible_task_rows: taskRows.length,
       scored_trials: scoredTrials,
+      retry_attempts: recoveryCounters.retriedTrials,
+      recovered_count: recoveredCount,
+      outstanding_failures: outstandingFailures,
+      recoverable_trials: recoveryCounters.recoverableTrials,
+      retried_trials: recoveryCounters.retriedTrials,
+      recovered_trials: recoveryCounters.recoveredTrials,
+      still_failing_trials: recoveryCounters.stillFailingTrials,
+      unfinished_trials: recoveryCounters.unfinishedTrials,
       attention_task_count: liveSignals.attentionTaskCount,
       last_progress_ts_ms: liveSignals.lastProgressTsMs,
       last_metric_ts_ms: liveSignals.lastMetricTsMs,
       stalled: liveSignals.stalled,
       heartbeat_only: liveSignals.heartbeatOnly,
+      runner_alive: state.runnerAlive,
+      observer_stale: state.observerStale,
       identities,
     };
   }
@@ -1513,7 +1689,130 @@ export class RunMonitorStore {
     return !trial.variantId || variantId === trial.variantId;
   }
 
+  private readRecovery(state: RunState): JsonRecord {
+    return readJsonObject(state.recoveryPath);
+  }
+
+  private effectiveRecoveryRows(state: RunState): JsonRecord[] {
+    const recovery = this.readRecovery(state);
+    const attemptsByTrial = recovery.attempts_by_trial;
+    const effectiveAttempts = recovery.effective_attempts;
+    if (!attemptsByTrial || typeof attemptsByTrial !== "object" || Array.isArray(attemptsByTrial)) {
+      return [];
+    }
+    if (!effectiveAttempts || typeof effectiveAttempts !== "object" || Array.isArray(effectiveAttempts)) {
+      return [];
+    }
+    const out: JsonRecord[] = [];
+    for (const [trialKey, bucket] of Object.entries(attemptsByTrial as JsonRecord)) {
+      if (!Array.isArray(bucket)) {
+        continue;
+      }
+      const effectiveId = String((effectiveAttempts as JsonRecord)[trialKey] || "").trim();
+      if (!effectiveId) {
+        continue;
+      }
+      const match = bucket.find((row) => {
+        if (!row || typeof row !== "object" || Array.isArray(row)) {
+          return false;
+        }
+        return String((row as JsonRecord).attempt_id || "") === effectiveId;
+      });
+      if (match && typeof match === "object" && !Array.isArray(match)) {
+        out.push(match as JsonRecord);
+      }
+    }
+    return out;
+  }
+
+  private trialAttemptHistory(state: RunState, trialKey: string): JsonRecord[] {
+    const recovery = this.readRecovery(state);
+    const attemptsByTrial = recovery.attempts_by_trial;
+    if (!attemptsByTrial || typeof attemptsByTrial !== "object" || Array.isArray(attemptsByTrial)) {
+      return [];
+    }
+    const bucket = (attemptsByTrial as JsonRecord)[trialKey];
+    if (!Array.isArray(bucket)) {
+      return [];
+    }
+    return bucket
+      .filter((row) => row && typeof row === "object" && !Array.isArray(row))
+      .map((row) => row as JsonRecord)
+      .sort((lhs, rhs) => asInt(lhs.attempt_no, 0) - asInt(rhs.attempt_no, 0));
+  }
+
+  private computeRecoveryCounters(
+    state: RunState,
+    effectiveAttempts?: JsonRecord[],
+  ): RecoveryCounters {
+    const effectiveRows = effectiveAttempts || this.effectiveRecoveryRows(state);
+    const recovery = this.readRecovery(state);
+    const attemptsByTrial = recovery.attempts_by_trial;
+    const plannedTrials = Math.max(0, asInt(state.plan.trial_count, 0) || this.computeProgress(state).total);
+    const unfinishedTrials = Math.max(0, plannedTrials - effectiveRows.length);
+
+    let retriedTrials = 0;
+    let recoveredTrials = 0;
+    let stillFailingTrials = 0;
+    if (attemptsByTrial && typeof attemptsByTrial === "object" && !Array.isArray(attemptsByTrial)) {
+      for (const [trialKey, bucket] of Object.entries(attemptsByTrial as JsonRecord)) {
+        if (!Array.isArray(bucket) || bucket.length <= 1) {
+          continue;
+        }
+        retriedTrials += 1;
+        const effectiveId = String(((recovery.effective_attempts as JsonRecord) || {})[trialKey] || "").trim();
+        const effectiveRow = bucket.find((row) => row && typeof row === "object" && !Array.isArray(row) && String((row as JsonRecord).attempt_id || "") === effectiveId);
+        const effectiveStatus = String((((effectiveRow as JsonRecord)?.task_result as JsonRecord) || {}).status || (effectiveRow as JsonRecord)?.status || "").trim().toLowerCase();
+        if (effectiveStatus === "success") {
+          recoveredTrials += 1;
+        } else {
+          stillFailingTrials += 1;
+        }
+      }
+    }
+
+    const nonSuccessEffective = effectiveRows.filter((row) => {
+      const taskResult = ((row.task_result as JsonRecord) || {}) as JsonRecord;
+      return String(taskResult.status || row.status || "").trim().toLowerCase() !== "success";
+    }).length;
+    return {
+      recoverableTrials: unfinishedTrials + nonSuccessEffective,
+      retriedTrials,
+      recoveredTrials,
+      stillFailingTrials,
+      unfinishedTrials,
+    };
+  }
+
   private loadTrialOutcome(state: RunState, trial: TrialKeyParts): JsonRecord | null {
+    const effectiveRows = this.effectiveRecoveryRows(state);
+    if (effectiveRows.length > 0) {
+      for (const row of effectiveRows) {
+        const taskResult = ((row.task_result as JsonRecord) || {}) as JsonRecord;
+        const payload = ((taskResult.payload as JsonRecord) || {}) as JsonRecord;
+        const matches =
+          String(taskResult.task_id || "") === trial.taskId &&
+          String(taskResult.agent_id || "") === trial.agentId &&
+          String(taskResult.sample_id || "") === trial.sampleId &&
+          String(payload.variant_id || "default") === trial.variantId;
+        if (matches) {
+          return {
+            schema_version: row.schema_version,
+            task_result: taskResult,
+            scores: ((row.scores as JsonRecord) || {}) as JsonRecord,
+            trace: ((row.trace as JsonRecord) || {}) as JsonRecord,
+            attempt_id: row.attempt_id,
+            attempt_no: row.attempt_no,
+            effective: row.effective,
+            failure_class: row.failure_class,
+            supersedes_attempt_id: row.supersedes_attempt_id,
+            superseded_by_attempt_id: row.superseded_by_attempt_id,
+            retry_source: row.retry_source,
+          };
+        }
+      }
+    }
+
     const trialsPath = path.join(state.runDir, "trials.jsonl");
     if (fs.existsSync(trialsPath)) {
       try {
@@ -1600,6 +1899,7 @@ export class RunMonitorStore {
     }
 
     const outcome = this.loadTrialOutcome(state, trial);
+    const attemptHistory = this.trialAttemptHistory(state, opts.trialKey);
     const taskResult = ((outcome?.task_result as JsonRecord) || {}) as JsonRecord;
     const taskPayload = ((taskResult.payload as JsonRecord) || {}) as JsonRecord;
     const finishPayload = (((finishEvent?.payload as JsonRecord) || {}) as JsonRecord);
@@ -1623,6 +1923,14 @@ export class RunMonitorStore {
       start_event: startEvent,
       finish_event: finishEvent,
       error_event: errorEvent,
+      attempt_history: attemptHistory,
+      attempt_id: outcome?.attempt_id || null,
+      attempt_no: outcome?.attempt_no || null,
+      effective: outcome?.effective ?? true,
+      failure_class: outcome?.failure_class || null,
+      supersedes_attempt_id: outcome?.supersedes_attempt_id || null,
+      superseded_by_attempt_id: outcome?.superseded_by_attempt_id || null,
+      retry_source: outcome?.retry_source || null,
     };
   }
 

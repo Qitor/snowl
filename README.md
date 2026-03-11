@@ -47,7 +47,8 @@ Snowl already supports:
 - live artifacts under `.snowl/runs/`
 - operator-focused Next.js Web monitor
 - plain foreground CLI progress with background Web monitor sidecar
-- resume and rerun-failed flows
+- `snowl retry <run_id>` recovery for unfinished and non-success trials in the same run
+- in-run deferred auto retry for non-success trials, with attempt-aware recovery history
 
 Deployment target today is still local single-machine evaluation.
 
@@ -140,9 +141,15 @@ Useful flags:
   - `--max-builds`
   - `--max-scoring-tasks`
   - `--provider-budget provider_id=n`
-- reliability: `--resume`, `--rerun-failed-only`
+- recovery: `snowl retry <run_id>`
 - monitor: `--no-web-monitor`
 - legacy live CLI: `--cli-ui`
+
+Recover a long-running run after fixing the environment:
+
+```bash
+snowl retry run-20260311T033703Z --project /absolute/path/to/my-project/project.yml
+```
 
 Manual monitor mode is still available:
 
@@ -208,6 +215,11 @@ runtime:
   max_scoring_tasks: 8
   provider_budgets:
     siliconflow: 8
+  recovery:
+    auto_retry_non_success: true
+    max_auto_retries_per_trial: 1
+    retry_timing: deferred
+    backoff_ms: 2000
 ```
 
 Key semantics:
@@ -218,6 +230,7 @@ Key semantics:
 - `agent_matrix.models`: the tested models that expand into `AgentVariant`s
 - `judge.model`: optional model-as-judge model, separate from the tested models
 - `runtime.provider_budgets`: provider-level concurrency limits
+- `runtime.recovery`: in-run deferred retry policy and retry budget
 
 The directory structure still matters; YAML just makes that structure explicit instead of implicit.
 

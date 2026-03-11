@@ -59,6 +59,15 @@ class ProjectRuntimeConfig:
     max_builds: int | None = None
     max_scoring_tasks: int | None = None
     provider_budgets: dict[str, int] = field(default_factory=dict)
+    recovery: "ProjectRecoveryConfig" = field(default_factory=lambda: ProjectRecoveryConfig())
+
+
+@dataclass(frozen=True)
+class ProjectRecoveryConfig:
+    auto_retry_non_success: bool = True
+    max_auto_retries_per_trial: int = 1
+    retry_timing: str = "deferred"
+    backoff_ms: int = 2000
 
 
 @dataclass(frozen=True)
@@ -222,12 +231,32 @@ def load_project_config(path: str | Path) -> ProjectConfig:
     for key, value in provider_budgets_raw.items():
         provider_key = _require_non_empty_str(key, label="runtime.provider_budgets key", path=config_path)
         provider_budgets[provider_key] = _coerce_positive_int(value, label=f"runtime.provider_budgets.{provider_key}", path=config_path)
+    recovery_data = _require_mapping(runtime_data.get("recovery") or {}, label="runtime.recovery", path=config_path)
+    retry_timing = str(recovery_data.get("retry_timing") or "deferred").strip().lower() or "deferred"
+    if retry_timing != "deferred":
+        raise SnowlValidationError(f"runtime.recovery.retry_timing must be 'deferred' in {config_path}")
     runtime = ProjectRuntimeConfig(
         max_running_trials=_coerce_optional_int(runtime_data.get("max_running_trials"), label="runtime.max_running_trials", path=config_path),
         max_container_slots=_coerce_auto_int(runtime_data.get("max_container_slots"), label="runtime.max_container_slots", path=config_path),
         max_builds=_coerce_optional_int(runtime_data.get("max_builds"), label="runtime.max_builds", path=config_path),
         max_scoring_tasks=_coerce_optional_int(runtime_data.get("max_scoring_tasks"), label="runtime.max_scoring_tasks", path=config_path),
         provider_budgets=provider_budgets,
+        recovery=ProjectRecoveryConfig(
+            auto_retry_non_success=_coerce_bool(recovery_data.get("auto_retry_non_success"), default=True),
+            max_auto_retries_per_trial=_coerce_non_negative_int(
+                recovery_data.get("max_auto_retries_per_trial"),
+                label="runtime.recovery.max_auto_retries_per_trial",
+                path=config_path,
+                default=1,
+            ),
+            retry_timing=retry_timing,
+            backoff_ms=_coerce_non_negative_int(
+                recovery_data.get("backoff_ms"),
+                label="runtime.recovery.backoff_ms",
+                path=config_path,
+                default=2000,
+            ),
+        ),
     )
 
     benchmarks_raw = data.get("benchmarks") or {}
@@ -287,6 +316,33 @@ def _coerce_optional_int(value: Any, *, label: str, path: Path) -> int | None:
     return _coerce_positive_int(value, label=label, path=path)
 
 
+def _coerce_non_negative_int(value: Any, *, label: str, path: Path, default: int | None = None) -> int:
+    if value is None:
+        if default is None:
+            raise SnowlValidationError(f"{label} must be >= 0 in {path}")
+        return int(default)
+    try:
+        parsed = int(value)
+    except Exception as exc:
+        raise SnowlValidationError(f"{label} must be an integer in {path}") from exc
+    if parsed < 0:
+        raise SnowlValidationError(f"{label} must be >= 0 in {path}")
+    return parsed
+
+
+def _coerce_bool(value: Any, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 def _coerce_positive_int(value: Any, *, label: str, path: Path) -> int:
     try:
         parsed = int(value)
@@ -294,16 +350,6 @@ def _coerce_positive_int(value: Any, *, label: str, path: Path) -> int:
         raise SnowlValidationError(f"{label} must be an integer in {path}") from exc
     if parsed <= 0:
         raise SnowlValidationError(f"{label} must be > 0 in {path}")
-    return parsed
-
-
-def _coerce_non_negative_int(value: Any, *, label: str, path: Path) -> int:
-    try:
-        parsed = int(value)
-    except Exception as exc:
-        raise SnowlValidationError(f"{label} must be an integer in {path}") from exc
-    if parsed < 0:
-        raise SnowlValidationError(f"{label} must be >= 0 in {path}")
     return parsed
 
 

@@ -164,6 +164,41 @@ class TaskMonitor:
             self._states[key] = state
         return state
 
+    def seed_state(
+        self,
+        *,
+        task_id: str,
+        agent_id: str,
+        variant_id: str,
+        sample_id: str | None,
+        status: str,
+        started_at_ms: int | None = None,
+        ended_at_ms: int | None = None,
+        duration_ms: int | None = None,
+        latest_message: str | None = None,
+        scorer_metrics: Mapping[str, float] | None = None,
+    ) -> TaskMonitorState:
+        state = self.upsert_queued(
+            task_id=task_id,
+            agent_id=agent_id,
+            variant_id=variant_id,
+            sample_id=sample_id,
+        )
+        try:
+            state.status = TaskExecutionStatus(str(status or "queued"))
+        except Exception:
+            state.status = TaskExecutionStatus.QUEUED
+        state.started_at_ms = started_at_ms
+        state.ended_at_ms = ended_at_ms
+        state.duration_ms = duration_ms
+        state.latest_message = latest_message
+        state.scorer_metrics = {
+            str(k): float(v)
+            for k, v in dict(scorer_metrics or {}).items()
+            if isinstance(v, (int, float))
+        }
+        return state
+
     def apply_event(self, event: UIEvent) -> TaskMonitorState | None:
         if not event.task_id or not event.agent_id:
             return None
@@ -260,4 +295,3 @@ def build_score_explanations(
             )
         )
     return out
-

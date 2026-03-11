@@ -71,12 +71,15 @@ Today Snowl supports:
 - container-aware execution for terminal / GUI benchmarks
 - artifacts under `.snowl/runs/`
 - plain foreground CLI + background Next.js operator board
+- unified run recovery via `snowl retry <run_id>`
+- attempt-aware recovery ledger plus in-run deferred auto retry for non-success trials
 
 Important observability detail:
 
 - running runs should become visible in the Web monitor immediately
 - `manifest.json`, `plan.json`, and a live `profiling.json` skeleton are written at run startup
 - `events.jsonl` extends that live view with progress and trial-level state
+- `runtime_state.json` is the live lifecycle contract used to distinguish active runs, explicit cancellations, and stale zombie runs
 - in the run workspace, `Overview` for a running run should reflect the live mean over already-scored trials rather than waiting for final `aggregate.json`
 
 ## 5. Where To Start By Task Type
@@ -129,6 +132,12 @@ Run a benchmark example:
 
 ```bash
 snowl bench run terminalbench --project examples/terminalbench-official/project.yml --split test
+```
+
+Recover a cancelled / zombie / partially failed run:
+
+```bash
+snowl retry run-20260311T033703Z --project examples/strongreject-official/project.yml
 ```
 
 Run tests:

@@ -34,6 +34,13 @@ eval:
     )
 
 
+def _latest_run_dir(tmp_path: Path) -> Path:
+    runs_root = tmp_path / ".snowl" / "runs"
+    run_dirs = sorted([p for p in runs_root.iterdir() if p.is_dir() and p.name != "by_run_id"])
+    assert run_dirs
+    return run_dirs[-1]
+
+
 def test_cli_eval_auto_discovery(tmp_path: Path) -> None:
     (tmp_path / "tool.py").write_text(
         """
@@ -289,6 +296,173 @@ scorer = S()
     assert run_dirs
     manifest = json.loads((run_dirs[-1] / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["experiment_id"] == "exp-cli"
+
+
+def test_cli_retry_reuses_run_id_and_recovers_failed_trial(tmp_path: Path) -> None:
+    (tmp_path / "task.py").write_text(
+        """
+from snowl.core import EnvSpec, Task
+task = Task(task_id="t1", env_spec=EnvSpec(env_type="local"), sample_iter_factory=lambda: iter([{"id":"s1","input":"x"}]))
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "agent.py").write_text(
+        """
+class A:
+    agent_id = "a1"
+    async def run(self, state, context, tools=None):
+        _ = (state, context, tools)
+        raise RuntimeError("provider unavailable")
+agent = A()
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "scorer.py").write_text(
+        """
+from snowl.core import Score
+class S:
+    scorer_id = "s1"
+    def score(self, task_result, trace, context):
+        _ = (task_result, trace, context)
+        return {"accuracy": Score(value=1.0)}
+scorer = S()
+""",
+        encoding="utf-8",
+    )
+    _write_project_yml(tmp_path)
+
+    rc = main(["eval", str(tmp_path / "project.yml"), "--no-ui", "--no-web-monitor"])
+    assert rc == 1
+    run_dir = _latest_run_dir(tmp_path)
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    run_id = manifest["run_id"]
+
+    outcomes_before = json.loads((run_dir / "outcomes.json").read_text(encoding="utf-8"))
+    assert len(outcomes_before) == 1
+    assert outcomes_before[0]["task_result"]["status"] == "error"
+
+    (tmp_path / "agent.py").write_text(
+        """
+from snowl.core import StopReason
+class A:
+    agent_id = "a1"
+    async def run(self, state, context, tools=None):
+        _ = (context, tools)
+        state.output = {"message":{"role":"assistant","content":"ok"}, "usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}, "trace_events":[]}
+        state.stop_reason = StopReason.COMPLETED
+        return state
+agent = A()
+""",
+        encoding="utf-8",
+    )
+
+    rc = main(["retry", run_id, "--project", str(tmp_path / "project.yml"), "--no-ui", "--no-web-monitor"])
+    assert rc == 0
+
+    outcomes_after = json.loads((run_dir / "outcomes.json").read_text(encoding="utf-8"))
+    assert len(outcomes_after) == 1
+    assert outcomes_after[0]["task_result"]["status"] == "success"
+
+    recovery = json.loads((run_dir / "recovery.json").read_text(encoding="utf-8"))
+    trial_key = "t1::a1::default::s1"
+    assert trial_key in recovery["attempts_by_trial"]
+    assert len(recovery["attempts_by_trial"][trial_key]) >= 2
+    effective_attempt_id = recovery["effective_attempts"][trial_key]
+    effective_rows = [row for row in recovery["attempts_by_trial"][trial_key] if row["attempt_id"] == effective_attempt_id]
+    assert effective_rows and effective_rows[0]["status"] == "success"
+
+
+def test_eval_auto_retry_recovers_within_same_run(tmp_path: Path) -> None:
+    (tmp_path / "task.py").write_text(
+        """
+from snowl.core import EnvSpec, Task
+task = Task(task_id="t1", env_spec=EnvSpec(env_type="local"), sample_iter_factory=lambda: iter([{"id":"s1","input":"x"}]))
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "agent.py").write_text(
+        """
+from pathlib import Path
+from snowl.core import StopReason
+
+COUNTER = Path(__file__).with_name("attempt_counter.txt")
+
+class A:
+    agent_id = "a1"
+    async def run(self, state, context, tools=None):
+        _ = (context, tools)
+        count = int(COUNTER.read_text(encoding="utf-8")) if COUNTER.exists() else 0
+        count += 1
+        COUNTER.write_text(str(count), encoding="utf-8")
+        if count == 1:
+            raise RuntimeError("transient provider failure")
+        state.output = {"message":{"role":"assistant","content":"ok"}, "usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}, "trace_events":[]}
+        state.stop_reason = StopReason.COMPLETED
+        return state
+agent = A()
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "scorer.py").write_text(
+        """
+from snowl.core import Score
+class S:
+    scorer_id = "s1"
+    def score(self, task_result, trace, context):
+        _ = (task_result, trace, context)
+        return {"accuracy": Score(value=1.0)}
+scorer = S()
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "project.yml").write_text(
+        """
+project:
+  name: auto-retry
+  root_dir: .
+provider:
+  id: demo
+  kind: openai_compatible
+  base_url: https://example.com/v1
+  api_key: sk-test
+agent_matrix:
+  models:
+    - id: tested
+      model: demo-model
+eval:
+  benchmark: custom
+  code:
+    base_dir: .
+    task_module: ./task.py
+    agent_module: ./agent.py
+    scorer_module: ./scorer.py
+runtime:
+  recovery:
+    auto_retry_non_success: true
+    max_auto_retries_per_trial: 1
+    retry_timing: deferred
+    backoff_ms: 1
+""",
+        encoding="utf-8",
+    )
+
+    rc = main(["eval", str(tmp_path / "project.yml"), "--no-ui", "--no-web-monitor"])
+    assert rc == 0
+
+    run_dir = _latest_run_dir(tmp_path)
+    recovery = json.loads((run_dir / "recovery.json").read_text(encoding="utf-8"))
+    trial_key = "t1::a1::default::s1"
+    attempts = recovery["attempts_by_trial"][trial_key]
+    assert len(attempts) == 2
+    assert attempts[0]["retry_source"] == "initial_run"
+    assert attempts[0]["superseded_by_attempt_id"] == attempts[1]["attempt_id"]
+    assert attempts[1]["retry_source"] == "auto_retry"
+    assert attempts[1]["status"] == "success"
+    assert attempts[1]["effective"] is True
+
+    outcomes = json.loads((run_dir / "outcomes.json").read_text(encoding="utf-8"))
+    assert len(outcomes) == 1
+    assert outcomes[0]["task_result"]["status"] == "success"
 
 
 def test_cli_web_monitor_missing_deps_returns_2(monkeypatch, tmp_path: Path) -> None:
@@ -704,7 +878,7 @@ def test_eval_starts_managed_monitor_on_run_bootstrap(monkeypatch, tmp_path: Pat
     fake_file = nested / "tasks.json"
     fake_file.write_text("{}", encoding="utf-8")
 
-    captured = {"project": None, "started": 0, "stopped": 0}
+    captured = {"project": None, "started": 0, "stopped": 0, "opened": []}
 
     class _FakeMonitor:
         def __init__(self, *, project, host, port, poll_interval_sec, enabled):
@@ -751,12 +925,18 @@ def test_eval_starts_managed_monitor_on_run_bootstrap(monkeypatch, tmp_path: Pat
 
     monkeypatch.setattr(cli_mod, "_ManagedWebMonitor", _FakeMonitor)
     monkeypatch.setattr(cli_mod, "run_eval", _fake_run_eval)
+    monkeypatch.setattr(
+        cli_mod.webbrowser,
+        "open",
+        lambda url, new=0, autoraise=True: captured["opened"].append((url, new, autoraise)) or True,
+    )
 
     rc = main(["eval", str(fake_file)])
     assert rc == 0
     assert captured["project"] == str(nested.resolve())
     assert captured["started"] == 1
     assert captured["stopped"] >= 1
+    assert captured["opened"] == [("http://127.0.0.1:8765", 2, True)]
     out = capsys.readouterr().out
     assert "Snowl Eval: run_id=run-20260310T150000Z" in out
     assert "Web monitor: http://127.0.0.1:8765" in out

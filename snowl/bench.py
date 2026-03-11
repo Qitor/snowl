@@ -109,6 +109,16 @@ async def run_benchmark(
         project_config=project_config,
         experiment_id=experiment_id,
         on_run_bootstrap=on_run_bootstrap,
+        source_metadata={
+            "kind": "bench",
+            "project_path": str(entry_path),
+            "project_root": str(base_dir),
+            "benchmark": benchmark_name,
+            "split": split,
+            "limit": limit,
+            "benchmark_args": adapter_kwargs,
+            "benchmark_filters": _parse_filter_kv(benchmark_filters),
+        },
     )
 
 

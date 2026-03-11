@@ -1,15 +1,16 @@
 {
   "/_not-found/page": "app/_not-found/page.js",
-  "/compare/page": "app/compare/page.js",
   "/page": "app/page.js",
-  "/runs/[runId]/page": "app/runs/[runId]/page.js",
-  "/api/health/route": "app/api/health/route.js",
-  "/api/experiments/route": "app/api/experiments/route.js",
-  "/api/experiments/[experimentId]/summary/route": "app/api/experiments/[experimentId]/summary/route.js",
-  "/api/runs/[runId]/snapshot/route": "app/api/runs/[runId]/snapshot/route.js",
-  "/api/runs/[runId]/pretask/route": "app/api/runs/[runId]/pretask/route.js",
-  "/api/runs/[runId]/summary/route": "app/api/runs/[runId]/summary/route.js",
+  "/compare/page": "app/compare/page.js",
   "/api/runs/[runId]/events/stream/route": "app/api/runs/[runId]/events/stream/route.js",
-  "/api/runs/route": "app/api/runs/route.js",
-  "/api/runs/[runId]/trial/route": "app/api/runs/[runId]/trial/route.js"
+  "/api/experiments/route": "app/api/experiments/route.js",
+  "/api/runs/[runId]/pretask/route": "app/api/runs/[runId]/pretask/route.js",
+  "/api/experiments/[experimentId]/summary/route": "app/api/experiments/[experimentId]/summary/route.js",
+  "/api/runs/[runId]/summary/route": "app/api/runs/[runId]/summary/route.js",
+  "/api/runs/[runId]/snapshot/route": "app/api/runs/[runId]/snapshot/route.js",
+  "/runs/[runId]/page": "app/runs/[runId]/page.js",
+  "/api/runs/[runId]/trial/route": "app/api/runs/[runId]/trial/route.js",
+  "/api/health/route": "app/api/health/route.js",
+  "/api/runs/[runId]/retry/route": "app/api/runs/[runId]/retry/route.js",
+  "/api/runs/route": "app/api/runs/route.js"
 }

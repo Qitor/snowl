@@ -43,7 +43,13 @@ from snowl.errors import SnowlValidationError
 from snowl.envs import WarmPoolSandboxRuntime
 from snowl.envs.terminal_env import set_compose_build_slot_factory
 from snowl.model import OpenAICompatibleChatClient
-from snowl.project_config import ProjectCodeConfig, ProjectConfig, find_project_file, load_project_config
+from snowl.project_config import (
+    ProjectCodeConfig,
+    ProjectConfig,
+    ProjectRecoveryConfig,
+    find_project_file,
+    load_project_config,
+)
 from snowl.runtime import TrialOutcome, TrialRequest, execute_trial, execute_agent_phase, score_trial_phase
 from snowl.runtime.resource_scheduler import ResourceScheduler
 from snowl.ui.contracts import TaskMonitor, normalize_ui_event
@@ -634,6 +640,10 @@ def _write_json_file(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _utc_iso_from_ms(ts_ms: int) -> str:
+    return datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc).isoformat()
+
+
 def _trial_models(plan: EvalPlan) -> dict[str, str | None]:
     return {_trial_key(trial): trial.model for trial in plan.trials}
 
@@ -658,6 +668,30 @@ def _task_monitor_rows(task_monitor: TaskMonitor, *, model_by_trial_key: dict[st
     ]
 
 
+def _seed_task_monitor_from_serialized_outcome(task_monitor: TaskMonitor, row: dict[str, Any]) -> None:
+    task_result = dict(row.get("task_result") or {})
+    payload = dict(task_result.get("payload") or {})
+    timing = dict(task_result.get("timing") or {})
+    scores = dict(row.get("scores") or {})
+    scorer_metrics = {
+        str(metric): float(value.get("value") or 0.0)
+        for metric, value in scores.items()
+        if isinstance(value, dict) and isinstance(value.get("value"), (int, float))
+    }
+    task_monitor.seed_state(
+        task_id=str(task_result.get("task_id") or "-"),
+        agent_id=str(task_result.get("agent_id") or "unknown"),
+        variant_id=str(payload.get("variant_id") or "default"),
+        sample_id=(str(task_result.get("sample_id")) if task_result.get("sample_id") is not None else None),
+        status=str(task_result.get("status") or "queued"),
+        started_at_ms=(int(timing.get("started_at_ms")) if timing.get("started_at_ms") is not None else None),
+        ended_at_ms=(int(timing.get("ended_at_ms")) if timing.get("ended_at_ms") is not None else None),
+        duration_ms=(int(timing.get("duration_ms")) if timing.get("duration_ms") is not None else None),
+        latest_message=str((task_result.get("error") or {}).get("message") or "") or None,
+        scorer_metrics=scorer_metrics,
+    )
+
+
 def _write_live_run_metadata(
     *,
     out_dir: Path,
@@ -669,6 +703,7 @@ def _write_live_run_metadata(
     controls: dict[str, Any],
     trial_count: int,
     event_stream_mode: str,
+    manifest_extra: dict[str, Any] | None = None,
 ) -> None:
     model_by_trial_key = _trial_models(plan)
     _write_json_file(
@@ -682,22 +717,23 @@ def _write_live_run_metadata(
             "trial_count": trial_count,
         },
     )
-    _write_json_file(
-        out_dir / "manifest.json",
-        {
-            "schema_version": RESULT_SCHEMA_VERSION,
-            "result_schema_uri": RESULT_SCHEMA_URI,
-            "aggregate_schema_uri": AGGREGATE_SCHEMA_URI,
-            "run_id": run_id,
-            "experiment_id": experiment_id,
-            "benchmark": benchmark,
-            "event_stream_mode": event_stream_mode,
-            "status": "running",
-            "research_exports": {
-                "events_jsonl": "events.jsonl",
-            },
+    manifest_payload = {
+        "schema_version": RESULT_SCHEMA_VERSION,
+        "result_schema_uri": RESULT_SCHEMA_URI,
+        "aggregate_schema_uri": AGGREGATE_SCHEMA_URI,
+        "run_id": run_id,
+        "experiment_id": experiment_id,
+        "benchmark": benchmark,
+        "event_stream_mode": event_stream_mode,
+        "status": "running",
+        "runtime_state": "runtime_state.json",
+        "research_exports": {
+            "events_jsonl": "events.jsonl",
         },
-    )
+    }
+    if manifest_extra:
+        manifest_payload.update(dict(manifest_extra))
+    _write_json_file(out_dir / "manifest.json", manifest_payload)
     _write_json_file(
         out_dir / "profiling.json",
         {
@@ -713,6 +749,110 @@ def _write_live_run_metadata(
             "task_monitor": _task_monitor_rows(task_monitor, model_by_trial_key=model_by_trial_key),
         },
     )
+
+
+def _update_live_manifest_status(
+    out_dir: Path,
+    *,
+    status: str,
+    ended_ts_ms: int | None = None,
+    termination_reason: str | None = None,
+) -> None:
+    manifest_path = out_dir / "manifest.json"
+    manifest: dict[str, Any] = {}
+    try:
+        raw = manifest_path.read_text(encoding="utf-8")
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            manifest = dict(parsed)
+    except Exception:
+        manifest = {}
+    manifest["status"] = status
+    if ended_ts_ms is not None:
+        manifest["ended_at_ts_ms"] = int(ended_ts_ms)
+        manifest["ended_at_utc"] = _utc_iso_from_ms(int(ended_ts_ms))
+    if termination_reason:
+        manifest["termination_reason"] = str(termination_reason)
+    _write_json_file(manifest_path, manifest)
+
+
+class _LiveRunStateWriter:
+    def __init__(
+        self,
+        *,
+        path: Path,
+        run_id: str,
+        experiment_id: str,
+        benchmark: str,
+        started_ts_ms: int,
+        owner_pid: int | None = None,
+    ) -> None:
+        self._path = path
+        self._lock = threading.Lock()
+        pid = int(owner_pid or os.getpid())
+        self._state: dict[str, Any] = {
+            "run_id": run_id,
+            "experiment_id": experiment_id,
+            "benchmark": benchmark,
+            "status": "running",
+            "owner_pid": pid,
+            "started_ts_ms": int(started_ts_ms),
+            "started_at_utc": _utc_iso_from_ms(int(started_ts_ms)),
+            "heartbeat_ts_ms": int(started_ts_ms),
+            "last_event_ts_ms": int(started_ts_ms),
+            "last_progress_ts_ms": None,
+            "ended_ts_ms": None,
+            "termination_reason": None,
+        }
+        self._flush_locked()
+
+    def _flush_locked(self) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = self._path.with_suffix(self._path.suffix + ".tmp")
+        tmp_path.write_text(json.dumps(self._state, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp_path.replace(self._path)
+
+    def heartbeat(self, *, ts_ms: int | None = None) -> None:
+        with self._lock:
+            if self._state.get("status") != "running":
+                return
+            heartbeat_ts = int(ts_ms or int(datetime.now(timezone.utc).timestamp() * 1000))
+            self._state["heartbeat_ts_ms"] = heartbeat_ts
+            self._flush_locked()
+
+    def record_event(self, *, ts_ms: int | None = None, progress: bool = False) -> None:
+        with self._lock:
+            if self._state.get("status") != "running":
+                return
+            event_ts = int(ts_ms or int(datetime.now(timezone.utc).timestamp() * 1000))
+            self._state["heartbeat_ts_ms"] = max(int(self._state.get("heartbeat_ts_ms") or 0), event_ts)
+            self._state["last_event_ts_ms"] = max(int(self._state.get("last_event_ts_ms") or 0), event_ts)
+            if progress:
+                previous = self._state.get("last_progress_ts_ms")
+                self._state["last_progress_ts_ms"] = max(int(previous or 0), event_ts)
+            self._flush_locked()
+
+    def mark_completed(self, *, ts_ms: int | None = None) -> None:
+        with self._lock:
+            ended_ts = int(ts_ms or int(datetime.now(timezone.utc).timestamp() * 1000))
+            self._state["status"] = "completed"
+            self._state["heartbeat_ts_ms"] = max(int(self._state.get("heartbeat_ts_ms") or 0), ended_ts)
+            self._state["last_event_ts_ms"] = max(int(self._state.get("last_event_ts_ms") or 0), ended_ts)
+            self._state["ended_ts_ms"] = ended_ts
+            self._state["ended_at_utc"] = _utc_iso_from_ms(ended_ts)
+            self._state["termination_reason"] = "completed"
+            self._flush_locked()
+
+    def mark_cancelled(self, *, reason: str = "cancelled", ts_ms: int | None = None) -> None:
+        with self._lock:
+            ended_ts = int(ts_ms or int(datetime.now(timezone.utc).timestamp() * 1000))
+            self._state["status"] = "cancelled"
+            self._state["heartbeat_ts_ms"] = max(int(self._state.get("heartbeat_ts_ms") or 0), ended_ts)
+            self._state["last_event_ts_ms"] = max(int(self._state.get("last_event_ts_ms") or 0), ended_ts)
+            self._state["ended_ts_ms"] = ended_ts
+            self._state["ended_at_utc"] = _utc_iso_from_ms(ended_ts)
+            self._state["termination_reason"] = str(reason or "cancelled")
+            self._flush_locked()
 
 
 def _to_serializable_outcome(outcome: TrialOutcome) -> dict[str, Any]:
@@ -731,6 +871,294 @@ def _to_serializable_outcome(outcome: TrialOutcome) -> dict[str, Any]:
         "scores": scores,
         "trace": outcome.trace,
     }
+
+
+def _trial_key_from_task_result_dict(task_result: dict[str, Any]) -> str | None:
+    payload = dict(task_result.get("payload") or {})
+    task_id = str(task_result.get("task_id") or "").strip()
+    agent_id = str(task_result.get("agent_id") or "").strip()
+    variant_id = str(payload.get("variant_id") or "default").strip() or "default"
+    sample_id = task_result.get("sample_id")
+    if not task_id or not agent_id or sample_id is None:
+        return None
+    return f"{task_id}::{agent_id}::{variant_id}::{sample_id}"
+
+
+def _outcome_from_serialized(row: dict[str, Any]) -> TrialOutcome:
+    from snowl.core import Score, TaskResult  # local to avoid import cycle
+
+    task_result = TaskResult.from_dict(dict(row.get("task_result") or {}))
+    scores = {
+        str(k): Score(
+            value=float(v.get("value") or 0.0),
+            explanation=v.get("explanation"),
+            metadata=dict(v.get("metadata") or {}),
+        )
+        for k, v in dict(row.get("scores") or {}).items()
+        if isinstance(v, dict)
+    }
+    return TrialOutcome(task_result=task_result, scores=scores, trace=dict(row.get("trace") or {}))
+
+
+def _classify_failure_from_serialized(row: dict[str, Any]) -> str:
+    task_result = dict(row.get("task_result") or {})
+    status = str(task_result.get("status") or "").strip().lower()
+    error = dict(task_result.get("error") or {})
+    code = str(error.get("code") or "").strip().lower()
+    message = str(error.get("message") or "").strip().lower()
+
+    if status == "cancelled":
+        return "user.cancelled"
+    if status == "incorrect":
+        return "semantic.failure"
+    if code.startswith("container_") or "docker" in code or "compose" in code or "docker" in message:
+        return "infra.container"
+    if code.startswith("scorer_") or "judge" in code or "judge" in message:
+        return "evaluation.judge"
+    if code.startswith("provider_") or "quota" in message or "rate limit" in message or "api" in message:
+        return "infra.provider"
+    if code.startswith("scheduler_"):
+        return "infra.scheduler"
+    if status in {"error", "limit_exceeded"}:
+        return "task.execution"
+    return "unknown"
+
+
+def _recovery_path(run_dir: Path) -> Path:
+    return run_dir / "recovery.json"
+
+
+def _attempts_jsonl_path(run_dir: Path) -> Path:
+    return run_dir / "attempts.jsonl"
+
+
+def _read_json_file(path: Path, *, default: Any) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return default
+
+
+def _bootstrap_recovery_state(*, run_dir: Path, run_id: str) -> dict[str, Any]:
+    recovery_path = _recovery_path(run_dir)
+    existing = _read_json_file(recovery_path, default=None)
+    if isinstance(existing, dict) and existing.get("run_id") == run_id:
+        existing.setdefault("attempts_by_trial", {})
+        existing.setdefault("effective_attempts", {})
+        existing.setdefault("sessions", [])
+        existing.setdefault("next_attempt_no", 1)
+        return existing
+
+    outcomes = _read_json_file(run_dir / "outcomes.json", default=[])
+    attempts_by_trial: dict[str, list[dict[str, Any]]] = {}
+    effective_attempts: dict[str, str] = {}
+    next_attempt_no = 1
+    for row in outcomes if isinstance(outcomes, list) else []:
+        if not isinstance(row, dict):
+            continue
+        task_result = dict(row.get("task_result") or {})
+        trial_key = _trial_key_from_task_result_dict(task_result)
+        if not trial_key:
+            continue
+        attempt_no = int(row.get("attempt_no") or 1)
+        attempt_id = str(row.get("attempt_id") or f"{trial_key}::attempt-{attempt_no:04d}")
+        payload = dict(task_result.get("payload") or {})
+        started_ts = None
+        ended_ts = None
+        timing = dict(task_result.get("timing") or {})
+        if timing:
+            started_ts = timing.get("started_at_ms")
+            ended_ts = timing.get("ended_at_ms")
+        attempt_row = {
+            "attempt_id": attempt_id,
+            "attempt_no": attempt_no,
+            "trial_key": trial_key,
+            "task_id": task_result.get("task_id"),
+            "agent_id": task_result.get("agent_id"),
+            "variant_id": payload.get("variant_id") or "default",
+            "sample_id": task_result.get("sample_id"),
+            "model": payload.get("model"),
+            "status": task_result.get("status"),
+            "failure_class": _classify_failure_from_serialized(row),
+            "effective": True,
+            "supersedes_attempt_id": None,
+            "superseded_by_attempt_id": None,
+            "started_ts_ms": started_ts,
+            "ended_ts_ms": ended_ts,
+            "duration_ms": (max(0, int(ended_ts) - int(started_ts)) if started_ts is not None and ended_ts is not None else None),
+            "retry_source": "initial_run",
+            "task_result": task_result,
+            "scores": dict(row.get("scores") or {}),
+            "trace": dict(row.get("trace") or {}),
+        }
+        attempts_by_trial.setdefault(trial_key, []).append(attempt_row)
+        effective_attempts[trial_key] = attempt_id
+        next_attempt_no = max(next_attempt_no, attempt_no + 1)
+
+    recovery = {
+        "schema_version": RESULT_SCHEMA_VERSION,
+        "run_id": run_id,
+        "attempts_by_trial": attempts_by_trial,
+        "effective_attempts": effective_attempts,
+        "sessions": [],
+        "next_attempt_no": next_attempt_no,
+    }
+    recovery_path.write_text(json.dumps(recovery, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_attempts_jsonl(run_dir=run_dir, recovery=recovery)
+    return recovery
+
+
+def _write_attempts_jsonl(*, run_dir: Path, recovery: dict[str, Any]) -> None:
+    rows: list[dict[str, Any]] = []
+    attempts_by_trial = recovery.get("attempts_by_trial") or {}
+    if isinstance(attempts_by_trial, dict):
+        for bucket in attempts_by_trial.values():
+            if isinstance(bucket, list):
+                for row in bucket:
+                    if isinstance(row, dict):
+                        rows.append(dict(row))
+    rows.sort(key=lambda row: (str(row.get("trial_key") or ""), int(row.get("attempt_no") or 0)))
+    with _attempts_jsonl_path(run_dir).open("w", encoding="utf-8") as fh:
+        for row in rows:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def _effective_recovery_rows(recovery: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    attempts_by_trial = recovery.get("attempts_by_trial") or {}
+    effective_attempts = recovery.get("effective_attempts") or {}
+    if not isinstance(attempts_by_trial, dict) or not isinstance(effective_attempts, dict):
+        return out
+    for trial_key, bucket in attempts_by_trial.items():
+        if not isinstance(bucket, list):
+            continue
+        effective_id = str(effective_attempts.get(trial_key) or "").strip()
+        for row in bucket:
+            if not isinstance(row, dict):
+                continue
+            if effective_id and str(row.get("attempt_id") or "") == effective_id:
+                out[str(trial_key)] = dict(row)
+                break
+    return out
+
+
+def _write_recovery_state(*, run_dir: Path, recovery: dict[str, Any]) -> None:
+    _recovery_path(run_dir).write_text(json.dumps(recovery, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_attempts_jsonl(run_dir=run_dir, recovery=recovery)
+
+
+def _attempt_status_from_outcome(outcome: TrialOutcome) -> str:
+    return str(outcome.task_result.status.value or "").strip().lower()
+
+
+def _attempt_is_success(outcome: TrialOutcome) -> bool:
+    return _attempt_status_from_outcome(outcome) == "success"
+
+
+def _attempt_is_terminal_status(status: str) -> bool:
+    return status in {"success", "incorrect", "error", "limit_exceeded", "cancelled"}
+
+
+def _recovery_retry_allowed(outcome: TrialOutcome) -> bool:
+    return not _attempt_is_success(outcome)
+
+
+def _record_recovery_attempt(
+    *,
+    recovery: dict[str, Any],
+    effective_rows: dict[str, dict[str, Any]],
+    key: str,
+    trial: PlanTrial,
+    outcome: TrialOutcome,
+    retry_source: str,
+    current_effective_outcomes: dict[str, TrialOutcome],
+) -> dict[str, Any]:
+    previous = effective_rows.get(key)
+    previous_attempt_id = str((previous or {}).get("attempt_id") or "").strip() or None
+    attempts_by_trial = recovery.setdefault("attempts_by_trial", {})
+    attempts_by_trial.setdefault(key, [])
+    bucket = attempts_by_trial.get(key)
+    attempt_no = len(bucket) + 1 if isinstance(bucket, list) else 1
+    serializable = _to_serializable_outcome(outcome)
+    failure_class = _classify_failure_from_serialized(serializable)
+    task_result = dict(serializable.get("task_result") or {})
+    payload = dict(task_result.get("payload") or {})
+    timing = dict(task_result.get("timing") or {})
+    started_ts = timing.get("started_at_ms")
+    ended_ts = timing.get("ended_at_ms")
+    attempt_row = {
+        "attempt_id": f"{key}::attempt-{attempt_no:04d}",
+        "attempt_no": attempt_no,
+        "trial_key": key,
+        "task_id": task_result.get("task_id"),
+        "agent_id": task_result.get("agent_id"),
+        "variant_id": payload.get("variant_id") or trial.variant_id,
+        "sample_id": task_result.get("sample_id"),
+        "model": payload.get("model") or trial.model,
+        "status": task_result.get("status"),
+        "failure_class": failure_class,
+        "effective": True,
+        "supersedes_attempt_id": previous_attempt_id,
+        "superseded_by_attempt_id": None,
+        "started_ts_ms": started_ts,
+        "ended_ts_ms": ended_ts,
+        "duration_ms": (max(0, int(ended_ts) - int(started_ts)) if started_ts is not None and ended_ts is not None else None),
+        "retry_source": retry_source,
+        "task_result": task_result,
+        "scores": dict(serializable.get("scores") or {}),
+        "trace": dict(serializable.get("trace") or {}),
+    }
+    if isinstance(attempts_by_trial[key], list):
+        for row in attempts_by_trial[key]:
+            if isinstance(row, dict):
+                row["effective"] = False
+                if previous_attempt_id and str(row.get("attempt_id") or "") == previous_attempt_id:
+                    row["superseded_by_attempt_id"] = attempt_row["attempt_id"]
+        attempts_by_trial[key].append(attempt_row)
+    recovery.setdefault("effective_attempts", {})[key] = attempt_row["attempt_id"]
+    effective_rows[key] = attempt_row
+    current_effective_outcomes[key] = outcome
+    return attempt_row
+
+
+def _resolve_run_dir_for_id(base_dir: Path, run_id: str) -> Path:
+    pointer = base_dir / ".snowl" / "runs" / "by_run_id" / run_id
+    if pointer.exists() or pointer.is_symlink():
+        try:
+            if pointer.is_symlink():
+                return pointer.resolve()
+            raw = pointer.read_text(encoding="utf-8").strip()
+            if raw:
+                target = Path(raw)
+                return target if target.is_absolute() else (pointer.parent / target).resolve()
+        except Exception:
+            pass
+    direct = base_dir / ".snowl" / "runs" / run_id.removeprefix("run-")
+    if direct.exists():
+        return direct.resolve()
+    raise SnowlValidationError(f"Run not found for retry: {run_id}")
+
+
+def _count_existing_events(path: Path) -> int:
+    if not path.exists():
+        return 0
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            return sum(1 for line in fh if line.strip())
+    except Exception:
+        return 0
+
+
+def _pid_alive(pid: int | None) -> bool:
+    if pid is None or int(pid) <= 0:
+        return False
+    try:
+        os.kill(int(pid), 0)
+    except OSError:
+        return False
+    except Exception:
+        return False
+    return True
 
 
 def _prepare_run_artifacts_dir(*, base_dir: Path, run_id: str) -> Path:
@@ -787,11 +1215,11 @@ def _benchmark_name_for_task(task: Task) -> str:
 class _LiveEventsWriter:
     """Append-only live events writer with stable event ids."""
 
-    def __init__(self, *, path: Path, run_id: str) -> None:
+    def __init__(self, *, path: Path, run_id: str, initial_event_index: int = 0) -> None:
         self._path = path
         self._run_id = run_id
         self._lock = threading.Lock()
-        self._event_index = 0
+        self._event_index = max(0, int(initial_event_index))
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._fh = self._path.open("a", encoding="utf-8")
 
@@ -838,6 +1266,7 @@ def _write_artifacts(
     profiling: dict[str, Any] | None = None,
     experiment_id: str | None = None,
     event_stream_mode: str = "batch_write",
+    manifest_extra: dict[str, Any] | None = None,
 ) -> Path:
     now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     if out_dir is None:
@@ -894,25 +1323,26 @@ def _write_artifacts(
             row["trial_index"] = idx
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-    events_jsonl_path = out_dir / "events.jsonl"
-    with events_jsonl_path.open("w", encoding="utf-8") as f:
-        for idx, row in enumerate(event_rows or [], start=1):
-            row_dict = dict(row)
-            event_index = int(row_dict.get("event_index") or idx)
-            event_id = str(row_dict.get("event_id") or f"{run_id}:{event_index}")
-            event_row = {
-                "schema_version": RESULT_SCHEMA_VERSION,
-                "run_id": run_id,
-                "event_index": event_index,
-                "seq": event_index,
-                "event_id": event_id,
-                **row_dict,
-            }
-            event_row["run_id"] = run_id
-            event_row["event_index"] = event_index
-            event_row["seq"] = event_index
-            event_row["event_id"] = event_id
-            f.write(json.dumps(event_row, ensure_ascii=False) + "\n")
+    if event_rows is not None:
+        events_jsonl_path = out_dir / "events.jsonl"
+        with events_jsonl_path.open("w", encoding="utf-8") as f:
+            for idx, row in enumerate(event_rows or [], start=1):
+                row_dict = dict(row)
+                event_index = int(row_dict.get("event_index") or idx)
+                event_id = str(row_dict.get("event_id") or f"{run_id}:{event_index}")
+                event_row = {
+                    "schema_version": RESULT_SCHEMA_VERSION,
+                    "run_id": run_id,
+                    "event_index": event_index,
+                    "seq": event_index,
+                    "event_id": event_id,
+                    **row_dict,
+                }
+                event_row["run_id"] = run_id
+                event_row["event_index"] = event_index
+                event_row["seq"] = event_index
+                event_row["event_id"] = event_id
+                f.write(json.dumps(event_row, ensure_ascii=False) + "\n")
 
     metrics_wide_path = out_dir / "metrics_wide.csv"
     metric_names = sorted(
@@ -987,28 +1417,29 @@ def _write_artifacts(
         json.dumps(diagnostics_index, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
+    manifest_payload = {
+        "schema_version": RESULT_SCHEMA_VERSION,
+        "result_schema_uri": RESULT_SCHEMA_URI,
+        "aggregate_schema_uri": AGGREGATE_SCHEMA_URI,
+        "run_id": run_id,
+        "experiment_id": experiment_id,
+        "benchmark": profiling.get("run", {}).get("benchmark") if isinstance(profiling, dict) else None,
+        "created_at_utc": now,
+        "status": "completed",
+        "rerun_command": rerun_command,
+        "diagnostics_count": len(diagnostics_index),
+        "event_stream_mode": event_stream_mode,
+        "runtime_state": "runtime_state.json",
+        "research_exports": {
+            "trials_jsonl": "trials.jsonl",
+            "events_jsonl": "events.jsonl",
+            "metrics_wide_csv": "metrics_wide.csv",
+        },
+    }
+    if manifest_extra:
+        manifest_payload.update(dict(manifest_extra))
     (out_dir / "manifest.json").write_text(
-        json.dumps(
-            {
-                "schema_version": RESULT_SCHEMA_VERSION,
-                "result_schema_uri": RESULT_SCHEMA_URI,
-                "aggregate_schema_uri": AGGREGATE_SCHEMA_URI,
-                "run_id": run_id,
-                "experiment_id": experiment_id,
-                "benchmark": profiling.get("run", {}).get("benchmark") if isinstance(profiling, dict) else None,
-                "created_at_utc": now,
-                "rerun_command": rerun_command,
-                "diagnostics_count": len(diagnostics_index),
-                "event_stream_mode": event_stream_mode,
-                "research_exports": {
-                    "trials_jsonl": "trials.jsonl",
-                    "events_jsonl": "events.jsonl",
-                    "metrics_wide_csv": "metrics_wide.csv",
-                },
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
+        json.dumps(manifest_payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
@@ -1517,6 +1948,9 @@ async def run_eval_with_components(
     project_config: ProjectConfig | None = None,
     experiment_id: str | None = None,
     on_run_bootstrap: Callable[[EvalRunBootstrap], None] | None = None,
+    source_metadata: dict[str, Any] | None = None,
+    retry_run_id: str | None = None,
+    retry_run_dir: Path | None = None,
 ) -> EvalRunResult:
     tasks = _select_by_id(tasks, task_filter, lambda t: t.task_id)
     agents = _select_by_id(agents, agent_filter, lambda a: getattr(a, "agent_id"))
@@ -1558,15 +1992,26 @@ async def run_eval_with_components(
     )
 
     run_started = int(datetime.now(timezone.utc).timestamp() * 1000)
-    run_id = datetime.now(timezone.utc).strftime("run-%Y%m%dT%H%M%SZ")
+    retry_mode = retry_run_id is not None
+    recovery_config = project_config.runtime.recovery if project_config is not None else ProjectRecoveryConfig()
+    auto_retry_enabled = bool(recovery_config.auto_retry_non_success)
+    max_auto_retries_per_trial = max(0, int(recovery_config.max_auto_retries_per_trial))
+    auto_retry_backoff_ms = max(0, int(recovery_config.backoff_ms))
+    run_id = str(retry_run_id or datetime.now(timezone.utc).strftime("run-%Y%m%dT%H%M%SZ"))
     if not experiment_id:
         experiment_id = _default_experiment_id(base_dir=base_dir, started_ms=run_started)
-    artifacts_dir_live = _prepare_run_artifacts_dir(base_dir=base_dir, run_id=run_id)
+    artifacts_dir_live = (retry_run_dir.resolve() if retry_run_dir is not None else _prepare_run_artifacts_dir(base_dir=base_dir, run_id=run_id))
     live_run_log_path = artifacts_dir_live / "run.log"
     live_run_log_path.touch(exist_ok=True)
     live_events_path = artifacts_dir_live / "events.jsonl"
-    event_writer = _LiveEventsWriter(path=live_events_path, run_id=run_id)
+    event_writer = _LiveEventsWriter(
+        path=live_events_path,
+        run_id=run_id,
+        initial_event_index=(_count_existing_events(live_events_path) if retry_mode else 0),
+    )
     plan = _build_plan(tasks, agents)
+    recovery = _bootstrap_recovery_state(run_dir=artifacts_dir_live, run_id=run_id)
+    effective_rows = _effective_recovery_rows(recovery)
     if renderer:
         bench_name = None
         if tasks:
@@ -1610,7 +2055,7 @@ async def run_eval_with_components(
 
     checkpoint = (
         _load_checkpoint(base_dir, checkpoint_key)
-        if resume
+        if (resume and not retry_mode)
         else {"completed": {}, "in_progress": {}, "failed_keys": [], "meta": {}}
     )
     checkpoint.setdefault("completed", {})
@@ -1619,17 +2064,25 @@ async def run_eval_with_components(
     checkpoint.setdefault("meta", {})
 
     failed_only_keys: set[str] = set()
-    if rerun_failed_only:
+    if rerun_failed_only and not retry_mode:
         failed_only_keys = _failed_trial_keys_from_latest_run(base_dir)
         if not failed_only_keys:
             raise SnowlValidationError("No failed trials found in latest run for rerun-failed-only.")
 
     outcomes: list[TrialOutcome] = []
+    effective_outcomes_by_key: dict[str, TrialOutcome] = {}
     run_log_lines: list[str] = []
     event_rows: list[dict[str, Any]] = []
     task_monitor = TaskMonitor()
     benchmark_names = sorted({_benchmark_name_for_task(task) for task in tasks})
     benchmark_hint = benchmark_names[0] if len(benchmark_names) == 1 else "mixed"
+    runtime_state_writer = _LiveRunStateWriter(
+        path=artifacts_dir_live / "runtime_state.json",
+        run_id=run_id,
+        experiment_id=str(experiment_id),
+        benchmark=benchmark_hint,
+        started_ts_ms=run_started,
+    )
 
     def _log(message: str) -> None:
         ts = datetime.now(timezone.utc).isoformat()
@@ -1650,6 +2103,21 @@ async def run_eval_with_components(
             benchmark_hint=benchmark_hint,
         )
         persisted = event_writer.append(enriched)
+        event_name = str(persisted.get("event") or "").strip()
+        progress_event_names = {
+            "runtime.trial.start",
+            "runtime.trial.finish",
+            "runtime.trial.error",
+            "runtime.scorer.start",
+            "runtime.scorer.finish",
+            "runtime.model.query.start",
+            "runtime.model.query.finish",
+            "runtime.agent.step",
+        }
+        runtime_state_writer.record_event(
+            ts_ms=int(persisted.get("ts_ms") or int(datetime.now(timezone.utc).timestamp() * 1000)),
+            progress=event_name in progress_event_names,
+        )
         event_rows.append(dict(persisted))
         if trial is not None:
             for synthetic in _derive_pretask_events(persisted):
@@ -1661,6 +2129,10 @@ async def run_eval_with_components(
                     benchmark_hint=benchmark_hint,
                 )
                 persisted_synth = event_writer.append(synthetic_enriched)
+                runtime_state_writer.record_event(
+                    ts_ms=int(persisted_synth.get("ts_ms") or int(datetime.now(timezone.utc).timestamp() * 1000)),
+                    progress=False,
+                )
                 event_rows.append(dict(persisted_synth))
         return persisted
 
@@ -1679,14 +2151,29 @@ async def run_eval_with_components(
     if renderer and hasattr(renderer, "render_runtime_event"):
         renderer.render_runtime_event(model_profile_evt)
     completed = checkpoint.get("completed", {})
-    for raw in completed.values():
-        # restore checkpointed outcomes for summary/compare continuity
-        tr_data = raw["task_result"]
-        scores_data = raw.get("scores", {})
-        from snowl.core import Score, TaskResult  # local to avoid import cycle
-        task_result = TaskResult.from_dict(tr_data)
-        scores = {k: Score(value=v["value"], explanation=v.get("explanation"), metadata=v.get("metadata", {})) for k, v in scores_data.items()}
-        outcomes.append(TrialOutcome(task_result=task_result, scores=scores, trace=raw.get("trace", {})))
+    if effective_rows:
+        for key, raw in effective_rows.items():
+            outcome = _outcome_from_serialized(
+                {
+                    "task_result": raw.get("task_result") or {},
+                    "scores": raw.get("scores") or {},
+                    "trace": raw.get("trace") or {},
+                }
+            )
+            effective_outcomes_by_key[key] = outcome
+            outcomes.append(outcome)
+            _seed_task_monitor_from_serialized_outcome(
+                task_monitor,
+                {
+                    "task_result": raw.get("task_result") or {},
+                    "scores": raw.get("scores") or {},
+                },
+            )
+    else:
+        for key, raw in completed.items():
+            outcome = _outcome_from_serialized(raw)
+            effective_outcomes_by_key[key] = outcome
+            outcomes.append(outcome)
 
     success = incorrect = other = 0
     for existing in outcomes:
@@ -1701,9 +2188,14 @@ async def run_eval_with_components(
     executable_trials: list[PlanTrial] = []
     for trial in plan.trials:
         key = _trial_key(trial)
-        if rerun_failed_only and key not in failed_only_keys:
+        if retry_mode:
+            effective_row = effective_rows.get(key)
+            effective_status = str(((effective_row or {}).get("task_result") or {}).get("status") or "").strip().lower()
+            if effective_row is not None and effective_status == "success":
+                continue
+        elif rerun_failed_only and key not in failed_only_keys:
             continue
-        if resume and key in completed:
+        if (resume and not retry_mode) and key in completed:
             continue
         executable_trials.append(trial)
 
@@ -1738,7 +2230,18 @@ async def run_eval_with_components(
             sample_id=trial.sample_id,
         )
 
-    total = len(executable_trials) + len(outcomes)
+    total = len(plan.trials)
+    manifest_extra = {}
+    if source_metadata:
+        manifest_extra["source"] = dict(source_metadata)
+    manifest_extra["recovery"] = {
+        "ledger": "recovery.json",
+        "attempts_jsonl": "attempts.jsonl",
+        "mode": "retry" if retry_mode else "inline",
+        "auto_retry_non_success": auto_retry_enabled,
+        "max_auto_retries_per_trial": max_auto_retries_per_trial,
+        "backoff_ms": auto_retry_backoff_ms,
+    }
     _write_live_run_metadata(
         out_dir=artifacts_dir_live,
         run_id=run_id,
@@ -1749,6 +2252,7 @@ async def run_eval_with_components(
         controls=scheduler.controls(),
         trial_count=total,
         event_stream_mode="live_append",
+        manifest_extra=manifest_extra,
     )
     if on_run_bootstrap is not None:
         on_run_bootstrap(
@@ -1775,8 +2279,48 @@ async def run_eval_with_components(
         "benchmark": benchmark_hint,
         "controls": scheduler.controls(),
     }
-    if resume:
+    if resume and not retry_mode:
         _save_checkpoint(base_dir, checkpoint_key, checkpoint)
+
+    if recovery is not None:
+        recovery.setdefault("sessions", [])
+        recovery_session = {
+            "session_id": f"{'retry' if retry_mode else 'run'}-{run_started}",
+            "started_ts_ms": run_started,
+            "ended_ts_ms": None,
+            "status": "running",
+            "mode": "manual_retry" if retry_mode else "initial_run",
+            "selected_trial_keys": sorted(_trial_key(trial) for trial in executable_trials),
+        }
+        recovery["sessions"].append(recovery_session)
+        _write_recovery_state(run_dir=artifacts_dir_live, recovery=recovery)
+    else:
+        recovery_session = None
+
+    if retry_mode and not executable_trials:
+        summary = _summarize(outcomes)
+        rerun_cmd = rerun_command or f"snowl retry {run_id}"
+        event_writer.close()
+        runtime_state_writer.mark_completed(ts_ms=run_started)
+        _update_live_manifest_status(
+            artifacts_dir_live,
+            status="completed",
+            ended_ts_ms=run_started,
+            termination_reason="completed",
+        )
+        if recovery_session is not None:
+            recovery_session["ended_ts_ms"] = run_started
+            recovery_session["status"] = "noop"
+            _write_recovery_state(run_dir=artifacts_dir_live, recovery=recovery)
+        if renderer:
+            renderer.render_summary(summary, str(artifacts_dir_live), rerun_cmd)
+        return EvalRunResult(
+            outcomes=outcomes,
+            plan=plan,
+            summary=summary,
+            artifacts_dir=str(artifacts_dir_live),
+            rerun_command=rerun_cmd,
+        )
 
     has_sandbox_tasks = any(getattr(t.env_spec, "sandbox_spec", None) is not None for t in tasks)
     shared_sandbox_runtime = (
@@ -1786,6 +2330,7 @@ async def run_eval_with_components(
     )
     checkpoint_lock = asyncio.Lock()
     done_count = len(outcomes)
+    display_total = max(1, len(executable_trials)) if retry_mode else max(1, total)
     input_pump = StdinInputPump(interaction_controller) if interaction_controller is not None else None
     if input_pump is not None:
         started = input_pump.start()
@@ -1822,10 +2367,15 @@ async def run_eval_with_components(
             if renderer and hasattr(renderer, "render_runtime_event"):
                 renderer.render_runtime_event(evt)
 
-    async def _run_one(trial_index: int, trial: PlanTrial) -> tuple[int, PlanTrial, TrialOutcome]:
+    async def _run_one(
+        trial_index: int,
+        trial: PlanTrial,
+        *,
+        retry_source: str = "initial_run",
+    ) -> tuple[int, PlanTrial, TrialOutcome, dict[str, Any]]:
         nonlocal checkpoint
         key = _trial_key(trial)
-        if resume:
+        if resume and not retry_mode:
             async with checkpoint_lock:
                 checkpoint["in_progress"][key] = {
                     "task_id": trial.task_id,
@@ -1836,10 +2386,27 @@ async def run_eval_with_components(
                 _save_checkpoint(base_dir, checkpoint_key, checkpoint)
 
         if renderer:
-            renderer.render_trial_start(trial, trial_index, total)
+            renderer.render_trial_start(trial, trial_index, display_total)
         _log(
-            f"trial_start idx={trial_index}/{total} task={trial.task_id} agent={trial.agent_id} variant={trial.variant_id} sample={trial.sample_id}"
+            f"trial_start idx={trial_index}/{display_total} task={trial.task_id} agent={trial.agent_id} variant={trial.variant_id} sample={trial.sample_id} retry_source={retry_source}"
         )
+        if retry_source != "initial_run":
+            retry_evt = normalize_ui_event(
+                {
+                    "event": "runtime.trial.retry.start",
+                    "message": f"{retry_source} attempt started",
+                    "retry_source": retry_source,
+                    "task_id": trial.task_id,
+                    "agent_id": trial.agent_id,
+                    "variant_id": trial.variant_id,
+                    "sample_id": trial.sample_id,
+                },
+                run_id=run_id,
+                ts_ms=int(datetime.now(timezone.utc).timestamp() * 1000),
+            ).to_dict()
+            _record_event(retry_evt, trial=trial)
+            if renderer and hasattr(renderer, "render_runtime_event"):
+                renderer.render_runtime_event(retry_evt)
 
         def _on_runtime_event(event: dict[str, Any]) -> None:
             raw = dict(event or {})
@@ -1872,21 +2439,62 @@ async def run_eval_with_components(
         async with scheduler.scoring_slot():
             outcome = await score_trial_phase(request, partial)
 
-        if resume:
-            async with checkpoint_lock:
-                completed[key] = _to_serializable_outcome(outcome)
+        async with checkpoint_lock:
+            attempt_row = _record_recovery_attempt(
+                recovery=recovery,
+                effective_rows=effective_rows,
+                key=key,
+                trial=trial,
+                outcome=outcome,
+                retry_source=retry_source,
+                current_effective_outcomes=effective_outcomes_by_key,
+            )
+            outcomes.clear()
+            outcomes.extend(list(effective_outcomes_by_key.values()))
+            _write_recovery_state(run_dir=artifacts_dir_live, recovery=recovery)
+            if resume and not retry_mode:
+                completed[key] = _to_serializable_outcome(effective_outcomes_by_key[key])
                 checkpoint["completed"] = completed
                 checkpoint["in_progress"].pop(key, None)
                 checkpoint["failed_keys"] = sorted(
                     k
                     for k, v in completed.items()
                     if v.get("task_result", {}).get("status")
-                    in {"error", "limit_exceeded", "cancelled"}
+                    in {"error", "limit_exceeded", "cancelled", "incorrect"}
                 )
                 _save_checkpoint(base_dir, checkpoint_key, checkpoint)
-        return trial_index, trial, outcome
 
-    async def _bounded_run(trial_index: int, trial: PlanTrial) -> tuple[int, PlanTrial, TrialOutcome]:
+        if retry_source != "initial_run" and _attempt_is_success(outcome):
+            recovered_evt = normalize_ui_event(
+                {
+                    "event": "runtime.trial.recovered",
+                    "message": f"{retry_source} recovered trial",
+                    "retry_source": retry_source,
+                    "attempt_no": attempt_row.get("attempt_no"),
+                    "task_id": trial.task_id,
+                    "agent_id": trial.agent_id,
+                    "variant_id": trial.variant_id,
+                    "sample_id": trial.sample_id,
+                },
+                run_id=run_id,
+                ts_ms=int(datetime.now(timezone.utc).timestamp() * 1000),
+            ).to_dict()
+            _record_event(recovered_evt, trial=trial)
+            if renderer and hasattr(renderer, "render_runtime_event"):
+                renderer.render_runtime_event(recovered_evt)
+
+        if resume and not retry_mode:
+            async with checkpoint_lock:
+                checkpoint["in_progress"].pop(key, None)
+                _save_checkpoint(base_dir, checkpoint_key, checkpoint)
+        return trial_index, trial, outcome, attempt_row
+
+    async def _bounded_run(
+        trial_index: int,
+        trial: PlanTrial,
+        *,
+        retry_source: str = "initial_run",
+    ) -> tuple[int, PlanTrial, TrialOutcome, dict[str, Any]]:
         if interaction_controller is not None:
             _drain_interaction_inputs(
                 interaction_controller=interaction_controller,
@@ -1904,9 +2512,10 @@ async def run_eval_with_components(
                     event_sink=_record_event,
                 )
                 await asyncio.sleep(0.05)
-        return await _run_one(trial_index, trial)
+        return await _run_one(trial_index, trial, retry_source=retry_source)
 
     interaction_stop = asyncio.Event()
+    runtime_state_stop = asyncio.Event()
 
     async def _interaction_loop() -> None:
         if interaction_controller is None:
@@ -1944,49 +2553,178 @@ async def run_eval_with_components(
         else None
     )
 
-    futures = [
-        asyncio.create_task(_bounded_run(i, trial))
-        for i, trial in enumerate(executable_trials, start=len(outcomes) + 1)
-    ]
+    async def _runtime_state_loop() -> None:
+        while not runtime_state_stop.is_set():
+            runtime_state_writer.heartbeat()
+            await asyncio.sleep(1.0)
 
+    runtime_state_task = asyncio.create_task(_runtime_state_loop())
+
+    max_inflight_trials = max(
+        1,
+        int(budgets["max_running_trials"] or 1) + max(0, int(budgets["max_scoring_tasks"] or 0)),
+    )
+    fresh_queue: list[tuple[int, PlanTrial]] = list(enumerate(executable_trials, start=1))
+    recovery_queue: list[dict[str, Any]] = []
+    inflight: set[asyncio.Task[tuple[int, PlanTrial, TrialOutcome, dict[str, Any]]]] = set()
+
+    def _auto_retry_count(trial_key: str) -> int:
+        bucket = (((recovery or {}).get("attempts_by_trial") or {}).get(trial_key) or [])
+        if not isinstance(bucket, list):
+            return 0
+        return sum(
+            1
+            for row in bucket
+            if isinstance(row, dict) and str(row.get("retry_source") or "") == "auto_retry"
+        )
+
+    def _schedule_auto_retry(*, trial_index: int, trial: PlanTrial, attempt_row: dict[str, Any]) -> None:
+        if not auto_retry_enabled:
+            return
+        if str(recovery_config.retry_timing or "deferred").strip().lower() != "deferred":
+            return
+        key = _trial_key(trial)
+        if _auto_retry_count(key) >= max_auto_retries_per_trial:
+            return
+        recovery_queue.append(
+            {
+                "trial_index": trial_index,
+                "trial": trial,
+                "retry_source": "auto_retry",
+                "ready_at_ms": int(datetime.now(timezone.utc).timestamp() * 1000) + auto_retry_backoff_ms,
+                "supersedes_attempt_id": attempt_row.get("attempt_id"),
+            }
+        )
+        retry_scheduled_evt = normalize_ui_event(
+            {
+                "event": "runtime.trial.retry.scheduled",
+                "message": "auto retry scheduled",
+                "retry_source": "auto_retry",
+                "attempt_no": attempt_row.get("attempt_no"),
+                "failure_class": attempt_row.get("failure_class"),
+                "task_id": trial.task_id,
+                "agent_id": trial.agent_id,
+                "variant_id": trial.variant_id,
+                "sample_id": trial.sample_id,
+            },
+            run_id=run_id,
+            ts_ms=int(datetime.now(timezone.utc).timestamp() * 1000),
+        ).to_dict()
+        _record_event(retry_scheduled_evt, trial=trial)
+        if renderer and hasattr(renderer, "render_runtime_event"):
+            renderer.render_runtime_event(retry_scheduled_evt)
+
+    cancelled_reason: str | None = None
     try:
-        for fut in asyncio.as_completed(futures):
-            i, trial, outcome = await fut
-            outcomes.append(outcome)
-            done_count += 1
-
-            status = outcome.task_result.status.value
-            if status == "success":
-                success += 1
-            elif status == "incorrect":
-                incorrect += 1
-            else:
-                other += 1
-
-            if renderer:
-                renderer.render_trial_finish(outcome)
-                renderer.render_global(
-                    done=done_count,
-                    total=total,
-                    success=success,
-                    incorrect=incorrect,
-                    other=other,
+        while fresh_queue or recovery_queue or inflight:
+            while len(inflight) < max_inflight_trials:
+                dispatch_item: dict[str, Any] | None = None
+                if fresh_queue:
+                    trial_index, trial = fresh_queue.pop(0)
+                    dispatch_item = {
+                        "trial_index": trial_index,
+                        "trial": trial,
+                        "retry_source": "initial_run",
+                    }
+                else:
+                    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+                    ready_idx = next(
+                        (idx for idx, item in enumerate(recovery_queue) if int(item.get("ready_at_ms") or 0) <= now_ms),
+                        None,
+                    )
+                    if ready_idx is not None:
+                        dispatch_item = recovery_queue.pop(ready_idx)
+                if dispatch_item is None:
+                    break
+                inflight.add(
+                    asyncio.create_task(
+                        _bounded_run(
+                            int(dispatch_item["trial_index"]),
+                            dispatch_item["trial"],
+                            retry_source=str(dispatch_item.get("retry_source") or "initial_run"),
+                        )
+                    )
                 )
-                if hasattr(renderer, "render_compare"):
-                    renderer.render_compare(aggregate_outcomes(outcomes))
-            _log(
-                f"trial_finish idx={i}/{total} task={trial.task_id} agent={trial.agent_id} variant={trial.variant_id} sample={trial.sample_id} status={status}"
-            )
+
+            if not inflight:
+                if recovery_queue:
+                    next_ready_ms = min(int(item.get("ready_at_ms") or 0) for item in recovery_queue)
+                    sleep_ms = max(1, min(250, next_ready_ms - int(datetime.now(timezone.utc).timestamp() * 1000)))
+                    await asyncio.sleep(sleep_ms / 1000.0)
+                    continue
+                break
+
+            done_set, pending_set = await asyncio.wait(inflight, return_when=asyncio.FIRST_COMPLETED)
+            inflight = set(pending_set)
+            for fut in done_set:
+                i, trial, outcome, attempt_row = await fut
+                if _recovery_retry_allowed(outcome):
+                    _schedule_auto_retry(trial_index=i, trial=trial, attempt_row=attempt_row)
+                status = outcome.task_result.status.value
+                done_count = len(outcomes)
+                success = incorrect = other = 0
+                for existing in outcomes:
+                    existing_status = existing.task_result.status.value
+                    if existing_status == "success":
+                        success += 1
+                    elif existing_status == "incorrect":
+                        incorrect += 1
+                    else:
+                        other += 1
+
+                if renderer:
+                    renderer.render_trial_finish(outcome)
+                    renderer.render_global(
+                        done=done_count,
+                        total=total,
+                        success=success,
+                        incorrect=incorrect,
+                        other=other,
+                    )
+                    if hasattr(renderer, "render_compare"):
+                        renderer.render_compare(aggregate_outcomes(outcomes))
+                _log(
+                    f"trial_finish idx={i}/{total} task={trial.task_id} agent={trial.agent_id} variant={trial.variant_id} sample={trial.sample_id} status={status} attempt={attempt_row.get('attempt_no')} retry_source={attempt_row.get('retry_source')}"
+                )
+    except asyncio.CancelledError:
+        cancelled_reason = "cancelled"
+        raise
+    except KeyboardInterrupt:
+        cancelled_reason = "cancelled"
+        raise
+    except Exception as exc:
+        cancelled_reason = f"error:{exc.__class__.__name__}"
+        raise
     finally:
         interaction_stop.set()
+        runtime_state_stop.set()
         if interaction_task is not None:
             interaction_task.cancel()
             try:
                 await interaction_task
             except asyncio.CancelledError:
                 pass
+        runtime_state_task.cancel()
+        try:
+            await runtime_state_task
+        except asyncio.CancelledError:
+            pass
         if input_pump is not None:
             input_pump.stop()
+        if cancelled_reason is not None:
+            ended_ts = int(datetime.now(timezone.utc).timestamp() * 1000)
+            runtime_state_writer.mark_cancelled(reason=cancelled_reason, ts_ms=ended_ts)
+            _update_live_manifest_status(
+                artifacts_dir_live,
+                status="cancelled",
+                ended_ts_ms=ended_ts,
+                termination_reason=cancelled_reason,
+            )
+            if recovery_session is not None and recovery is not None:
+                recovery_session["ended_ts_ms"] = ended_ts
+                recovery_session["status"] = "cancelled"
+                _write_recovery_state(run_dir=artifacts_dir_live, recovery=recovery)
+        event_writer.close()
 
     summary = _summarize(outcomes)
     rerun_cmd = rerun_command or _build_rerun_command(
@@ -2057,7 +2795,10 @@ async def run_eval_with_components(
         "task_monitor": _task_monitor_rows(task_monitor, model_by_trial_key=_trial_models(plan)),
     }
     _log(f"summary {json.dumps(summary.__dict__, ensure_ascii=False)}")
-    event_writer.close()
+    if recovery_session is not None and recovery is not None:
+        recovery_session["ended_ts_ms"] = run_ended
+        recovery_session["status"] = "completed"
+        _write_recovery_state(run_dir=artifacts_dir_live, recovery=recovery)
     artifacts_dir = _write_artifacts(
         base_dir=base_dir,
         run_id=run_id,
@@ -2066,11 +2807,19 @@ async def run_eval_with_components(
         summary=summary,
         rerun_command=rerun_cmd,
         out_dir=artifacts_dir_live,
-        run_log_lines=run_log_lines,
-        event_rows=event_rows,
+        run_log_lines=(None if retry_mode else run_log_lines),
+        event_rows=(None if retry_mode else event_rows),
         profiling=profiling,
         experiment_id=str(experiment_id),
         event_stream_mode="live_append",
+        manifest_extra=manifest_extra,
+    )
+    runtime_state_writer.mark_completed(ts_ms=run_ended)
+    _update_live_manifest_status(
+        artifacts_dir_live,
+        status="completed",
+        ended_ts_ms=run_ended,
+        termination_reason="completed",
     )
 
     if renderer:
@@ -2143,4 +2892,108 @@ async def run_eval(
         project_config=project_config,
         experiment_id=experiment_id,
         on_run_bootstrap=on_run_bootstrap,
+        source_metadata={
+            "kind": "eval",
+            "project_path": str(entry_path),
+            "project_root": str(base_dir),
+        },
+    )
+
+
+async def retry_run(
+    run_id: str,
+    *,
+    project_path: str | Path = ".",
+    renderer: EvalRenderer | None = None,
+    interaction_controller: Any | None = None,
+    max_running_trials: int | None = None,
+    max_container_slots: int | None = None,
+    max_builds: int | None = None,
+    max_scoring_tasks: int | None = None,
+    provider_budgets: dict[str, int] | None = None,
+    experiment_id: str | None = None,
+    on_run_bootstrap: Callable[[EvalRunBootstrap], None] | None = None,
+) -> EvalRunResult:
+    entry_hint = Path(project_path).resolve()
+    base_dir, project_config, _ = _resolve_project_entry(entry_hint)
+    run_dir = _resolve_run_dir_for_id(base_dir, run_id)
+    manifest = _read_json_file(run_dir / "manifest.json", default={})
+    runtime_state = _read_json_file(run_dir / "runtime_state.json", default={})
+    runtime_status = str(runtime_state.get("status") or manifest.get("status") or "").strip().lower()
+    owner_pid = int(runtime_state.get("owner_pid") or 0) if str(runtime_state.get("owner_pid") or "").strip() else 0
+    heartbeat_ts_ms = int(runtime_state.get("heartbeat_ts_ms") or 0) if str(runtime_state.get("heartbeat_ts_ms") or "").strip() else 0
+    heartbeat_fresh = heartbeat_ts_ms > 0 and (int(datetime.now(timezone.utc).timestamp() * 1000) - heartbeat_ts_ms) < 15_000
+    if runtime_status == "running" and (_pid_alive(owner_pid) or heartbeat_fresh):
+        raise SnowlValidationError(f"Run {run_id} is still active; stop it before retrying.")
+    source = dict(manifest.get("source") or {})
+    source_kind = str(source.get("kind") or "eval").strip().lower()
+
+    if source_kind == "bench":
+        from snowl.benchmarks import get_default_benchmark_registry
+
+        benchmark_name = str(source.get("benchmark") or manifest.get("benchmark") or "").strip()
+        if not benchmark_name:
+            raise SnowlValidationError(f"Run {run_id} is missing benchmark source metadata for retry.")
+        project_entry = Path(str(source.get("project_path") or entry_hint)).resolve()
+        registry = get_default_benchmark_registry()
+        adapter_kwargs = dict(source.get("benchmark_args") or {})
+        adapter = registry.create(benchmark_name, **adapter_kwargs)
+        tasks = adapter.load_tasks(
+            split=(str(source.get("split") or "test")),
+            limit=(int(source["limit"]) if source.get("limit") is not None else None),
+            filters=dict(source.get("benchmark_filters") or {}),
+        )
+        components = load_project_components(project_entry, require_task_file=False)
+        rerun_command = f"snowl retry {run_id}"
+        return await run_eval_with_components(
+            entry_path=project_entry,
+            base_dir=base_dir,
+            tasks=tasks,
+            agents=components.agents,
+            scorer=components.scorers[0],
+            tool_specs=components.tool_specs,
+            renderer=renderer,
+            rerun_command=rerun_command,
+            interaction_controller=interaction_controller,
+            max_running_trials=max_running_trials,
+            max_container_slots=max_container_slots,
+            max_builds=max_builds,
+            max_scoring_tasks=max_scoring_tasks,
+            provider_budgets=provider_budgets,
+            project_config=project_config,
+            experiment_id=experiment_id or str(manifest.get("experiment_id") or run_id),
+            on_run_bootstrap=on_run_bootstrap,
+            source_metadata=source,
+            retry_run_id=run_id,
+            retry_run_dir=run_dir,
+        )
+
+    project_entry = Path(str(source.get("project_path") or entry_hint)).resolve()
+    base_dir, project_config, _ = _resolve_project_entry(project_entry)
+    components = load_project_components(project_entry, require_task_file=True)
+    return await run_eval_with_components(
+        entry_path=project_entry,
+        base_dir=base_dir,
+        tasks=components.tasks,
+        agents=components.agents,
+        scorer=components.scorers[0],
+        tool_specs=components.tool_specs,
+        renderer=renderer,
+        rerun_command=f"snowl retry {run_id}",
+        interaction_controller=interaction_controller,
+        max_running_trials=max_running_trials,
+        max_container_slots=max_container_slots,
+        max_builds=max_builds,
+        max_scoring_tasks=max_scoring_tasks,
+        provider_budgets=provider_budgets,
+        project_config=project_config,
+        experiment_id=experiment_id or str(manifest.get("experiment_id") or run_id),
+        on_run_bootstrap=on_run_bootstrap,
+        source_metadata=source or {
+            "kind": "eval",
+            "project_path": str(project_entry),
+            "project_root": str(base_dir),
+        },
+        retry_run_id=run_id,
+        retry_run_dir=run_dir,
     )

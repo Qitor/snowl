@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Activity, ArrowLeft, CalendarClock, FlaskConical, RefreshCw } from "lucide-react";
 
-import { MatrixHeatmap } from "@/components/matrix-heatmap";
+import { MatrixBarChart } from "@/components/matrix-bar-chart";
 import { PretaskDrawer } from "@/components/pretask-drawer";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -14,7 +14,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { VirtualLogViewer } from "@/components/virtual-log-viewer";
-import type { RunSnapshot, RunSummaryResponse, RuntimeEvent } from "@/lib/types";
+import type { RunSnapshot, RunSummaryResponse, RuntimeEvent, TrialAttemptRow } from "@/lib/types";
 import { cn, formatDateTime, formatPercent, makeDisplayId, makeIdentityKey, makeTrialKey } from "@/lib/utils";
 
 type IdentityOption = {
@@ -143,6 +143,8 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
   const [runtimeEventFilter, setRuntimeEventFilter] = useState("attention");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTrialKey, setDrawerTrialKey] = useState("");
+  const [retrySubmitting, setRetrySubmitting] = useState(false);
+  const [retryFeedback, setRetryFeedback] = useState<string | null>(null);
 
   const runSummaryQuery = useQuery({
     queryKey: ["run-summary", runId, view],
@@ -206,8 +208,32 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
   const plannedTrials = Number(runSnapshot?.planned_trials || runSnapshot?.plan?.trial_count || progress.total || 0);
   const plannedTaskCount = Number(runSnapshot?.planned_tasks || (Array.isArray(runSnapshot?.plan?.task_ids) ? runSnapshot?.plan?.task_ids.length : 0));
   const scoredTrials = Number(runSummary?.scored_trials || runSnapshot?.scored_trials || 0);
+  const recoverableTrials = Number(runSummary?.recoverable_trials || runSnapshot?.recoverable_trials || 0);
+  const retriedTrials = Number(runSummary?.retried_trials || runSnapshot?.retried_trials || runSnapshot?.retry_attempts || 0);
+  const recoveredTrials = Number(runSummary?.recovered_trials || runSnapshot?.recovered_trials || runSnapshot?.recovered_count || 0);
+  const stillFailingTrials = Number(runSummary?.still_failing_trials || runSnapshot?.still_failing_trials || runSnapshot?.outstanding_failures || 0);
+  const unfinishedTrials = Number(runSummary?.unfinished_trials || runSnapshot?.unfinished_trials || Math.max(0, plannedTrials - progress.done));
   const attentionTaskCount = Number(runSnapshot?.attention_task_count || 0);
   const currentRunStatus = runSnapshot?.status || runSummary?.status || "running";
+
+  async function triggerRetry() {
+    setRetrySubmitting(true);
+    setRetryFeedback(null);
+    try {
+      const response = await fetch(`/api/runs/${encodeURIComponent(runId)}/retry`, {
+        method: "POST",
+      });
+      const payload = (await response.json()) as Record<string, unknown>;
+      if (!response.ok) {
+        throw new Error(String(payload.detail || `retry failed (${response.status})`));
+      }
+      setRetryFeedback(`Retry started for ${runId}. Web 会继续自动跟踪这次恢复。`);
+    } catch (error) {
+      setRetryFeedback(error instanceof Error ? error.message : "Retry failed");
+    } finally {
+      setRetrySubmitting(false);
+    }
+  }
 
   const identityLookup = useMemo(() => {
     const byFull = new Map<string, IdentityOption>();
@@ -647,6 +673,7 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
   const trialDetail = trialDetailQuery.data || null;
   const trialScores = ((trialDetail?.scores as Record<string, unknown> | undefined) || {}) as Record<string, unknown>;
   const trialStatus = String((trialDetail?.status as string | undefined) || "");
+  const attemptHistory = Array.isArray(trialDetail?.attempt_history) ? (trialDetail?.attempt_history as TrialAttemptRow[]) : [];
   const trialSections = [
     { key: "payload", title: "Task Payload", value: trialDetail?.sample_input },
     { key: "result", title: "Result Artifact", value: trialDetail?.final_output },
@@ -723,6 +750,33 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
                 </div>
               </div>
             ) : null}
+            {attemptHistory.length > 0 ? (
+              <div className="space-y-2 rounded-[24px] border bg-muted/20 p-4">
+                <div className="text-sm font-medium uppercase tracking-[0.16em] text-muted-foreground">Attempt History</div>
+                <div className="grid gap-2">
+                  {attemptHistory.map((attempt) => (
+                    <div key={String(attempt.attempt_id || attempt.attempt_no || "attempt")} className="rounded-2xl border bg-background p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant={attempt.effective ? "success" : "outline"}>{attempt.effective ? "effective" : "superseded"}</Badge>
+                        <span className="font-[family-name:var(--font-mono)] text-sm">attempt={String(attempt.attempt_no || "-")}</span>
+                        <span className="text-sm text-muted-foreground">{String(attempt.status || "unknown")}</span>
+                        {attempt.failure_class ? <Badge variant="outline">{attempt.failure_class}</Badge> : null}
+                        {attempt.retry_source ? <Badge variant="outline">{attempt.retry_source}</Badge> : null}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
+                        <span>started={formatDateTime(attempt.started_ts_ms || null)}</span>
+                        <span>ended={formatDateTime(attempt.ended_ts_ms || null)}</span>
+                        <span>duration={attempt.duration_ms == null ? "-" : `${attempt.duration_ms}ms`}</span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
+                        <span className="font-[family-name:var(--font-mono)] break-all">supersedes={attempt.supersedes_attempt_id || "-"}</span>
+                        <span className="font-[family-name:var(--font-mono)] break-all">superseded_by={attempt.superseded_by_attempt_id || "-"}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <div className="grid gap-3">
               {trialSections.length === 0 ? (
                 <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">暂无可展示字段。</div>
@@ -774,24 +828,39 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
               <Link href="/compare" className={cn(buttonVariants({ variant: "outline" }), "h-11 rounded-full px-5")}>
                 历史对比
               </Link>
+              <Button
+                variant="outline"
+                className="h-11 rounded-full px-5"
+                disabled={retrySubmitting || (status === "running" && Boolean(runSnapshot?.runner_alive))}
+                onClick={() => void triggerRetry()}
+              >
+                {retrySubmitting ? "Retrying..." : "Retry this run"}
+              </Button>
             </div>
             <div>
               <h1 className="text-5xl font-semibold tracking-[-0.04em] md:text-6xl">{benchmark} Run Workspace</h1>
               <p className="mt-3 font-[family-name:var(--font-mono)] text-base break-all text-muted-foreground md:text-lg">{runTitle}</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Badge variant={status === "running" ? "warning" : status === "cancelled" || progress.failed > 0 ? "danger" : "success"}>{status}</Badge>
+              <Badge variant={status === "running" ? "warning" : status === "cancelled" || status === "zombie" || progress.failed > 0 ? "danger" : "success"}>{status}</Badge>
               <Badge variant="outline">{benchmark}</Badge>
               <Badge variant="outline">variants {selectedVariantCount}</Badge>
               {status === "running" && runSnapshot?.stalled ? <Badge variant="danger">no recent progress</Badge> : null}
               {runSnapshot?.heartbeat_only ? <Badge variant="warning">heartbeat only</Badge> : null}
+              {runSnapshot?.observer_stale ? <Badge variant="warning">observer stale</Badge> : null}
+              {status === "running" && runSnapshot?.runner_alive ? <Badge variant="outline">runner alive</Badge> : null}
+              {status === "zombie" ? <Badge variant="danger">historical zombie</Badge> : null}
               {attentionTaskCount > 0 ? <Badge variant="warning">{attentionTaskCount} tasks need attention</Badge> : null}
+              {recoverableTrials > 0 ? <Badge variant="warning">{recoverableTrials} recoverable</Badge> : null}
+              {recoveredTrials > 0 ? <Badge variant="success">{recoveredTrials} recovered</Badge> : null}
+              {stillFailingTrials > 0 ? <Badge variant="danger">{stillFailingTrials} still failing</Badge> : null}
               {selectedModels.map((model) => (
                 <Badge key={model} variant="outline" className="max-w-[320px] truncate">
                   {model}
                 </Badge>
               ))}
             </div>
+            {retryFeedback ? <p className="text-sm text-muted-foreground">{retryFeedback}</p> : null}
           </div>
           <div className="grid gap-3 rounded-[28px] border border-white/80 bg-white/80 p-4 shadow-sm md:min-w-[320px]">
             <div className="flex items-center justify-between gap-3">
@@ -817,6 +886,24 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
               <div className="rounded-2xl border bg-muted/25 p-3">
                 <div className="text-sm text-muted-foreground">Visible tasks</div>
                 <div className="mt-2 text-3xl font-semibold">{runSnapshot?.visible_task_rows || taskRows.length}</div>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+              <div className="rounded-2xl border bg-muted/25 p-3">
+                <div className="text-sm text-muted-foreground">Recoverable</div>
+                <div className="mt-2 text-3xl font-semibold">{recoverableTrials}</div>
+              </div>
+              <div className="rounded-2xl border bg-muted/25 p-3">
+                <div className="text-sm text-muted-foreground">Recovered</div>
+                <div className="mt-2 text-3xl font-semibold text-success">{recoveredTrials}</div>
+              </div>
+              <div className="rounded-2xl border bg-muted/25 p-3">
+                <div className="text-sm text-muted-foreground">Still failing</div>
+                <div className="mt-2 text-3xl font-semibold text-danger">{stillFailingTrials}</div>
+              </div>
+              <div className="rounded-2xl border bg-muted/25 p-3">
+                <div className="text-sm text-muted-foreground">Retry attempts</div>
+                <div className="mt-2 text-3xl font-semibold">{retriedTrials}</div>
               </div>
             </div>
           </div>
@@ -882,7 +969,7 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="grid gap-3 md:grid-cols-6">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
                   <div className="rounded-[24px] border bg-[linear-gradient(180deg,rgba(240,253,250,0.95),rgba(255,255,255,0.92))] p-4">
                     <div className="text-base text-muted-foreground">Overall Progress</div>
                     <div className="mt-2 text-4xl font-semibold">{formatPercent(completionRate)}</div>
@@ -912,6 +999,26 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
                     <div className="mt-1 text-sm text-muted-foreground">
                       {scoredTrials}/{plannedTrials || progress.total}
                     </div>
+                  </div>
+                  <div className="rounded-[24px] border bg-[linear-gradient(180deg,rgba(255,251,235,0.95),rgba(255,255,255,0.92))] p-4">
+                    <div className="text-base text-muted-foreground">Recoverable</div>
+                    <div className="mt-2 text-4xl font-semibold text-warning">{recoverableTrials}</div>
+                    <div className="mt-1 text-sm text-muted-foreground">unfinished + non-success effective</div>
+                  </div>
+                  <div className="rounded-[24px] border bg-[linear-gradient(180deg,rgba(236,253,245,0.95),rgba(255,255,255,0.92))] p-4">
+                    <div className="text-base text-muted-foreground">Recovered</div>
+                    <div className="mt-2 text-4xl font-semibold text-success">{recoveredTrials}</div>
+                    <div className="mt-1 text-sm text-muted-foreground">latest effective attempt is success</div>
+                  </div>
+                  <div className="rounded-[24px] border bg-[linear-gradient(180deg,rgba(255,241,242,0.95),rgba(255,255,255,0.92))] p-4">
+                    <div className="text-base text-muted-foreground">Still failing</div>
+                    <div className="mt-2 text-4xl font-semibold text-danger">{stillFailingTrials}</div>
+                    <div className="mt-1 text-sm text-muted-foreground">retried but not yet healthy</div>
+                  </div>
+                  <div className="rounded-[24px] border bg-[linear-gradient(180deg,rgba(239,246,255,0.95),rgba(255,255,255,0.92))] p-4">
+                    <div className="text-base text-muted-foreground">Retry Attempts</div>
+                    <div className="mt-2 text-4xl font-semibold">{retriedTrials}</div>
+                    <div className="mt-1 text-sm text-muted-foreground">trials with attempt history &gt; 1</div>
                   </div>
                 </div>
 
@@ -961,10 +1068,10 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <MatrixHeatmap
+                <MatrixBarChart
                   matrix={runSummary?.matrix || {}}
                   rowLabel={view === "variant-first" ? "Variant / Model" : "Task"}
-                  colLabel={view === "variant-first" ? "Task" : "Variant / Model"}
+                  seriesLabel={view === "variant-first" ? "Task" : "Variant / Model"}
                 />
               </CardContent>
             </Card>

@@ -203,3 +203,43 @@ runtime:
 
     project = load_project_config(tmp_path)
     assert project.runtime.max_container_slots == 0
+
+
+def test_project_config_parses_recovery_runtime_settings(tmp_path: Path) -> None:
+    (tmp_path / "project.yml").write_text(
+        """
+project:
+  name: demo
+  root_dir: .
+provider:
+  id: demo
+  kind: openai_compatible
+  base_url: https://example.com/v1
+  api_key: sk-test
+agent_matrix:
+  models:
+    - id: alpha
+      model: gpt-4o-mini
+eval:
+  benchmark: custom
+  code:
+    base_dir: .
+    task_module: ./task.py
+    agent_module: ./agent.py
+    scorer_module: ./scorer.py
+runtime:
+  recovery:
+    auto_retry_non_success: true
+    max_auto_retries_per_trial: 2
+    retry_timing: deferred
+    backoff_ms: 1234
+        """,
+        encoding="utf-8",
+    )
+    _touch_eval_files(tmp_path)
+
+    project = load_project_config(tmp_path)
+    assert project.runtime.recovery.auto_retry_non_success is True
+    assert project.runtime.recovery.max_auto_retries_per_trial == 2
+    assert project.runtime.recovery.retry_timing == "deferred"
+    assert project.runtime.recovery.backoff_ms == 1234
