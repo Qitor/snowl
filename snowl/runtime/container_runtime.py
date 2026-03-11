@@ -1,7 +1,9 @@
-"""Common container runtime orchestration for benchmark agents."""
+"""Common container runtime orchestration for benchmark-specific phases."""
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
 from snowl.runtime.container_providers import (
@@ -11,6 +13,16 @@ from snowl.runtime.container_providers import (
     ContainerSession,
     default_container_provider_registry,
 )
+
+
+@dataclass(frozen=True)
+class ContainerPrepareResult:
+    session: ContainerSession | None
+    requires_container: bool
+    requires_build: bool
+    spec_hash: str | None = None
+    prepare_provider_ids: tuple[str, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class ContainerRuntime:
@@ -48,24 +60,69 @@ class ContainerRuntime:
             emit=self._emit,
         )
 
-    def prepare(self) -> ContainerSession | None:
+    def _resolve_provider(self) -> tuple[str, ContainerProvider | None]:
         benchmark = str(self.task_metadata.get("benchmark") or "").strip().lower()
         provider = self._provider_registry.resolve(benchmark)
+        return benchmark, provider
+
+    def describe_requirements(self) -> dict[str, Any]:
+        benchmark, provider = self._resolve_provider()
         if provider is None:
-            return None
+            return {
+                "benchmark": benchmark,
+                "requires_container": False,
+                "requires_build": False,
+                "spec_hash": None,
+                "prepare_provider_ids": (),
+            }
+        return dict(provider.describe_requirements(self._context()))
+
+    async def prepare_phase(self) -> ContainerPrepareResult:
+        benchmark, provider = self._resolve_provider()
+        if provider is None:
+            return ContainerPrepareResult(
+                session=None,
+                requires_container=False,
+                requires_build=False,
+                spec_hash=None,
+                prepare_provider_ids=(),
+                metadata={"benchmark": benchmark},
+            )
         context = self._context()
         self._provider = provider
-        self._session = provider.prepare(context)
-        return self._session
+        requirements = dict(provider.describe_requirements(context))
+        self._session = await provider.prepare(context)
+        return ContainerPrepareResult(
+            session=self._session,
+            requires_container=bool(requirements.get("requires_container", True)),
+            requires_build=bool(requirements.get("requires_build", False)),
+            spec_hash=(str(requirements.get("spec_hash")) if requirements.get("spec_hash") else None),
+            prepare_provider_ids=tuple(str(x) for x in (requirements.get("prepare_provider_ids") or ()) if str(x).strip()),
+            metadata=requirements,
+        )
 
-    def close(self) -> dict[str, Any] | None:
+    async def finalize_phase(self) -> dict[str, Any] | None:
         if self._session is None or self._provider is None:
             return None
         session = self._session
         provider = self._provider
         self._session = None
         self._provider = None
-        return provider.close(self._context(), session)
+        return await provider.close(self._context(), session)
+
+    def prepare(self) -> ContainerSession | None:
+        return _run_sync(self.prepare_phase()).session
+
+    def close(self) -> dict[str, Any] | None:
+        return _run_sync(self.finalize_phase())
 
 
-__all__ = ["ContainerRuntime", "ContainerSession"]
+def _run_sync(coro):  # type: ignore[no-untyped-def]
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    raise RuntimeError("Synchronous container runtime API cannot be used inside a running event loop; use prepare_phase/finalize_phase.")
+
+
+__all__ = ["ContainerRuntime", "ContainerSession", "ContainerPrepareResult"]

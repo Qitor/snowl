@@ -1,4 +1,4 @@
-"""Provider-aware resource scheduler for eval/runtime quotas."""
+"""Provider-aware and phase-aware resource scheduler for eval/runtime quotas."""
 
 from __future__ import annotations
 
@@ -6,10 +6,52 @@ import asyncio
 import threading
 import time
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
 from snowl.envs.sandbox_runtime import PreparedSandbox, SandboxRuntime
+
+
+@dataclass(frozen=True)
+class TrialDescriptor:
+    trial_id: str
+    task_id: str
+    sample_id: str | None
+    agent_id: str
+    variant_id: str | None
+    scorer_id: str | None
+    seed: int | None
+    spec_hash: str | None
+    provider_ids: tuple[str, ...]
+    phase: str = "PENDING"
+    retry_count: int = 0
+
+
+@dataclass(frozen=True)
+class TaskExecutionPlan:
+    trial: TrialDescriptor
+    requires_container: bool = False
+    requires_prepare: bool = False
+    requires_build: bool = False
+    estimated_agent_model_calls: int = 0
+    estimated_judge_model_calls: int = 0
+    estimated_total_model_calls: int = 0
+    estimated_steps: int = 0
+    estimated_duration_class: str = "light"
+    estimated_prepare_cost: str = "none"
+    provider_ids: tuple[str, ...] = ()
+    spec_hash: str | None = None
+    priority: float = 0.0
+
+
+@dataclass(frozen=True)
+class PhaseBudgetSnapshot:
+    active: dict[str, int]
+    queue_wait_ms: dict[str, Any]
+    phase_duration_ms: dict[str, int]
+    provider_inflight: dict[str, int]
+    provider_utilization: dict[str, float]
+    queue_depths: dict[str, int]
 
 
 @dataclass(frozen=True)
@@ -65,23 +107,56 @@ class ResourceScheduler:
         )
         self._stats_lock = threading.Lock()
         self._active = {
+            "preparing": 0,
+            "ready": 0,
+            "executing": 0,
+            "scoring": 0,
+            "finalizing": 0,
             "running_trials": 0,
             "scoring_tasks": 0,
             "container_slots": 0,
+            "builds": 0,
         }
         self._provider_inflight: dict[str, int] = {}
         self._queue_wait_totals: dict[str, float] = {
+            "prepare": 0.0,
+            "execute": 0.0,
+            "score": 0.0,
+            "finalize": 0.0,
             "running": 0.0,
             "scoring": 0.0,
             "container": 0.0,
         }
         self._queue_wait_counts: dict[str, int] = {
+            "prepare": 0,
+            "execute": 0,
+            "score": 0,
+            "finalize": 0,
             "running": 0,
             "scoring": 0,
             "container": 0,
         }
+        self._phase_duration_totals: dict[str, float] = {
+            "prepare": 0.0,
+            "execute": 0.0,
+            "score": 0.0,
+            "finalize": 0.0,
+        }
+        self._phase_duration_counts: dict[str, int] = {
+            "prepare": 0,
+            "execute": 0,
+            "score": 0,
+            "finalize": 0,
+        }
         self._provider_queue_wait_totals: dict[str, float] = {}
         self._provider_queue_wait_counts: dict[str, int] = {}
+        self._queue_depths: dict[str, int] = {
+            "prepare": 0,
+            "ready": 0,
+            "recovery": 0,
+            "score": 0,
+            "finalize": 0,
+        }
 
     @property
     def limits(self) -> ResourceLimits:
@@ -96,14 +171,15 @@ class ResourceScheduler:
             "max_builds": self._limits.max_builds,
             "max_scoring_tasks": self._limits.max_scoring_tasks,
             "provider_budgets": provider_budgets,
-            # Legacy aliases kept for tests / monitor compatibility while the
-            # rest of the stack migrates to the new names.
             "max_trials": self._limits.max_running_trials,
             "max_sandboxes": self._limits.max_container_slots,
             "max_model_calls": legacy_model_calls,
         }
 
     def stats_snapshot(self) -> dict[str, Any]:
+        return self.phase_budget_snapshot().__dict__
+
+    def phase_budget_snapshot(self) -> PhaseBudgetSnapshot:
         with self._stats_lock:
             provider_utilization = {
                 provider_id: (
@@ -121,52 +197,125 @@ class ResourceScheduler:
                 provider_id: int(total * 1000)
                 for provider_id, total in self._provider_queue_wait_totals.items()
             }
-            return {
-                "phase_counts": {
-                    "running": self._active["running_trials"],
-                    "scoring": self._active["scoring_tasks"],
-                    "preparing": self._active["container_slots"],
-                },
-                "queue_wait_ms": {
-                    **queue_wait_ms,
-                    "providers": provider_wait_ms,
-                },
-                "provider_utilization": provider_utilization,
-                "provider_inflight": dict(self._provider_inflight),
-                "active_running_trials": self._active["running_trials"],
-                "active_scoring_tasks": self._active["scoring_tasks"],
-                "active_container_slots": self._active["container_slots"],
+            phase_duration_ms = {
+                phase: int(total * 1000)
+                for phase, total in self._phase_duration_totals.items()
             }
+            return PhaseBudgetSnapshot(
+                active=dict(self._active),
+                queue_wait_ms={**queue_wait_ms, "providers": provider_wait_ms},
+                phase_duration_ms=phase_duration_ms,
+                provider_inflight=dict(self._provider_inflight),
+                provider_utilization=provider_utilization,
+                queue_depths=dict(self._queue_depths),
+            )
+
+    def set_queue_depths(self, **depths: int) -> None:
+        with self._stats_lock:
+            for key, value in depths.items():
+                self._queue_depths[str(key)] = max(0, int(value))
+
+    def provider_headroom(self, provider_id: str | None) -> bool:
+        key = str(provider_id or "default").strip() or "default"
+        limit = self._limits.provider_budgets.get(key)
+        if limit is None:
+            return True
+        with self._stats_lock:
+            return self._provider_inflight.get(key, 0) < limit
+
+    def phase_headroom(self, phase: str) -> bool:
+        p = str(phase).strip().lower()
+        with self._stats_lock:
+            if p == "prepare":
+                limit = self._limits.max_container_slots
+                return limit is None or self._active["container_slots"] < limit
+            if p == "execute":
+                limit = self._limits.max_running_trials
+                return limit is None or self._active["running_trials"] < limit
+            if p == "score":
+                limit = self._limits.max_scoring_tasks
+                return limit is None or self._active["scoring_tasks"] < limit
+            return True
 
     @asynccontextmanager
-    async def running_trial_slot(self) -> AsyncIterator[None]:
+    async def begin_prepare(self, plan: TaskExecutionPlan | None = None) -> AsyncIterator[None]:
+        needs_container = bool(plan.requires_container) if plan is not None else True
+        sem = self._get_container_sem() if needs_container else None
+        async with _AsyncSemaphoreContext(
+            sem=sem,
+            wait_phase="prepare" if needs_container else None,
+            active_key="container_slots" if needs_container else None,
+            phase_name="prepare",
+            scheduler=self,
+        ):
+            yield None
+
+    @asynccontextmanager
+    async def begin_execute(self, plan: TaskExecutionPlan | None = None) -> AsyncIterator[None]:
+        _ = plan
         sem = self._get_running_sem()
         async with _AsyncSemaphoreContext(
             sem=sem,
-            on_acquire=lambda wait: self._record_phase_acquire("running", wait, active_key="running_trials"),
-            on_release=lambda hold: self._record_phase_release(active_key="running_trials", _hold=hold),
+            wait_phase="execute",
+            active_key="running_trials",
+            phase_name="execute",
+            scheduler=self,
         ):
             yield None
 
     @asynccontextmanager
-    async def scoring_slot(self) -> AsyncIterator[None]:
+    async def begin_score(self, plan: TaskExecutionPlan | None = None) -> AsyncIterator[None]:
+        _ = plan
         sem = self._get_scoring_sem()
         async with _AsyncSemaphoreContext(
             sem=sem,
-            on_acquire=lambda wait: self._record_phase_acquire("scoring", wait, active_key="scoring_tasks"),
-            on_release=lambda hold: self._record_phase_release(active_key="scoring_tasks", _hold=hold),
+            wait_phase="score",
+            active_key="scoring_tasks",
+            phase_name="score",
+            scheduler=self,
         ):
             yield None
 
     @asynccontextmanager
-    async def provider_slot(self, provider_id: str | None) -> AsyncIterator[None]:
+    async def begin_finalize(self, plan: TaskExecutionPlan | None = None) -> AsyncIterator[None]:
+        _ = plan
+        async with _AsyncSemaphoreContext(
+            sem=None,
+            wait_phase="finalize",
+            active_key=None,
+            phase_name="finalize",
+            scheduler=self,
+        ):
+            yield None
+
+    @asynccontextmanager
+    async def provider_admission(self, provider_id: str | None, *, phase: str = "execute") -> AsyncIterator[None]:
         key = str(provider_id or "default").strip() or "default"
         sem = self._get_provider_sem(key)
         async with _AsyncSemaphoreContext(
             sem=sem,
-            on_acquire=lambda wait: self._record_provider_acquire(key, wait),
-            on_release=lambda hold: self._record_provider_release(key, _hold=hold),
+            wait_phase=None,
+            active_key=None,
+            phase_name=str(phase or "execute").strip().lower() or "execute",
+            scheduler=self,
+            on_admission_acquire=lambda wait: self._record_provider_acquire(key, wait),
+            on_admission_release=lambda hold: self._record_provider_release(key, hold),
         ):
+            yield None
+
+    @asynccontextmanager
+    async def running_trial_slot(self) -> AsyncIterator[None]:
+        async with self.begin_execute():
+            yield None
+
+    @asynccontextmanager
+    async def scoring_slot(self) -> AsyncIterator[None]:
+        async with self.begin_score():
+            yield None
+
+    @asynccontextmanager
+    async def provider_slot(self, provider_id: str | None) -> AsyncIterator[None]:
+        async with self.provider_admission(provider_id, phase="execute"):
             yield None
 
     @asynccontextmanager
@@ -180,7 +329,7 @@ class ResourceScheduler:
             yield None
 
     def build_slot(self) -> _BuildSemaphoreContext:
-        return _BuildSemaphoreContext(self._build_sem)
+        return _BuildSemaphoreContext(self._build_sem, scheduler=self)
 
     async def acquire_sandbox_slot(self) -> None:
         sem = self._get_container_sem()
@@ -195,7 +344,7 @@ class ResourceScheduler:
         if sem is None:
             return
         sem.release()
-        self._record_phase_release(active_key="container_slots", _hold=0.0)
+        self._record_phase_release(active_key="container_slots", hold_s=0.0, phase_name="prepare")
 
     def wrap_sandbox_runtime(self, inner: SandboxRuntime) -> SandboxRuntime:
         return _ScheduledSandboxRuntime(inner=inner, scheduler=self)
@@ -238,15 +387,23 @@ class ResourceScheduler:
             self._provider_loop = loop
         return self._provider_sems[loop_key]
 
-    def _record_phase_acquire(self, phase: str, wait_s: float, *, active_key: str) -> None:
+    def _record_phase_acquire(self, phase: str, wait_s: float, *, active_key: str | None) -> None:
         with self._stats_lock:
-            self._queue_wait_totals[phase] = self._queue_wait_totals.get(phase, 0.0) + max(0.0, float(wait_s))
-            self._queue_wait_counts[phase] = self._queue_wait_counts.get(phase, 0) + 1
-            self._active[active_key] = self._active.get(active_key, 0) + 1
+            if phase:
+                self._queue_wait_totals[phase] = self._queue_wait_totals.get(phase, 0.0) + max(0.0, float(wait_s))
+                self._queue_wait_counts[phase] = self._queue_wait_counts.get(phase, 0) + 1
+            if active_key:
+                self._active[active_key] = self._active.get(active_key, 0) + 1
 
-    def _record_phase_release(self, *, active_key: str, _hold: float) -> None:
+    def _record_phase_release(self, *, active_key: str | None, hold_s: float, phase_name: str | None) -> None:
         with self._stats_lock:
-            self._active[active_key] = max(0, self._active.get(active_key, 0) - 1)
+            if active_key:
+                self._active[active_key] = max(0, self._active.get(active_key, 0) - 1)
+            if phase_name:
+                self._phase_duration_totals[phase_name] = self._phase_duration_totals.get(phase_name, 0.0) + max(
+                    0.0, float(hold_s)
+                )
+                self._phase_duration_counts[phase_name] = self._phase_duration_counts.get(phase_name, 0) + 1
 
     def _record_provider_acquire(self, provider_id: str, wait_s: float) -> None:
         with self._stats_lock:
@@ -285,25 +442,48 @@ class _ScheduledSandboxRuntime:
 
 
 class _BuildSemaphoreContext:
-    def __init__(self, sem: threading.BoundedSemaphore | None) -> None:
+    def __init__(self, sem: threading.BoundedSemaphore | None, *, scheduler: ResourceScheduler | None = None) -> None:
         self._sem = sem
+        self._scheduler = scheduler
+        self._started = 0.0
+        self._acquired = False
 
     def __enter__(self) -> None:
+        self._started = time.perf_counter()
         if self._sem is not None:
             self._sem.acquire()
+        self._acquired = True
+        if self._scheduler is not None:
+            self._scheduler._record_phase_acquire("prepare", time.perf_counter() - self._started, active_key="builds")
         return None
 
     def __exit__(self, exc_type, exc, tb) -> None:
-        if self._sem is not None:
+        if self._acquired and self._sem is not None:
             self._sem.release()
+        if self._acquired and self._scheduler is not None:
+            self._scheduler._record_phase_release(active_key="builds", hold_s=time.perf_counter() - self._started, phase_name="prepare")
         return None
 
 
 class _AsyncSemaphoreContext:
-    def __init__(self, *, sem: asyncio.Semaphore | None, on_acquire, on_release) -> None:  # type: ignore[no-untyped-def]
+    def __init__(
+        self,
+        *,
+        sem: asyncio.Semaphore | None,
+        wait_phase: str | None,
+        active_key: str | None,
+        phase_name: str | None,
+        scheduler: ResourceScheduler,
+        on_admission_acquire=None,  # type: ignore[no-untyped-def]
+        on_admission_release=None,  # type: ignore[no-untyped-def]
+    ) -> None:
         self._sem = sem
-        self._on_acquire = on_acquire
-        self._on_release = on_release
+        self._wait_phase = wait_phase
+        self._active_key = active_key
+        self._phase_name = phase_name
+        self._scheduler = scheduler
+        self._on_admission_acquire = on_admission_acquire
+        self._on_admission_release = on_admission_release
         self._acquired = False
         self._started = 0.0
 
@@ -312,14 +492,26 @@ class _AsyncSemaphoreContext:
         if self._sem is not None:
             await self._sem.acquire()
         self._acquired = True
-        self._on_acquire(time.perf_counter() - self._started)
+        wait_s = time.perf_counter() - self._started
+        if self._on_admission_acquire is not None:
+            self._on_admission_acquire(wait_s)
+        else:
+            self._scheduler._record_phase_acquire(self._wait_phase or "", wait_s, active_key=self._active_key)
         return None
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         if self._acquired and self._sem is not None:
             self._sem.release()
+        hold_s = time.perf_counter() - self._started
         if self._acquired:
-            self._on_release(time.perf_counter() - self._started)
+            if self._on_admission_release is not None:
+                self._on_admission_release(hold_s)
+            else:
+                self._scheduler._record_phase_release(
+                    active_key=self._active_key,
+                    hold_s=hold_s,
+                    phase_name=self._phase_name,
+                )
         return None
 
 

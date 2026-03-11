@@ -23,11 +23,13 @@ Everything else is platform machinery around that contract.
 Read these in order before large changes:
 
 1. `AGENTS.md`
-2. `PLANS.md`
-3. `README.md`
-4. `ARCHITECTURE.md`
-5. `docs/runtime_scheduling.md`
-6. code and tests for the subsystem you are changing
+2. `docs/project_map.md`
+3. `docs/current_state.md`
+4. `docs/architecture/runtime_and_scheduler.md` for runtime work
+5. `PLANS.md`
+6. `README.md`
+7. `ARCHITECTURE.md`
+8. code and tests for the subsystem you are changing
 
 ## 3. Repo Map
 
@@ -181,6 +183,10 @@ If a change only helps one benchmark but weakens a shared contract, it is usuall
 
 If you change platform behavior, keep these current:
 
+- `AGENTS.md`
+- `docs/project_map.md`
+- `docs/current_state.md`
+- `docs/architecture/runtime_and_scheduler.md`
 - `README.md`
 - `README.zh-CN.md`
 - `ARCHITECTURE.md`

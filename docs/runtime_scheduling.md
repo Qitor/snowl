@@ -1,5 +1,8 @@
 # Runtime Scheduling and Concurrency Design for Snowl
 
+Current-state note:
+Use `docs/architecture/runtime_and_scheduler.md` for the runtime behavior that exists in the repo today. This file is a forward-looking design/planning document.
+
 ## Status
 
 Draft for implementation planning.

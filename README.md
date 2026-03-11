@@ -24,10 +24,16 @@ Everything else in the repo exists to make that contract reliable, observable, a
 ## Project Docs
 
 - [START_HERE.md](./START_HERE.md): fastest repo orientation
+- [docs/project_map.md](./docs/project_map.md): codebase and directory map
+- [docs/current_state.md](./docs/current_state.md): implementation state, limits, and mismatches
+- [docs/architecture/runtime_and_scheduler.md](./docs/architecture/runtime_and_scheduler.md): current eval/runtime/scheduler behavior
+- [docs/development_workflows.md](./docs/development_workflows.md): task-oriented developer workflows
+- [docs/testing_and_validation.md](./docs/testing_and_validation.md): focused validation commands and done criteria
+- [docs/codex_task_playbook.md](./docs/codex_task_playbook.md): Codex-specific task triage guidance
 - [ARCHITECTURE.md](./ARCHITECTURE.md): current system architecture and runtime direction
 - [PLANS.md](./PLANS.md): roadmap and execution priorities
 - [AGENTS.md](./AGENTS.md): repo rules for coding agents
-- [docs/runtime_scheduling.md](./docs/runtime_scheduling.md): runtime scheduling design notes
+- [docs/runtime_scheduling.md](./docs/runtime_scheduling.md): forward-looking runtime scheduling design notes
 - [docs/codex_best_practices.md](./docs/codex_best_practices.md): Codex guidance for this repo
 
 ## Current Product Shape

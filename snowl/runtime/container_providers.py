@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -85,13 +88,15 @@ class ContainerProviderContext:
 class ContainerProvider(Protocol):
     name: str
 
-    def prepare(self, context: ContainerProviderContext) -> ContainerSession: ...
+    async def prepare(self, context: ContainerProviderContext) -> ContainerSession: ...
 
-    def close(
+    async def close(
         self,
         context: ContainerProviderContext,
         session: ContainerSession,
     ) -> dict[str, Any] | None: ...
+
+    def describe_requirements(self, context: ContainerProviderContext) -> dict[str, Any]: ...
 
 
 class ContainerProviderRegistry:
@@ -114,7 +119,7 @@ class ContainerProviderRegistry:
 class TerminalBenchProvider:
     name = "terminalbench"
 
-    def prepare(self, context: ContainerProviderContext) -> ContainerSession:
+    def _trial_identity(self, context: ContainerProviderContext) -> dict[str, Any]:
         sample_meta = dict(context.sample.get("metadata", {}) or {})
         task_id = str(sample_meta.get("task_id") or "task")
         sample_id = str(context.sample.get("id") or "sample")
@@ -122,6 +127,49 @@ class TerminalBenchProvider:
         safe_task = re.sub(r"[^a-zA-Z0-9._-]+", "-", task_id).strip("-") or "task"
         safe_sample = re.sub(r"[^a-zA-Z0-9._-]+", "-", sample_id).strip("-") or "sample"
         safe_variant = re.sub(r"[^a-zA-Z0-9._-]+", "-", variant_id).strip("-") or "default"
+        return {
+            "task_id": task_id,
+            "sample_id": sample_id,
+            "variant_id": variant_id,
+            "safe_task": safe_task,
+            "safe_sample": safe_sample,
+            "safe_variant": safe_variant,
+            "sample_meta": sample_meta,
+        }
+
+    def describe_requirements(self, context: ContainerProviderContext) -> dict[str, Any]:
+        ident = self._trial_identity(context)
+        sample_meta = ident["sample_meta"]
+        compose_path = str(sample_meta.get("docker_compose_path") or "").strip()
+        compose_build = bool(
+            sample_meta.get("compose_build")
+            if sample_meta.get("compose_build") is not None
+            else context.task_metadata.get("compose_build", True)
+        )
+        spec_basis = {
+            "benchmark": "terminalbench",
+            "compose_file": str(Path(compose_path).resolve()) if compose_path else "",
+            "compose_service": str(sample_meta.get("compose_service", "client")),
+            "compose_build": compose_build,
+            "task_root": str(Path(str(sample_meta.get("task_root") or Path.cwd())).resolve()),
+            "task_id": ident["task_id"],
+        }
+        spec_hash = hashlib.sha1(json.dumps(spec_basis, sort_keys=True).encode("utf-8")).hexdigest()
+        return {
+            "benchmark": "terminalbench",
+            "requires_container": bool(compose_path and Path(compose_path).exists()),
+            "requires_build": compose_build and bool(compose_path and Path(compose_path).exists()),
+            "spec_hash": spec_hash,
+            "prepare_provider_ids": (),
+            "estimated_prepare_cost": "heavy" if compose_path else "none",
+        }
+
+    async def prepare(self, context: ContainerProviderContext) -> ContainerSession:
+        ident = self._trial_identity(context)
+        sample_meta = ident["sample_meta"]
+        safe_task = ident["safe_task"]
+        safe_sample = ident["safe_sample"]
+        safe_variant = ident["safe_variant"]
         trial_name = f"snowl-tb-{safe_task}-{safe_sample[:12]}-{safe_variant[:12]}"
         workdir = sample_meta.get("task_root") or str(Path.cwd())
         workdir_path = Path(str(workdir)).resolve()
@@ -195,12 +243,13 @@ class TerminalBenchProvider:
                     "project": env.compose_project,
                 }
             )
-            up_out = env.compose_up(
+            up_out = await asyncio.to_thread(
+                env.compose_up,
                 on_event=lambda evt: context.emit_env_stream(
                     evt,
                     project=env.compose_project,
                     compose_file=env.compose_file,
-                )
+                ),
             )
             build_out = up_out.get("build")
             if isinstance(build_out, Mapping):
@@ -251,10 +300,13 @@ class TerminalBenchProvider:
             kind="terminal_compose",
             env=env,
             benchmark="terminalbench",
-            metadata={"project": env.compose_project},
+            metadata={
+                "project": env.compose_project,
+                "spec_hash": self.describe_requirements(context).get("spec_hash"),
+            },
         )
 
-    def close(
+    async def close(
         self,
         context: ContainerProviderContext,
         session: ContainerSession,
@@ -262,12 +314,13 @@ class TerminalBenchProvider:
         env = session.env
         project = getattr(env, "compose_project", None)
         context.emit_event({"event": "terminalbench.container.stopping", "phase": "env", "project": project})
-        down_out = env.compose_down(
+        down_out = await asyncio.to_thread(
+            env.compose_down,
             on_event=lambda evt: context.emit_env_stream(
                 evt,
                 project=project,
                 compose_file=getattr(env, "compose_file", None),
-            )
+            ),
         )
         payload = {"event": "terminalbench.container.stopped", "phase": "env", "project": project}
         payload.update(
@@ -288,29 +341,53 @@ class TerminalBenchProvider:
 class OSWorldProvider:
     name = "osworld"
 
-    def prepare(self, context: ContainerProviderContext) -> ContainerSession:
+    def describe_requirements(self, context: ContainerProviderContext) -> dict[str, Any]:
+        settings = dict(context.task_metadata.get("osworld_settings") or {})
+        spec_basis = {
+            "benchmark": "osworld",
+            "image": str(settings.get("image") or "happysixd/osworld-docker"),
+            "ports": settings.get("ports") or {},
+            "observation_type": settings.get("observation_type"),
+            "max_steps": settings.get("max_steps"),
+            "recording": settings.get("recording"),
+        }
+        spec_hash = hashlib.sha1(json.dumps(spec_basis, sort_keys=True).encode("utf-8")).hexdigest()
+        return {
+            "benchmark": "osworld",
+            "requires_container": True,
+            "requires_build": False,
+            "spec_hash": spec_hash,
+            "prepare_provider_ids": (),
+            "estimated_prepare_cost": "heavy",
+        }
+
+    async def prepare(self, context: ContainerProviderContext) -> ContainerSession:
         docker_path = context.ensure_docker_available(benchmark="osworld")
         launcher = OSWorldContainerLauncher(
             repo_root=Path(__file__).resolve().parents[2],
             emit=context.emit_event,
             settings=context.task_metadata.get("osworld_settings"),
         )
-        prepared = launcher.prepare(docker_path=docker_path)
+        prepared = await asyncio.to_thread(launcher.prepare, docker_path=docker_path)
         return ContainerSession(
             kind="gui_container",
             env=prepared.env,
             benchmark="osworld",
-            metadata=dict(prepared.metadata),
+            metadata={
+                **dict(prepared.metadata),
+                "spec_hash": self.describe_requirements(context).get("spec_hash"),
+            },
         )
 
-    def close(
+    async def close(
         self,
         context: ContainerProviderContext,
         session: ContainerSession,
     ) -> dict[str, Any] | None:
         env: GuiEnv = session.env
         context.emit_event({"event": "osworld.container.stopping", "phase": "env"})
-        stop_evt = env.stop_container(
+        stop_evt = await asyncio.to_thread(
+            env.stop_container,
             on_event=lambda evt: context.emit_env_stream(evt),
         )
         context.emit_event(

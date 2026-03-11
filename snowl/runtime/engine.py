@@ -15,7 +15,8 @@ from snowl.core.task_result import ArtifactRef, ErrorInfo, TaskResult, TaskStatu
 from snowl.core.tool import ToolSpec, resolve_tool_spec
 from snowl.envs.sandbox_runtime import SandboxRuntime, WarmPoolSandboxRuntime
 from snowl.errors import SnowlValidationError
-from snowl.runtime.container_runtime import ContainerRuntime
+from snowl.runtime.container_runtime import ContainerPrepareResult, ContainerRuntime
+from snowl.runtime.resource_scheduler import TaskExecutionPlan, TrialDescriptor
 from snowl.ui.contracts import build_score_explanations
 
 _DEFAULT_SANDBOX_RUNTIME = WarmPoolSandboxRuntime()
@@ -39,6 +40,8 @@ class TrialRequest:
     sandbox_runtime: SandboxRuntime | None = None
     limits: TrialLimits = TrialLimits()
     on_event: Callable[[dict[str, Any]], None] | None = None
+    execution_plan: TaskExecutionPlan | None = None
+    trial_descriptor: TrialDescriptor | None = None
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,30 @@ class PartialTrialResult:
     task_result: TaskResult
     trace: dict[str, Any]
     score_context: ScoreContext
+
+
+@dataclass(frozen=True)
+class PreparedTrial:
+    request: TrialRequest
+    started_ms: int
+    sample_id: str | None
+    variant_id: str
+    variant_model: str | None
+    state: AgentState
+    context: AgentContext
+    resolved_tool_specs: Sequence[ToolSpec]
+    sandbox_runtime: SandboxRuntime
+    container_runtime: ContainerRuntime
+    container_prepare: ContainerPrepareResult
+    prepared_sandbox: Any | None = None
+    original_max_steps: int | None = None
+    failed_partial: PartialTrialResult | None = None
+
+
+@dataclass(frozen=True)
+class FinalizedTrialArtifacts:
+    teardown: dict[str, Any] | None
+    container_close: dict[str, Any] | None
 
 
 def _initial_messages(sample: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -118,8 +145,86 @@ def _status_from_stop_reason(stop_reason: StopReason | None) -> TaskStatus:
     return TaskStatus.SUCCESS
 
 
-async def execute_agent_phase(request: TrialRequest) -> PartialTrialResult:
-    """Execute the agent/runtime phase and produce a partial trial result."""
+def _build_score_context(request: TrialRequest, *, sample_id: str | None) -> ScoreContext:
+    return ScoreContext(
+        task_id=request.task.task_id,
+        agent_id=getattr(request.agent, "agent_id"),
+        sample_id=sample_id,
+        task_metadata=request.task.metadata,
+        sample_metadata=dict(request.sample.get("metadata", {})),
+    )
+
+
+def _emit_factory(request: TrialRequest) -> Callable[[dict[str, Any]], None]:
+    def _emit(event: dict[str, Any]) -> None:
+        if request.on_event is None:
+            return
+        try:
+            request.on_event(dict(event))
+        except Exception:
+            return
+
+    return _emit
+
+
+def _error_partial(
+    request: TrialRequest,
+    *,
+    started_ms: int,
+    sample_id: str | None,
+    variant_id: str,
+    variant_model: str | None,
+    code: str,
+    message: str,
+    phase: str,
+    trace_event: str,
+) -> PartialTrialResult:
+    ended = int(time.time() * 1000)
+    error = ErrorInfo(code=code, message=message, retryable=False)
+    task_result = TaskResult(
+        task_id=request.task.task_id,
+        agent_id=getattr(request.agent, "agent_id"),
+        sample_id=sample_id,
+        seed=request.seed,
+        status=TaskStatus.ERROR,
+        final_output={},
+        timing=Timing(started_at_ms=started_ms, ended_at_ms=ended, duration_ms=max(0, ended - started_ms)),
+        usage=Usage(),
+        error=error,
+        payload={
+            "stop_reason": StopReason.ERROR.value,
+            "phase": phase,
+            "variant_id": variant_id,
+            "model": variant_model,
+        },
+    )
+    trace = {
+        "trace_events": [{"event": trace_event, "message": message}],
+        "actions": [],
+        "observations": [],
+        "stop_reason": StopReason.ERROR.value,
+    }
+    _emit_factory(request)(
+        {
+            "event": "runtime.trial.error",
+            "phase": phase,
+            "code": code,
+            "message": message,
+            "task_id": request.task.task_id,
+            "agent_id": getattr(request.agent, "agent_id"),
+            "variant_id": variant_id,
+            "sample_id": sample_id,
+        }
+    )
+    return PartialTrialResult(
+        task_result=task_result,
+        trace=trace,
+        score_context=_build_score_context(request, sample_id=sample_id),
+    )
+
+
+async def prepare_trial_phase(request: TrialRequest) -> PreparedTrial:
+    """Prepare env/container/sandbox state for a trial."""
 
     validate_task(request.task)
     validate_env_spec(request.task.env_spec)
@@ -130,19 +235,12 @@ async def execute_agent_phase(request: TrialRequest) -> PartialTrialResult:
     sample_id = str(request.sample.get("id")) if request.sample.get("id") is not None else None
     variant_id = str(getattr(request.agent, "variant_id", "default"))
     variant_model = getattr(request.agent, "model", None)
+    emit = _emit_factory(request)
 
-    def _emit(event: dict[str, Any]) -> None:
-        if request.on_event is None:
-            return
-        try:
-            request.on_event(dict(event))
-        except Exception:
-            return
-
-    _emit(
+    emit(
         {
             "event": "runtime.trial.start",
-            "phase": "agent",
+            "phase": "prepare",
             "task_id": request.task.task_id,
             "agent_id": getattr(request.agent, "agent_id"),
             "variant_id": variant_id,
@@ -163,9 +261,10 @@ async def execute_agent_phase(request: TrialRequest) -> PartialTrialResult:
             "task_metadata": request.task.metadata,
             "variant_id": variant_id,
             "model": variant_model,
-            "__snowl_emit_event": _emit,
+            "__snowl_emit_event": emit,
         },
     )
+
     container_runtime = ContainerRuntime(
         task_id=request.task.task_id,
         agent_id=getattr(request.agent, "agent_id"),
@@ -173,59 +272,46 @@ async def execute_agent_phase(request: TrialRequest) -> PartialTrialResult:
         task_env_type=request.task.env_spec.env_type,
         task_metadata=request.task.metadata,
         sample=request.sample,
-        emit=_emit,
+        emit=emit,
     )
-    container_session = None
+    container_prepare = ContainerPrepareResult(
+        session=None,
+        requires_container=False,
+        requires_build=False,
+        spec_hash=None,
+        prepare_provider_ids=(),
+        metadata={},
+    )
     try:
-        container_session = container_runtime.prepare()
-        if container_session is not None:
-            context.metadata["__snowl_container_session"] = container_session
+        container_prepare = await container_runtime.prepare_phase()
+        if container_prepare.session is not None:
+            context.metadata["__snowl_container_session"] = container_prepare.session
     except Exception as exc:
-        ended = int(time.time() * 1000)
-        error = ErrorInfo(code="container_runtime_error", message=str(exc), retryable=False)
-        task_result = TaskResult(
-            task_id=request.task.task_id,
-            agent_id=getattr(request.agent, "agent_id"),
+        return PreparedTrial(
+            request=request,
+            started_ms=started,
             sample_id=sample_id,
-            seed=request.seed,
-            status=TaskStatus.ERROR,
-            final_output={},
-            timing=Timing(started_at_ms=started, ended_at_ms=ended, duration_ms=max(0, ended - started)),
-            usage=Usage(),
-            error=error,
-            payload={
-                "stop_reason": StopReason.ERROR.value,
-                "phase": "container_prepare",
-                "variant_id": variant_id,
-                "model": variant_model,
-            },
+            variant_id=variant_id,
+            variant_model=variant_model,
+            state=state,
+            context=context,
+            resolved_tool_specs=[],
+            sandbox_runtime=request.sandbox_runtime or _DEFAULT_SANDBOX_RUNTIME,
+            container_runtime=container_runtime,
+            container_prepare=container_prepare,
+            failed_partial=_error_partial(
+                request,
+                started_ms=started,
+                sample_id=sample_id,
+                variant_id=variant_id,
+                variant_model=variant_model,
+                code="container_runtime_error",
+                message=str(exc),
+                phase="prepare",
+                trace_event="runtime.container.error",
+            ),
         )
-        trace = {
-            "trace_events": [{"event": "runtime.container.error", "message": str(exc)}],
-            "actions": [],
-            "observations": [],
-            "stop_reason": StopReason.ERROR.value,
-        }
-        _emit(
-            {
-                "event": "runtime.trial.error",
-                "phase": "error",
-                "code": error.code,
-                "message": error.message,
-                "task_id": request.task.task_id,
-                "agent_id": getattr(request.agent, "agent_id"),
-                "variant_id": variant_id,
-                "sample_id": sample_id,
-            }
-        )
-        score_context = ScoreContext(
-            task_id=request.task.task_id,
-            agent_id=getattr(request.agent, "agent_id"),
-            sample_id=sample_id,
-            task_metadata=request.task.metadata,
-            sample_metadata=dict(request.sample.get("metadata", {})),
-        )
-        return PartialTrialResult(task_result=task_result, trace=trace, score_context=score_context)
+
     resolved_tool_specs: list[ToolSpec] = []
     if request.tools:
         resolved_tool_specs = [resolve_tool_spec(t) for t in request.tools]
@@ -234,71 +320,34 @@ async def execute_agent_phase(request: TrialRequest) -> PartialTrialResult:
     provided_ops = set(request.task.env_spec.provided_ops)
     missing_ops = ensure_tool_ops_compatible(required_ops, provided_ops)
     if missing_ops:
-        ended = int(time.time() * 1000)
-        error = ErrorInfo(
-            code="env_ops_mismatch",
-            message=(
-                "Tool requires unsupported env ops: "
-                + ", ".join(sorted(missing_ops))
-                + f". Env provides: {', '.join(sorted(provided_ops)) or '(none)'}."
+        return PreparedTrial(
+            request=request,
+            started_ms=started,
+            sample_id=sample_id,
+            variant_id=variant_id,
+            variant_model=variant_model,
+            state=state,
+            context=context,
+            resolved_tool_specs=resolved_tool_specs,
+            sandbox_runtime=request.sandbox_runtime or _DEFAULT_SANDBOX_RUNTIME,
+            container_runtime=container_runtime,
+            container_prepare=container_prepare,
+            failed_partial=_error_partial(
+                request,
+                started_ms=started,
+                sample_id=sample_id,
+                variant_id=variant_id,
+                variant_model=variant_model,
+                code="env_ops_mismatch",
+                message=(
+                    "Tool requires unsupported env ops: "
+                    + ", ".join(sorted(missing_ops))
+                    + f". Env provides: {', '.join(sorted(provided_ops)) or '(none)'}."
+                ),
+                phase="prepare",
+                trace_event="runtime.validation_error",
             ),
-            retryable=False,
-            details={
-                "missing_ops": sorted(missing_ops),
-                "provided_ops": sorted(provided_ops),
-                "required_ops": sorted(required_ops),
-                "variant_id": variant_id,
-            },
         )
-        task_result = TaskResult(
-            task_id=request.task.task_id,
-            agent_id=getattr(request.agent, "agent_id"),
-            sample_id=sample_id,
-            seed=request.seed,
-            status=TaskStatus.ERROR,
-            final_output={},
-            timing=Timing(started_at_ms=started, ended_at_ms=ended, duration_ms=max(0, ended - started)),
-            usage=Usage(),
-            error=error,
-            payload={
-                "stop_reason": StopReason.ERROR.value,
-                "phase": "preflight_validation",
-                "variant_id": variant_id,
-                "model": variant_model,
-            },
-        )
-        trace = {
-            "trace_events": [
-                {
-                    "event": "runtime.validation_error",
-                    "code": "env_ops_mismatch",
-                    "missing_ops": sorted(missing_ops),
-                }
-            ],
-            "actions": [],
-            "observations": [],
-            "stop_reason": StopReason.ERROR.value,
-        }
-        _emit(
-            {
-                "event": "runtime.trial.error",
-                "phase": "error",
-                "code": error.code,
-                "message": error.message,
-                "task_id": request.task.task_id,
-                "agent_id": getattr(request.agent, "agent_id"),
-                "variant_id": variant_id,
-                "sample_id": sample_id,
-            }
-        )
-        score_context = ScoreContext(
-            task_id=request.task.task_id,
-            agent_id=getattr(request.agent, "agent_id"),
-            sample_id=sample_id,
-            task_metadata=request.task.metadata,
-            sample_metadata=dict(request.sample.get("metadata", {})),
-        )
-        return PartialTrialResult(task_result=task_result, trace=trace, score_context=score_context)
 
     original_max_steps = None
     if request.limits.max_steps is not None and hasattr(request.agent, "max_steps"):
@@ -308,42 +357,95 @@ async def execute_agent_phase(request: TrialRequest) -> PartialTrialResult:
         except Exception:
             original_max_steps = None
 
-    error: ErrorInfo | None = None
-    status = TaskStatus.SUCCESS
     sandbox_runtime = request.sandbox_runtime or _DEFAULT_SANDBOX_RUNTIME
     prepared_sandbox = None
-    teardown_diag: dict[str, Any] | None = None
-
     try:
         if request.task.env_spec.sandbox_spec is not None:
-            _emit({"event": "runtime.sandbox.prepare.start", "provider": request.task.env_spec.sandbox_spec.provider})
+            emit({"event": "runtime.sandbox.prepare.start", "phase": "prepare", "provider": request.task.env_spec.sandbox_spec.provider})
             prepared_sandbox = await sandbox_runtime.prepare(request.task.env_spec.sandbox_spec)
-            _emit(
+            emit(
                 {
                     "event": "runtime.sandbox.prepare.done",
-                    "phase": "env",
+                    "phase": "prepare",
                     "provider": prepared_sandbox.provider,
                     "sandbox_id": prepared_sandbox.sandbox_id,
                 }
             )
+    except Exception as exc:
+        return PreparedTrial(
+            request=request,
+            started_ms=started,
+            sample_id=sample_id,
+            variant_id=variant_id,
+            variant_model=variant_model,
+            state=state,
+            context=context,
+            resolved_tool_specs=resolved_tool_specs,
+            sandbox_runtime=sandbox_runtime,
+            container_runtime=container_runtime,
+            container_prepare=container_prepare,
+            original_max_steps=original_max_steps,
+            failed_partial=_error_partial(
+                request,
+                started_ms=started,
+                sample_id=sample_id,
+                variant_id=variant_id,
+                variant_model=variant_model,
+                code="sandbox_prepare_error",
+                message=str(exc),
+                phase="prepare",
+                trace_event="runtime.sandbox.error",
+            ),
+        )
 
+    return PreparedTrial(
+        request=request,
+        started_ms=started,
+        sample_id=sample_id,
+        variant_id=variant_id,
+        variant_model=variant_model,
+        state=state,
+        context=context,
+        resolved_tool_specs=resolved_tool_specs,
+        sandbox_runtime=sandbox_runtime,
+        container_runtime=container_runtime,
+        container_prepare=container_prepare,
+        prepared_sandbox=prepared_sandbox,
+        original_max_steps=original_max_steps,
+        failed_partial=None,
+    )
+
+
+async def execute_agent_phase(prepared: PreparedTrial | TrialRequest) -> PartialTrialResult:
+    """Execute the agent/runtime phase and produce a partial trial result."""
+
+    if isinstance(prepared, TrialRequest):
+        prepared = await prepare_trial_phase(prepared)
+
+    request = prepared.request
+    if prepared.failed_partial is not None:
+        return prepared.failed_partial
+
+    emit = _emit_factory(request)
+    error: ErrorInfo | None = None
+    status = TaskStatus.SUCCESS
+    state = prepared.state
+
+    try:
         async def _agent_run():
-            return await request.agent.run(state, context, tools=resolved_tool_specs)
+            return await request.agent.run(prepared.state, prepared.context, tools=prepared.resolved_tool_specs)
 
         if request.limits.time_limit_seconds is not None:
-            if prepared_sandbox is not None:
+            if prepared.prepared_sandbox is not None:
                 state = await asyncio.wait_for(
-                    sandbox_runtime.run(prepared_sandbox, _agent_run),
+                    prepared.sandbox_runtime.run(prepared.prepared_sandbox, _agent_run),
                     timeout=request.limits.time_limit_seconds,
                 )
             else:
-                state = await asyncio.wait_for(
-                    _agent_run(),
-                    timeout=request.limits.time_limit_seconds,
-                )
+                state = await asyncio.wait_for(_agent_run(), timeout=request.limits.time_limit_seconds)
         else:
-            if prepared_sandbox is not None:
-                state = await sandbox_runtime.run(prepared_sandbox, _agent_run)
+            if prepared.prepared_sandbox is not None:
+                state = await prepared.sandbox_runtime.run(prepared.prepared_sandbox, _agent_run)
             else:
                 state = await _agent_run()
 
@@ -352,58 +454,34 @@ async def execute_agent_phase(request: TrialRequest) -> PartialTrialResult:
         status = TaskStatus.LIMIT_EXCEEDED
         state.stop_reason = StopReason.LIMIT_EXCEEDED
         error = ErrorInfo(code="time_limit_exceeded", message="Trial exceeded time limit.")
-        _emit(
+        emit(
             {
                 "event": "runtime.trial.error",
-                "phase": "error",
+                "phase": "execute",
                 "code": error.code,
                 "message": error.message,
                 "task_id": request.task.task_id,
                 "agent_id": getattr(request.agent, "agent_id"),
-                "variant_id": variant_id,
-                "sample_id": sample_id,
+                "variant_id": prepared.variant_id,
+                "sample_id": prepared.sample_id,
             }
         )
     except Exception as exc:  # pragma: no cover - defensive catch
         status = TaskStatus.ERROR
         state.stop_reason = StopReason.ERROR
         error = ErrorInfo(code="agent_runtime_error", message=str(exc), retryable=False)
-        _emit(
+        emit(
             {
                 "event": "runtime.trial.error",
-                "phase": "error",
+                "phase": "execute",
                 "code": error.code,
                 "message": error.message,
                 "task_id": request.task.task_id,
                 "agent_id": getattr(request.agent, "agent_id"),
-                "variant_id": variant_id,
-                "sample_id": sample_id,
+                "variant_id": prepared.variant_id,
+                "sample_id": prepared.sample_id,
             }
         )
-    finally:
-        try:
-            container_runtime.close()
-        except Exception as exc:
-            _emit(
-                {
-                    "event": "runtime.container.teardown.error",
-                    "phase": "env",
-                    "task_id": request.task.task_id,
-                    "agent_id": getattr(request.agent, "agent_id"),
-                    "variant_id": variant_id,
-                    "sample_id": sample_id,
-                    "message": str(exc),
-                }
-            )
-        if prepared_sandbox is not None:
-            _emit({"event": "runtime.sandbox.teardown.start", "sandbox_id": prepared_sandbox.sandbox_id})
-            teardown_diag = await sandbox_runtime.teardown(prepared_sandbox)
-            _emit({"event": "runtime.sandbox.teardown.done", "sandbox_id": prepared_sandbox.sandbox_id})
-        if original_max_steps is not None:
-            try:
-                setattr(request.agent, "max_steps", original_max_steps)
-            except Exception:
-                pass
 
     output = state.output or {}
     usage_data = output.get("usage") or {}
@@ -439,24 +517,48 @@ async def execute_agent_phase(request: TrialRequest) -> PartialTrialResult:
                 f"{request.limits.token_limit}."
             ),
         )
-        _emit(
+        emit(
             {
                 "event": "runtime.trial.error",
-                "phase": "error",
+                "phase": "execute",
                 "code": error.code,
                 "message": error.message,
                 "task_id": request.task.task_id,
                 "agent_id": getattr(request.agent, "agent_id"),
-                "variant_id": variant_id,
-                "sample_id": sample_id,
+                "variant_id": prepared.variant_id,
+                "sample_id": prepared.sample_id,
             }
         )
 
     ended = int(time.time() * 1000)
+    payload: dict[str, Any] = {
+        "stop_reason": state.stop_reason.value if state.stop_reason else None,
+        "variant_id": prepared.variant_id,
+        "model": prepared.variant_model,
+        "sample_input": _extract_sample_input(request.sample),
+        **(
+            {"osworld_score": output.get("osworld_score")}
+            if output.get("osworld_score") is not None
+            else {}
+        ),
+    }
+    if prepared.prepared_sandbox is not None:
+        payload["sandbox"] = {
+            "sandbox_id": prepared.prepared_sandbox.sandbox_id,
+            "spec_hash": prepared.prepared_sandbox.spec_hash,
+            "provider": prepared.prepared_sandbox.provider,
+            "prepare": prepared.prepared_sandbox.diagnostics,
+        }
+    if prepared.container_prepare.spec_hash:
+        payload["container"] = {
+            "spec_hash": prepared.container_prepare.spec_hash,
+            **dict(prepared.container_prepare.metadata),
+        }
+
     task_result = TaskResult(
         task_id=request.task.task_id,
         agent_id=getattr(request.agent, "agent_id"),
-        sample_id=sample_id,
+        sample_id=prepared.sample_id,
         seed=request.seed,
         status=status,
         final_output={
@@ -465,48 +567,15 @@ async def execute_agent_phase(request: TrialRequest) -> PartialTrialResult:
             **({"traj": output.get("traj")} if output.get("traj") is not None else {}),
         },
         timing=Timing(
-            started_at_ms=started,
+            started_at_ms=prepared.started_ms,
             ended_at_ms=ended,
-            duration_ms=max(0, ended - started),
+            duration_ms=max(0, ended - prepared.started_ms),
         ),
         usage=usage,
         error=error,
         artifacts=artifacts,
-        payload={
-            "stop_reason": state.stop_reason.value if state.stop_reason else None,
-            "variant_id": variant_id,
-            "model": variant_model,
-            "sample_input": _extract_sample_input(request.sample),
-            **(
-                {"osworld_score": output.get("osworld_score")}
-                if output.get("osworld_score") is not None
-                else {}
-            ),
-        },
+        payload=payload,
     )
-    if prepared_sandbox is not None:
-        task_result = TaskResult(
-            task_id=task_result.task_id,
-            agent_id=task_result.agent_id,
-            sample_id=task_result.sample_id,
-            seed=task_result.seed,
-            status=task_result.status,
-            final_output=task_result.final_output,
-            timing=task_result.timing,
-            usage=task_result.usage,
-            error=task_result.error,
-            artifacts=task_result.artifacts,
-            payload={
-                **task_result.payload,
-                "sandbox": {
-                    "sandbox_id": prepared_sandbox.sandbox_id,
-                    "spec_hash": prepared_sandbox.spec_hash,
-                    "provider": prepared_sandbox.provider,
-                    "teardown": teardown_diag or {},
-                },
-            },
-        )
-
     trace = {
         "trace_events": output.get("trace_events", []),
         "actions": [
@@ -519,42 +588,37 @@ async def execute_agent_phase(request: TrialRequest) -> PartialTrialResult:
         ],
         "stop_reason": state.stop_reason.value if state.stop_reason else None,
     }
-    if prepared_sandbox is not None:
+    if prepared.prepared_sandbox is not None:
         trace["sandbox"] = {
-            "sandbox_id": prepared_sandbox.sandbox_id,
-            "spec_hash": prepared_sandbox.spec_hash,
-            "provider": prepared_sandbox.provider,
-            "prepare": prepared_sandbox.diagnostics,
-            "teardown": teardown_diag or {},
+            "sandbox_id": prepared.prepared_sandbox.sandbox_id,
+            "spec_hash": prepared.prepared_sandbox.spec_hash,
+            "provider": prepared.prepared_sandbox.provider,
+            "prepare": prepared.prepared_sandbox.diagnostics,
+        }
+    if prepared.container_prepare.spec_hash:
+        trace["container"] = {
+            "spec_hash": prepared.container_prepare.spec_hash,
+            **dict(prepared.container_prepare.metadata),
         }
 
-    score_context = ScoreContext(
-        task_id=request.task.task_id,
-        agent_id=getattr(request.agent, "agent_id"),
-        sample_id=sample_id,
-        task_metadata=request.task.metadata,
-        sample_metadata=dict(request.sample.get("metadata", {})),
+    return PartialTrialResult(
+        task_result=task_result,
+        trace=trace,
+        score_context=_build_score_context(request, sample_id=prepared.sample_id),
     )
-    return PartialTrialResult(task_result=task_result, trace=trace, score_context=score_context)
 
 
-async def score_trial_phase(request: TrialRequest, partial: PartialTrialResult) -> TrialOutcome:
+async def score_trial_phase(prepared: PreparedTrial | TrialRequest, partial: PartialTrialResult) -> TrialOutcome:
     """Apply the scorer to a partial trial result and finalize status."""
+    request = prepared.request if isinstance(prepared, PreparedTrial) else prepared
     task_result = partial.task_result
     trace = partial.trace
     score_context = partial.score_context
     variant_id = str(getattr(request.agent, "variant_id", "default"))
-
-    def _emit(event: dict[str, Any]) -> None:
-        if request.on_event is None:
-            return
-        try:
-            request.on_event(dict(event))
-        except Exception:
-            return
+    emit = _emit_factory(request)
 
     try:
-        _emit(
+        emit(
             {
                 "event": "runtime.scorer.start",
                 "phase": "scorer",
@@ -567,7 +631,7 @@ async def score_trial_phase(request: TrialRequest, partial: PartialTrialResult) 
         )
         scores = await asyncio.to_thread(request.scorer.score, task_result, trace, score_context)
         validate_scores(scores)
-        _emit(
+        emit(
             {
                 "event": "runtime.scorer.finish",
                 "phase": "scorer",
@@ -607,10 +671,10 @@ async def score_trial_phase(request: TrialRequest, partial: PartialTrialResult) 
             artifacts=task_result.artifacts,
             payload=task_result.payload,
         )
-        _emit(
+        emit(
             {
                 "event": "runtime.trial.error",
-                "phase": "error",
+                "phase": "score",
                 "code": "scorer_error",
                 "message": str(exc),
                 "task_id": task_result.task_id,
@@ -621,8 +685,6 @@ async def score_trial_phase(request: TrialRequest, partial: PartialTrialResult) 
         )
         return TrialOutcome(task_result=task_result, scores={}, trace=trace)
 
-    # status transition with scorer signal:
-    # if an "accuracy" metric exists and is < 1.0, mark incorrect unless already terminal error/limit.
     accuracy = scores.get("accuracy")
     if (
         task_result.status == TaskStatus.SUCCESS
@@ -642,10 +704,10 @@ async def score_trial_phase(request: TrialRequest, partial: PartialTrialResult) 
             artifacts=task_result.artifacts,
             payload=task_result.payload,
         )
-    _emit(
+    emit(
         {
             "event": "runtime.trial.finish",
-            "phase": "task",
+            "phase": "score",
             "task_id": task_result.task_id,
             "agent_id": task_result.agent_id,
             "variant_id": variant_id,
@@ -662,8 +724,149 @@ async def score_trial_phase(request: TrialRequest, partial: PartialTrialResult) 
     return TrialOutcome(task_result=task_result, scores=scores, trace=trace)
 
 
+async def finalize_trial_phase(
+    prepared: PreparedTrial | TrialRequest,
+    outcome: TrialOutcome,
+) -> tuple[TrialOutcome, FinalizedTrialArtifacts]:
+    """Persist teardown diagnostics and release resources."""
+    if isinstance(prepared, TrialRequest):
+        prepared = await prepare_trial_phase(prepared)
+
+    request = prepared.request
+    emit = _emit_factory(request)
+    teardown_diag: dict[str, Any] | None = None
+    container_close: dict[str, Any] | None = None
+    finalize_error: Exception | None = None
+
+    emit(
+        {
+            "event": "runtime.finalize.start",
+            "phase": "finalize",
+            "task_id": outcome.task_result.task_id,
+            "agent_id": outcome.task_result.agent_id,
+            "variant_id": prepared.variant_id,
+            "sample_id": prepared.sample_id,
+        }
+    )
+
+    try:
+        if prepared.prepared_sandbox is not None:
+            emit({"event": "runtime.sandbox.teardown.start", "phase": "finalize", "sandbox_id": prepared.prepared_sandbox.sandbox_id})
+            teardown_diag = await prepared.sandbox_runtime.teardown(prepared.prepared_sandbox)
+            emit({"event": "runtime.sandbox.teardown.done", "phase": "finalize", "sandbox_id": prepared.prepared_sandbox.sandbox_id})
+    except Exception as exc:
+        finalize_error = exc
+        emit(
+            {
+                "event": "runtime.trial.error",
+                "phase": "finalize",
+                "code": "sandbox_teardown_error",
+                "message": str(exc),
+                "task_id": outcome.task_result.task_id,
+                "agent_id": outcome.task_result.agent_id,
+                "variant_id": prepared.variant_id,
+                "sample_id": prepared.sample_id,
+            }
+        )
+
+    try:
+        close_out = await prepared.container_runtime.finalize_phase()
+        if close_out is not None:
+            container_close = dict(close_out)
+    except Exception as exc:
+        finalize_error = finalize_error or exc
+        emit(
+            {
+                "event": "runtime.trial.error",
+                "phase": "finalize",
+                "code": "container_teardown_error",
+                "message": str(exc),
+                "task_id": outcome.task_result.task_id,
+                "agent_id": outcome.task_result.agent_id,
+                "variant_id": prepared.variant_id,
+                "sample_id": prepared.sample_id,
+            }
+        )
+    finally:
+        if prepared.original_max_steps is not None:
+            try:
+                setattr(request.agent, "max_steps", prepared.original_max_steps)
+            except Exception:
+                pass
+
+    task_result = outcome.task_result
+    trace = dict(outcome.trace)
+    payload = dict(task_result.payload)
+    if prepared.prepared_sandbox is not None:
+        payload["sandbox"] = {
+            "sandbox_id": prepared.prepared_sandbox.sandbox_id,
+            "spec_hash": prepared.prepared_sandbox.spec_hash,
+            "provider": prepared.prepared_sandbox.provider,
+            "prepare": prepared.prepared_sandbox.diagnostics,
+            "teardown": teardown_diag or {},
+        }
+        trace["sandbox"] = {
+            "sandbox_id": prepared.prepared_sandbox.sandbox_id,
+            "spec_hash": prepared.prepared_sandbox.spec_hash,
+            "provider": prepared.prepared_sandbox.provider,
+            "prepare": prepared.prepared_sandbox.diagnostics,
+            "teardown": teardown_diag or {},
+        }
+    if container_close is not None:
+        payload["container_finalize"] = dict(container_close)
+        trace["container_finalize"] = dict(container_close)
+
+    if finalize_error is not None:
+        task_result = TaskResult(
+            task_id=task_result.task_id,
+            agent_id=task_result.agent_id,
+            sample_id=task_result.sample_id,
+            seed=task_result.seed,
+            status=TaskStatus.ERROR,
+            final_output=task_result.final_output,
+            timing=task_result.timing,
+            usage=task_result.usage,
+            error=ErrorInfo(code="finalize_error", message=str(finalize_error), retryable=False),
+            artifacts=task_result.artifacts,
+            payload=payload,
+        )
+        outcome = TrialOutcome(task_result=task_result, scores=outcome.scores, trace=trace)
+    elif payload != task_result.payload or trace != outcome.trace:
+        task_result = TaskResult(
+            task_id=task_result.task_id,
+            agent_id=task_result.agent_id,
+            sample_id=task_result.sample_id,
+            seed=task_result.seed,
+            status=task_result.status,
+            final_output=task_result.final_output,
+            timing=task_result.timing,
+            usage=task_result.usage,
+            error=task_result.error,
+            artifacts=task_result.artifacts,
+            payload=payload,
+        )
+        outcome = TrialOutcome(task_result=task_result, scores=outcome.scores, trace=trace)
+
+    emit(
+        {
+            "event": "runtime.finalize.finish",
+            "phase": "finalize",
+            "task_id": outcome.task_result.task_id,
+            "agent_id": outcome.task_result.agent_id,
+            "variant_id": prepared.variant_id,
+            "sample_id": prepared.sample_id,
+            "status": outcome.task_result.status.value,
+        }
+    )
+
+    return outcome, FinalizedTrialArtifacts(teardown=teardown_diag, container_close=container_close)
+
+
 async def execute_trial(request: TrialRequest) -> TrialOutcome:
     """Execute one full trial for callers that still expect the old API."""
 
-    partial = await execute_agent_phase(request)
-    return await score_trial_phase(request, partial)
+    prepared = await prepare_trial_phase(request)
+    partial = await execute_agent_phase(prepared)
+    outcome = await score_trial_phase(prepared, partial)
+    finalized, _ = await finalize_trial_phase(prepared, outcome)
+    return finalized
