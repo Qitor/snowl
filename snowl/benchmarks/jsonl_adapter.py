@@ -1,4 +1,15 @@
-"""First benchmark adapter: JSONL benchmark loader."""
+"""Generic JSONL-to-Task adapter used for schema-light benchmark integration.
+
+Framework role:
+- Implements `BaseBenchmarkAdapter` hooks for split filtering and conversion of JSONL rows into Snowl samples.
+- Preserves extra row fields in `metadata` so benchmark-specific signals remain available to scorers.
+
+Runtime/usage wiring:
+- Used in benchmark flows that want immediate JSONL support without custom adapter code.
+
+Change guardrails:
+- Treat default field names and sample-id fallback behavior as user-facing compatibility.
+"""
 
 from __future__ import annotations
 

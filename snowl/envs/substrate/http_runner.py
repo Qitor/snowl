@@ -1,4 +1,15 @@
-"""HTTP helper for controller communication."""
+"""Low-level substrate helper (http_runner) for environment backends.
+
+Framework role:
+- Encapsulates transport/process/backend primitives used by higher env adapters.
+
+Runtime/usage wiring:
+- Consumed by terminal/gui/sandbox environment implementations.
+- Key top-level symbols in this file: `HttpRunnerError`, `HttpRunner`.
+
+Change guardrails:
+- Keep API narrow and reusable; avoid introducing benchmark semantics here.
+"""
 
 from __future__ import annotations
 

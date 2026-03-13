@@ -1,4 +1,16 @@
-"""Built-in ReActAgent implementation with native tools + JSON fallback."""
+"""Multi-step ReAct agent with tool-schema injection and dual calling modes.
+
+Framework role:
+- Runs Plan/Act/Observe loop with bounded steps, tool execution, and accumulated trace/usage accounting.
+- Supports native tool-calling mode first, then JSON action fallback when provider/tool-call behavior is incompatible.
+
+Runtime/usage wiring:
+- Consumes `ToolSpec` schemas from runtime, writes action/observation events into `AgentState`, and returns final output.
+- Main built-in path for tool-using benchmarks, so its event payloads are heavily used during runtime debugging.
+
+Change guardrails:
+- Keep tool-call parsing and fallback semantics explicit; silent behavior drift here changes benchmark comparability.
+"""
 
 from __future__ import annotations
 
@@ -84,6 +96,16 @@ class ReActAgent:
                         "agent_id": self.agent_id,
                         "task_id": context.task_id,
                         "sample_id": context.sample_id,
+                        "step": step,
+                        "mode": mode_name,
+                        "message": "waiting for provider response",
+                        "model": self.model_client.model,
+                        "base_url": self.model_client.base_url,
+                        "provider_id": self.model_client.provider_id,
+                        "request": {
+                            "messages": request_messages,
+                            "generation_kwargs": request_kwargs,
+                        },
                     }
                 )
             try:
@@ -101,6 +123,13 @@ class ReActAgent:
                             "mode": mode_name,
                             "message": str(exc),
                             "error_type": exc.__class__.__name__,
+                            "model": self.model_client.model,
+                            "base_url": self.model_client.base_url,
+                            "provider_id": self.model_client.provider_id,
+                            "request": {
+                                "messages": request_messages,
+                                "generation_kwargs": request_kwargs,
+                            },
                         }
                     )
                 raise
@@ -116,6 +145,9 @@ class ReActAgent:
                         "input_tokens": response.usage.input_tokens,
                         "output_tokens": response.usage.output_tokens,
                         "total_tokens": response.usage.total_tokens,
+                        "model": self.model_client.model,
+                        "base_url": self.model_client.base_url,
+                        "provider_id": self.model_client.provider_id,
                     }
                 )
                 emit(
@@ -129,6 +161,8 @@ class ReActAgent:
                         "mode": mode_name,
                         "message": "full model request/response captured",
                         "model": self.model_client.model,
+                        "base_url": self.model_client.base_url,
+                        "provider_id": self.model_client.provider_id,
                         "request": {
                             "messages": request_messages,
                             "generation_kwargs": request_kwargs,

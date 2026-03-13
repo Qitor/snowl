@@ -1,4 +1,15 @@
-"""Conformance checks for benchmark adapters."""
+"""Adapter conformance checks for deterministic splits, sample shape, and task contract compatibility.
+
+Framework role:
+- Provides safety checks before adapters are trusted in production benchmark runs.
+
+Runtime/usage wiring:
+- Invoked by benchmark conformance CLI paths and tests.
+- Key top-level symbols in this file: `ConformanceReport`, `_sample_schema_ok`, `run_conformance`.
+
+Change guardrails:
+- Keep checks strict enough to catch adapter drift but stable enough to avoid flaky diagnostics.
+"""
 
 from __future__ import annotations
 

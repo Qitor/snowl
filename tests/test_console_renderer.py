@@ -101,3 +101,46 @@ def test_console_renderer_ignores_ui_heartbeat(capsys) -> None:
     out = capsys.readouterr().out
     assert "ui.heartbeat" not in out
     assert "runtime.trial.start" in out
+
+
+def test_console_renderer_prints_provider_request_debug(capsys) -> None:
+    r = ConsoleRenderer(verbose=True, width=1000)
+    r.render_runtime_event(
+        {
+            "event": "runtime.model.query.start",
+            "task_id": "t1",
+            "agent_id": "a1",
+            "model": "Qwen/Qwen3-32B",
+            "base_url": "https://provider.example/v1",
+            "provider_id": "siliconflow",
+            "message": "waiting for provider response",
+            "request": {
+                "messages": [{"role": "user", "content": "hello"}],
+                "generation_kwargs": {"temperature": 0.2},
+            },
+        }
+    )
+    out = capsys.readouterr().out
+    assert "runtime.model.query.start" in out
+    assert "provider.request.messages=" in out
+    assert '"content": "hello"' in out
+    assert "waiting for provider response" in out
+
+
+def test_console_renderer_prints_provider_raw_response_debug(capsys) -> None:
+    r = ConsoleRenderer(verbose=True, width=1000)
+    r.render_runtime_event(
+        {
+            "event": "runtime.model.io",
+            "task_id": "t1",
+            "agent_id": "a1",
+            "response": {
+                "message": {"role": "assistant", "content": "done"},
+                "raw": {"choices": [{"message": {"role": "assistant", "content": "done"}}]},
+            },
+        }
+    )
+    out = capsys.readouterr().out
+    assert "runtime.model.io" in out
+    assert "provider.response.message=" in out
+    assert "provider.response.raw=" in out

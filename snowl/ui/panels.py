@@ -1,4 +1,15 @@
-"""Panel type registry and benchmark/user configurable panel layouts."""
+"""Panel configuration schema/loader/merge logic for live CLI dashboard layouts.
+
+Framework role:
+- Defines panel spec/layout contracts and merges default, benchmark, and user overrides by precedence.
+- Guarantees renderer-safe fallback panel specs so missing config never bricks dashboard rendering.
+
+Runtime/usage wiring:
+- Used by live console renderer to decide which data sources/panels are visible and how they are arranged.
+
+Change guardrails:
+- Preserve config-merge determinism; ambiguous precedence causes hard-to-debug UI behavior drift.
+"""
 
 from __future__ import annotations
 

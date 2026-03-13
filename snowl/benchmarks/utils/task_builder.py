@@ -1,4 +1,15 @@
-"""Task construction helpers for benchmark adapters."""
+"""Shared utility module for benchmark adapters (task_builder).
+
+Framework role:
+- Provides reusable dataset/split/filter/path/task helpers consumed by multiple adapters.
+
+Runtime/usage wiring:
+- Imported by concrete benchmark adapters to reduce duplicated plumbing code.
+- Key top-level symbols in this file: `build_benchmark_task`.
+
+Change guardrails:
+- Keep behavior generic; benchmark-specific rules belong in adapter packages.
+"""
 
 from __future__ import annotations
 

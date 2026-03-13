@@ -1,4 +1,15 @@
-"""Decorator declaration metadata helpers."""
+"""Autodiscovery declaration metadata for task/agent/scorer objects.
+
+Framework role:
+- Provides `declare(...)` metadata stamping and fallback registry for objects that cannot hold attributes.
+- Tracks declaration order so eval autodiscovery can preserve deterministic load ordering.
+
+Runtime/usage wiring:
+- Used by `@task`, `@agent`, and `@scorer` decorators in core contracts.
+
+Change guardrails:
+- Maintain backward-compatible metadata keys; discovery behavior depends on these attribute names.
+"""
 
 from __future__ import annotations
 

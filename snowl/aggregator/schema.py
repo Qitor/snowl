@@ -1,4 +1,14 @@
-"""Standardized result artifact schemas and version constants."""
+"""Artifact schema/version constants for normalized results and aggregate outputs.
+
+Framework role:
+- Centralizes schema URIs and version tags used in run artifacts.
+
+Runtime/usage wiring:
+- Referenced by eval artifact writers and tests asserting schema stability.
+
+Change guardrails:
+- Version/URI changes are contract changes; coordinate with downstream consumers.
+"""
 
 from __future__ import annotations
 

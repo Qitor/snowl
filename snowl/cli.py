@@ -1,4 +1,15 @@
-"""Snowl command line interface."""
+"""Top-level operator CLI entrypoint that wires commands into eval, bench, retry, and monitor flows.
+
+Framework role:
+- Owns user-facing command UX, flag parsing, process lifecycle, and web monitor bootstrap behavior.
+
+Runtime/usage wiring:
+- Delegates domain logic into lower layers (`snowl.eval`, `snowl.bench`, `snowl.web.*`).
+- Key top-level symbols in this file: `_split_csv`, `_project_base_dir`, `_latest_run_log_path`, `_print_interrupt_log_hint`, `_close_renderer`, `_port_listening`.
+
+Change guardrails:
+- Keep business/runtime semantics in lower layers; this file should orchestrate, not re-implement.
+"""
 
 from __future__ import annotations
 
@@ -109,6 +120,46 @@ def _monitor_health(host: str, port: int, *, timeout_sec: float = 0.35) -> dict[
     except Exception:
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+def _env_float(name: str, *, default: float, minimum: float) -> float:
+    raw = str(os.getenv(name, "")).strip()
+    if not raw:
+        return float(default)
+    try:
+        parsed = float(raw)
+    except Exception:
+        return float(default)
+    return parsed if parsed >= float(minimum) else float(default)
+
+
+def _wait_for_monitor_ready(
+    *,
+    host: str,
+    port: int,
+    process: subprocess.Popen[bytes] | None = None,
+    timeout_sec: float = 8.0,
+    poll_sec: float = 0.2,
+    settle_sec: float = 0.35,
+) -> bool:
+    """Wait until monitor health endpoint responds, then keep a short settle window."""
+
+    deadline = time.time() + max(0.2, float(timeout_sec))
+    poll = max(0.05, float(poll_sec))
+    while time.time() < deadline:
+        if process is not None:
+            try:
+                if process.poll() is not None:
+                    return False
+            except Exception:
+                pass
+        if _port_listening(host, port, timeout_sec=0.15):
+            if _monitor_health(host, port, timeout_sec=0.35) is not None:
+                if settle_sec > 0:
+                    time.sleep(float(settle_sec))
+                return True
+        time.sleep(poll)
+    return False
 
 
 def _same_project(lhs: str, rhs: str) -> bool:
@@ -294,11 +345,26 @@ class _ManagedWebMonitor:
 
         self.port = target_port
         url = f"http://{self.host}:{target_port}"
-        deadline = time.time() + 2.0
-        while time.time() < deadline:
-            if _port_listening(self.host, target_port, timeout_sec=0.15):
-                return url
-            time.sleep(0.1)
+        _wait_for_monitor_ready(
+            host=self.host,
+            port=target_port,
+            process=self.process,
+            timeout_sec=_env_float(
+                "SNOWL_WEB_MONITOR_READY_TIMEOUT_SEC",
+                default=8.0,
+                minimum=0.2,
+            ),
+            poll_sec=_env_float(
+                "SNOWL_WEB_MONITOR_READY_POLL_SEC",
+                default=0.2,
+                minimum=0.05,
+            ),
+            settle_sec=_env_float(
+                "SNOWL_WEB_MONITOR_READY_SETTLE_SEC",
+                default=0.35,
+                minimum=0.0,
+            ),
+        )
         return url
 
     def stop(self) -> None:

@@ -1,4 +1,15 @@
-"""Live UI contracts: normalized events, task monitor state, scorer explain schema."""
+"""UI-facing event/state contracts and reducer logic for runtime monitoring.
+
+Framework role:
+- Normalizes raw runtime events into typed `UIEvent`s and phase labels.
+- Maintains task-level monitor state machine (`queued -> running -> scoring -> terminal states`).
+
+Runtime/usage wiring:
+- Shared by CLI live renderer and web monitor code paths to keep status semantics aligned.
+
+Change guardrails:
+- Event-name to phase/status mapping is contract-critical for observability; update docs/tests when altered.
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,17 @@
-"""OpenAI-compatible model client and configuration helpers."""
+"""OpenAI-compatible provider client, request/retry normalization, and provider-slot admission hook point.
+
+Framework role:
+- Implements chat-completion requests, retryable error handling, and response normalization into internal model response types.
+- Acts as the most direct enforcement point for provider budgets via global slot resolver hooks.
+
+Runtime/usage wiring:
+- `snowl.eval` installs scheduler-backed slot resolvers here; therefore provider throttling is strongest at model-call time.
+- Used by built-in agents and model-as-judge scorers through shared model client interfaces.
+- Key top-level symbols in this file: `OpenAICompatibleConfig`, `ModelResponse`, `_coerce_float`, `_coerce_int`, `load_openai_compatible_config`, `OpenAICompatibleChatClient`.
+
+Change guardrails:
+- HTTP/retry semantics changes can alter effective runtime throughput and failure patterns; validate scheduler/profiling expectations.
+"""
 
 from __future__ import annotations
 
@@ -167,6 +180,14 @@ class OpenAICompatibleChatClient:
     @property
     def model(self) -> str:
         return self._config.model
+
+    @property
+    def base_url(self) -> str:
+        return self._config.base_url
+
+    @property
+    def provider_id(self) -> str:
+        return self._config.provider_id
 
     async def aclose(self) -> None:
         await self._client.aclose()

@@ -1,4 +1,14 @@
-"""Benchmark adapters and registry."""
+"""Benchmark package facade exposing adapters, registry, and conformance utilities.
+
+Framework role:
+- Provides one import surface for built-in benchmark adapters plus registry APIs used by CLI/eval bootstrap.
+
+Runtime/usage wiring:
+- Used by benchmark command paths and tests to construct adapters without hardcoding module paths.
+
+Change guardrails:
+- Keep re-exports aligned with registry defaults and benchmark docs.
+"""
 
 from snowl.benchmarks.base import BenchmarkAdapter, BenchmarkInfo, validate_benchmark_adapter
 from snowl.benchmarks.base_adapter import BaseBenchmarkAdapter

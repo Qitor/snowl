@@ -1,4 +1,14 @@
-"""Environment implementations."""
+"""Environment package export surface for local/terminal/gui runtimes and sandbox backends.
+
+Framework role:
+- Exposes env implementations used by runtime engine and benchmark container providers.
+
+Runtime/usage wiring:
+- Imported by runtime execution paths and benchmark-specific env bootstrap code.
+
+Change guardrails:
+- Keep import cost low and avoid implicit environment initialization at module import time.
+"""
 
 from snowl.envs.gui_env import GuiEnv
 from snowl.envs.local_env import LocalEnv

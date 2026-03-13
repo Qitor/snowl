@@ -1,4 +1,15 @@
-"""TTY input pump for live keyboard interaction."""
+"""TTY input pump that translates raw key streams into semantic controller tokens.
+
+Framework role:
+- Handles raw-mode and line-mode stdin capture, escape-sequence decoding, and command-mode editing flow.
+- Pushes normalized commands/hotkeys to `InteractionController` without blocking runtime execution.
+
+Runtime/usage wiring:
+- Runs in a background thread during interactive CLI sessions.
+
+Change guardrails:
+- Input handling bugs are operator-facing and hard to recover from; keep key mapping conservative and tested.
+"""
 
 from __future__ import annotations
 

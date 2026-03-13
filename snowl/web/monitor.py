@@ -1,4 +1,15 @@
-"""Run discovery, event indexing, and aggregation for Web monitor."""
+"""Web-monitor backend store for run discovery, event ingestion, indexing, and experiment/run summaries.
+
+Framework role:
+- Consumes run artifacts and live events to provide queryable monitor state without altering runtime execution behavior.
+
+Runtime/usage wiring:
+- Used by web API handlers to serve run lists, event streams, and summary views.
+- Key top-level symbols in this file: `RunState`, `RunMonitorStore`.
+
+Change guardrails:
+- Keep this layer read/index focused; runtime semantics belong to eval/runtime modules.
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,15 @@
-"""Concrete sandbox runtime implementations for environment execution."""
+"""Sandbox lifecycle implementations: prepare/run/teardown protocol plus local pool wrappers.
+
+Framework role:
+- Defines runtime sandbox interface and concrete local runtimes (plain, warm-pool reuse, bounded concurrency).
+- Encodes pooling/reuse semantics keyed by sandbox spec hash.
+
+Runtime/usage wiring:
+- Used by runtime engine when tasks declare sandbox specs in `EnvSpec`.
+
+Change guardrails:
+- Pooling or semaphore semantics changes impact concurrency and reproducibility; validate runtime traces after edits.
+"""
 
 from __future__ import annotations
 

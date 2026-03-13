@@ -1,4 +1,15 @@
-"""Benchmark adapter contracts."""
+"""Core benchmark adapter contracts and metadata schemas.
+
+Framework role:
+- Defines the interface concrete adapters must implement to integrate with Snowl benchmark execution.
+
+Runtime/usage wiring:
+- Used by adapter implementations, registry, and conformance checks.
+- Key top-level symbols in this file: `BenchmarkInfo`, `BenchmarkAdapter`, `validate_benchmark_adapter`.
+
+Change guardrails:
+- Any API change here is cross-adapter and high-impact.
+"""
 
 from __future__ import annotations
 

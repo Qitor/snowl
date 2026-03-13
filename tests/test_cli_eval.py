@@ -496,6 +496,55 @@ def test_auto_web_monitor_prints_url_when_port_is_ready(monkeypatch, tmp_path: P
     assert "http://127.0.0.1:8765" in out
 
 
+def test_managed_monitor_waits_for_health_before_returning_url(monkeypatch, tmp_path: Path) -> None:
+    import snowl.cli as cli_mod
+
+    health = {"calls": 0}
+    monkeypatch.setattr(cli_mod.sys.stdout, "isatty", lambda: True)
+
+    class _P:
+        pid = 8123
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(cli_mod, "_next_available_port", lambda host, start_port, max_tries=32: 8765)
+    monkeypatch.setattr(cli_mod.subprocess, "Popen", lambda *args, **kwargs: _P())
+    monkeypatch.setattr(cli_mod, "_port_listening", lambda host, port, timeout_sec=0.25: True)
+
+    def _fake_health(host, port, timeout_sec=0.35):
+        _ = (host, port, timeout_sec)
+        health["calls"] += 1
+        if health["calls"] < 3:
+            return None
+        return {"ok": True}
+
+    monkeypatch.setattr(cli_mod, "_monitor_health", _fake_health)
+    monkeypatch.setenv("SNOWL_WEB_MONITOR_READY_TIMEOUT_SEC", "1.0")
+    monkeypatch.setenv("SNOWL_WEB_MONITOR_READY_POLL_SEC", "0.1")
+    monkeypatch.setenv("SNOWL_WEB_MONITOR_READY_SETTLE_SEC", "0")
+    monkeypatch.setattr(cli_mod.time, "sleep", lambda _x: None)
+
+    ticks = {"n": 0.0}
+
+    def _fake_time() -> float:
+        ticks["n"] += 0.1
+        return ticks["n"]
+
+    monkeypatch.setattr(cli_mod.time, "time", _fake_time)
+
+    monitor = cli_mod._ManagedWebMonitor(
+        project=str(tmp_path),
+        host="127.0.0.1",
+        port=8765,
+        poll_interval_sec=0.5,
+        enabled=True,
+    )
+    url = monitor.maybe_start()
+    assert url == "http://127.0.0.1:8765"
+    assert health["calls"] >= 3
+
+
 def test_cli_web_monitor_prints_url(monkeypatch, tmp_path: Path, capsys) -> None:
     import snowl.cli as cli_mod
 

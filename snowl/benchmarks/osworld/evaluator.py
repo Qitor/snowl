@@ -1,4 +1,15 @@
-"""OSWorld task setup and evaluator replication helpers."""
+"""OSWorld post-run evaluator bridge that loads upstream reference metrics/getters.
+
+Framework role:
+- Dynamically imports evaluator functions from `references/OSWorld` and executes metric pipelines against recorded trajectories.
+- Encapsulates setup/postconfig HTTP actions and cache-dir resolution for reproducible evaluation artifacts.
+
+Runtime/usage wiring:
+- Invoked by OSWorld scoring paths after execution; output feeds benchmark-specific score mapping.
+
+Change guardrails:
+- Keep import/error handling defensive because this module depends on external reference code and optional packages.
+"""
 
 from __future__ import annotations
 

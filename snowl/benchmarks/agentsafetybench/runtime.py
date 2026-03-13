@@ -1,4 +1,15 @@
-"""Agent-SafetyBench native runtime helpers used by Snowl integrations."""
+"""Benchmark-local runtime helper module for `agentsafetybench` integrations.
+
+Framework role:
+- Holds benchmark runtime quirks that should not leak into shared eval/runtime code.
+
+Runtime/usage wiring:
+- Referenced by benchmark-specific adapters/scorers or integration glue.
+- Key top-level symbols in this file: `_project_root`, `agentsafetybench_root`, `_safe_token`, `_ensure_agentsafetybench_importable`, `resolve_agentsafetybench_output_dir`, `persist_agentsafetybench_trajectory`.
+
+Change guardrails:
+- Keep benchmark assumptions local unless promoting a shared runtime contract.
+"""
 
 from __future__ import annotations
 

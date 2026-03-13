@@ -1,4 +1,15 @@
-"""Environment, Ops contracts, and sandbox spec normalization."""
+"""Core environment contract for capability declaration and sandbox spec hashing.
+
+Framework role:
+- Defines env capability protocols (`FileOps`, `ProcessOps`, `WebOps`) and `EnvSpec`/`SandboxSpec` data contracts.
+- `SandboxSpec.spec_hash()` provides deterministic identity used by runtime pooling/locality logic.
+
+Runtime/usage wiring:
+- Consumed by task definitions, runtime engine validation, and sandbox/container preparation layers.
+
+Change guardrails:
+- Canonicalization/hash behavior must stay stable unless migration is intentional and documented.
+"""
 
 from __future__ import annotations
 

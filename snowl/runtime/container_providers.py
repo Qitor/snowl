@@ -1,4 +1,17 @@
-"""Provider registry for benchmark-specific container lifecycle."""
+"""Registry and concrete benchmark container providers (TerminalBench, OSWorld) used by runtime prepare/finalize paths.
+
+Framework role:
+- Maps benchmark metadata into concrete env/container startup commands, per-trial isolation identifiers, and close behavior.
+- Computes trial-level `spec_hash` and requirement metadata consumed upstream.
+
+Runtime/usage wiring:
+- Provider selection happens through benchmark keys from task metadata.
+- TerminalBench and OSWorld providers are the concrete bridge from shared runtime APIs to benchmark runtime realities.
+- Key top-level symbols in this file: `ContainerSession`, `ContainerProviderContext`, `ContainerProvider`, `ContainerProviderRegistry`, `TerminalBenchProvider`, `OSWorldProvider`.
+
+Change guardrails:
+- Keep benchmark-specific assumptions in this layer; do not leak them into global scheduler logic without contract changes.
+"""
 
 from __future__ import annotations
 

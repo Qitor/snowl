@@ -1,4 +1,15 @@
-"""Next.js runtime bootstrap for Snowl Web monitor."""
+"""Next.js monitor runtime bootstrap and build/dependency preparation logic.
+
+Framework role:
+- Resolves source mode (repo vs bundled), checks runtime prerequisites, and ensures the monitor is build-ready.
+
+Runtime/usage wiring:
+- Called from CLI monitor startup path.
+- Key top-level symbols in this file: `WebRuntimeError`, `NextWebRuntime`, `_snowl_version`, `_bundled_webui_dir`, `_repo_webui_dir`, `_has_webui_manifest`.
+
+Change guardrails:
+- Packaging/startup behavior changes here should be validated on both editable and packaged modes.
+"""
 
 from __future__ import annotations
 

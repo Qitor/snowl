@@ -1,4 +1,14 @@
-"""Concrete local environment implementation (MVP)."""
+"""Minimal local environment implementation for non-container tasks and tests.
+
+Framework role:
+- Provides a lightweight `EnvSpec`-validated state holder with reset/close lifecycle hooks.
+
+Runtime/usage wiring:
+- Used by tasks that only require local process/file behavior and by tests needing a trivial env.
+
+Change guardrails:
+- Keep this class intentionally small; advanced behavior belongs in terminal/gui env adapters.
+"""
 
 from __future__ import annotations
 

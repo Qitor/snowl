@@ -1,4 +1,15 @@
-"""TerminalBench benchmark-specific scorer."""
+"""Benchmark-specific scorer implementation for `terminalbench`.
+
+Framework role:
+- Translates normalized task results and traces into benchmark-native metric outputs.
+
+Runtime/usage wiring:
+- Used as scorer layer in benchmark runs for this dataset family.
+- Key top-level symbols in this file: `TerminalBenchScorer`, `terminalbench`.
+
+Change guardrails:
+- Metric semantics here define benchmark comparability across runs; change carefully.
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,15 @@
-"""Tool contracts and decorator-based ToolSpec generation."""
+"""Tool contract and registry layer that turns Python callables into normalized ToolSpecs.
+
+Framework role:
+- Builds JSON-schema tool definitions from signatures/type hints/docstrings and tracks them in registries.
+- Standardizes tool metadata (`required_ops`, OpenAI tool schema) used by runtime and agent tool-calling.
+
+Runtime/usage wiring:
+- Tool resolution is called in runtime execute phase before agent invocation.
+
+Change guardrails:
+- Signature-to-schema conversion changes can break existing prompts/tool calls; treat as compatibility-sensitive.
+"""
 
 from __future__ import annotations
 

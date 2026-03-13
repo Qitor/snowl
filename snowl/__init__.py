@@ -1,4 +1,14 @@
-"""Snowl package root."""
+"""Public package facade for common Snowl authoring/runtime imports.
+
+Framework role:
+- Re-exports frequently used contracts (core types, runtime request/outcome types, built-in agents/scorers) for user code.
+
+Runtime/usage wiring:
+- Serves as the stable import path for examples and lightweight integrations (`from snowl import ...`).
+
+Change guardrails:
+- Keep this file as a re-export surface only; avoid heavy runtime side effects at import time.
+"""
 
 __version__ = "0.1.0"
 

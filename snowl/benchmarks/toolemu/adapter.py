@@ -1,4 +1,16 @@
-"""ToolEmu benchmark adapter."""
+"""Adapter layer that maps `toolemu` source datasets into Snowl task/sample contracts.
+
+Framework role:
+- Owns benchmark-specific split/filter/sample-id logic and metadata extraction.
+- Keeps shared runtime generic by normalizing benchmark rows into standard task inputs.
+
+Runtime/usage wiring:
+- Loaded by benchmark registry/bench orchestration and executed through the shared eval pipeline.
+- Key top-level symbols in this file: `_default_dataset_path`, `_case_split`, `ToolEmuBenchmarkAdapter`.
+
+Change guardrails:
+- Preserve deterministic sample identity and metadata contract; scorer/runtime layers depend on it.
+"""
 
 from __future__ import annotations
 

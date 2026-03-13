@@ -1,4 +1,14 @@
-"""Validation utilities for top-level examples/ layout."""
+"""Static checks for `examples/` layout so sample projects remain runnable.
+
+Framework role:
+- Encodes the minimum example contract (`task.py`, `agent.py`, `scorer.py`) and reports structured check results.
+
+Runtime/usage wiring:
+- Used by tooling/CI flows that guard documentation and onboarding examples from drift.
+
+Change guardrails:
+- Keep checks deterministic and schema-like; avoid benchmark-specific policy in this generic validator.
+"""
 
 from __future__ import annotations
 

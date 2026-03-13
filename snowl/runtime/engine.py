@@ -1,4 +1,18 @@
-"""Trial execution engine for Task x AgentVariant x Sample."""
+"""Execution-plane implementation for single-trial prepare, execute, score, and finalize phases.
+
+Framework role:
+- Transforms one `TrialRequest` into normalized `TaskResult`, score map, trace payload, and teardown diagnostics.
+- Hosts phase helpers used by runtime call sites and tests (`prepare_trial_phase`, `execute_agent_phase`, `score_trial_phase`, `finalize_trial_phase`).
+
+Runtime/usage wiring:
+- `execute_trial` runs full prepare->execute->score->finalize for callers that want one-shot semantics.
+- Main eval loop currently calls execute+score helpers directly, so finalize semantics must be reasoned about with `snowl.eval` together.
+- Key top-level symbols in this file: `TrialLimits`, `TrialRequest`, `TrialOutcome`, `PartialTrialResult`, `PreparedTrial`, `FinalizedTrialArtifacts`.
+
+Change guardrails:
+- Any change to status mapping, payload shape, or error normalization impacts scorers, artifacts, and UI contracts.
+- Keep task-result schema compatibility unless the broader contract is intentionally versioned.
+"""
 
 from __future__ import annotations
 
@@ -420,6 +434,8 @@ async def execute_agent_phase(prepared: PreparedTrial | TrialRequest) -> Partial
     """Execute the agent/runtime phase and produce a partial trial result."""
 
     if isinstance(prepared, TrialRequest):
+        # Callers can pass a raw request for convenience. In the main eval loop
+        # this means prepare still happens inside the running-trial admission.
         prepared = await prepare_trial_phase(prepared)
 
     request = prepared.request

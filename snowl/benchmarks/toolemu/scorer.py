@@ -1,4 +1,15 @@
-"""ToolEmu benchmark-specific scorer using ToolEmu's native evaluators."""
+"""Benchmark-specific scorer implementation for `toolemu`.
+
+Framework role:
+- Translates normalized task results and traces into benchmark-native metric outputs.
+
+Runtime/usage wiring:
+- Used as scorer layer in benchmark runs for this dataset family.
+- Key top-level symbols in this file: `_normalize_tool_emu_score`, `_extract_trajectory`, `ToolEmuScorer`, `toolemu`.
+
+Change guardrails:
+- Metric semantics here define benchmark comparability across runs; change carefully.
+"""
 
 from __future__ import annotations
 

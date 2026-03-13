@@ -1,4 +1,15 @@
-"""Reusable unit-test-based scorers (e.g., pytest summary parsing)."""
+"""Unit-test result scorer that converts parser outputs (mainly pytest) into benchmark metrics.
+
+Framework role:
+- Parses pytest summaries or structured parser payloads and emits accuracy/pass-rate metrics.
+- Normalizes test status vocabularies into Snowl pass/fail semantics.
+
+Runtime/usage wiring:
+- Used for code-eval style tasks where task output embeds test execution results.
+
+Change guardrails:
+- Parser assumptions must stay explicit; unsupported parser names should fail predictably, not silently.
+"""
 
 from __future__ import annotations
 

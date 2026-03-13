@@ -6,16 +6,16 @@ provider:
   id: siliconflow
   kind: openai_compatible
   base_url: https://api.siliconflow.cn/v1
-  api_key: sk-...
-  timeout: 30
+  api_key: sk-irodedqyvgqjdilarnwmrixfwigoxvaenmcfnjmfvbaxrkxm
+  timeout: 200
   max_retries: 2
 
 agent_matrix:
   models:
     - id: qwen3_32b
       model: Qwen/Qwen3-32B
-    - id: qwen25_7b
-      model: Qwen/Qwen2.5-7B-Instruct
+    # - id: qwen3_9b
+    #   model: Qwen/Qwen3.5-9B
 
 eval:
   benchmark: terminalbench
@@ -25,15 +25,15 @@ eval:
     agent_module: ./agent.py
     scorer_module: ./scorer.py
   split: test
-  limit: 1
+  limit: 20
 
 runtime:
-  max_running_trials: 2
+  max_running_trials: 1
   max_container_slots: auto
   max_builds: 1
   max_scoring_tasks: 2
   provider_budgets:
-    siliconflow: 4
+    siliconflow: 1
 
 benchmarks:
   terminalbench:

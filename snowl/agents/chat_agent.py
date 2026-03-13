@@ -1,4 +1,16 @@
-"""Built-in ChatAgent baseline implementation."""
+"""Single-turn baseline agent used as the simplest model-call execution path.
+
+Framework role:
+- Implements one `model_client.generate(...)` call, then writes normalized output/usage/timing into `AgentState.output`.
+- Emits runtime model I/O events (`runtime.model.query.*`, `runtime.model.io`) used by monitor and debugging views.
+
+Runtime/usage wiring:
+- Called by runtime execute phase through the core `Agent.run` contract.
+- Serves as the reference no-tool agent when validating scheduler/provider behavior without tool-loop complexity.
+
+Change guardrails:
+- Keep output shape and trace event names stable; scorers/observability consumers depend on them.
+"""
 
 from __future__ import annotations
 
@@ -39,6 +51,14 @@ class ChatAgent:
                     "agent_id": self.agent_id,
                     "task_id": context.task_id,
                     "sample_id": context.sample_id,
+                    "message": "waiting for provider response",
+                    "model": self.model_client.model,
+                    "base_url": self.model_client.base_url,
+                    "provider_id": self.model_client.provider_id,
+                    "request": {
+                        "messages": request_messages,
+                        "generation_kwargs": request_kwargs,
+                    },
                 }
             )
         try:
@@ -57,6 +77,13 @@ class ChatAgent:
                         "sample_id": context.sample_id,
                         "message": str(exc),
                         "error_type": exc.__class__.__name__,
+                        "model": self.model_client.model,
+                        "base_url": self.model_client.base_url,
+                        "provider_id": self.model_client.provider_id,
+                        "request": {
+                            "messages": request_messages,
+                            "generation_kwargs": request_kwargs,
+                        },
                     }
                 )
             raise
@@ -72,6 +99,9 @@ class ChatAgent:
                     "input_tokens": response.usage.input_tokens,
                     "output_tokens": response.usage.output_tokens,
                     "total_tokens": response.usage.total_tokens,
+                    "model": self.model_client.model,
+                    "base_url": self.model_client.base_url,
+                    "provider_id": self.model_client.provider_id,
                 }
             )
             emit(
@@ -87,6 +117,8 @@ class ChatAgent:
                         "messages": request_messages,
                         "generation_kwargs": request_kwargs,
                     },
+                    "base_url": self.model_client.base_url,
+                    "provider_id": self.model_client.provider_id,
                     "response": {
                         "message": dict(response.message),
                         "raw": response.raw,

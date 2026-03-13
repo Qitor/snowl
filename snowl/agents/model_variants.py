@@ -1,4 +1,15 @@
-"""Helpers for building multi-model AgentVariant matrices from project config."""
+"""Project-matrix expansion helper that builds `AgentVariant` objects from `project.yml`.
+
+Framework role:
+- Reads provider/model matrix, instantiates per-model agent instances via user factory, and attaches variant provenance.
+- Produces variant metadata (`variant_id`, model, provider details) consumed by planning, artifacts, and compare views.
+
+Runtime/usage wiring:
+- Used during eval/bootstrap when agent declarations opt into model-matrix expansion.
+
+Change guardrails:
+- Keep provenance fields and variant ids deterministic; downstream rerun/recovery logic relies on stable identities.
+"""
 
 from __future__ import annotations
 

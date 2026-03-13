@@ -1,4 +1,14 @@
-"""Environment variable parsing helpers."""
+"""Environment-variable parsing helpers with consistent coercion semantics.
+
+Framework role:
+- Centralizes string/int/float/bool parsing so adapters and CLI helpers do not duplicate env handling.
+
+Runtime/usage wiring:
+- Used by benchmark helpers and config plumbing where lightweight env overrides are supported.
+
+Change guardrails:
+- Keep coercion behavior predictable; changes here can silently alter benchmark selection/limits.
+"""
 
 from __future__ import annotations
 

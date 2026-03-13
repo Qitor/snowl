@@ -1,4 +1,16 @@
-"""Agent contracts, decorator helpers, and normalized runtime types."""
+"""Core agent contract: run-loop state types, stop reasons, declaration decorator, and validation.
+
+Framework role:
+- Defines the canonical `Agent.run(state, context, tools)` interface and mutable `AgentState` container.
+- Standardizes action/observation/stop-reason semantics used by runtime, UI monitor, and artifact writers.
+
+Runtime/usage wiring:
+- Imported by runtime execution (`snowl.runtime.engine`) and by built-in/custom agent implementations.
+- `@agent` declaration metadata is consumed by eval autodiscovery.
+
+Change guardrails:
+- Treat state-field or stop-reason changes as cross-cutting contract changes requiring docs/tests updates.
+"""
 
 from __future__ import annotations
 

@@ -48,6 +48,88 @@ pytest -q tests/test_agent_contracts.py tests/test_chat_agent.py tests/test_reac
 pytest -q
 ```
 
+## Validation Matrix
+
+### Runtime scheduling change
+
+Minimal tests:
+
+```bash
+pytest -q tests/test_runtime_engine.py tests/test_resource_scheduler.py tests/test_runtime_controls_and_profiling.py tests/test_eval_web_observability.py
+```
+
+Inspect:
+
+- `.snowl/runs/<run_id>/profiling.json`
+- `.snowl/runs/<run_id>/events.jsonl`
+- `.snowl/runs/<run_id>/runtime_state.json`
+- `.snowl/runs/<run_id>/run.log`
+
+Done means:
+
+- queue/admission behavior matches the code path you intended to change
+- profiling controls and scheduler stats still make sense
+- docs are updated if current runtime semantics changed
+
+### Provider budget change
+
+Minimal tests:
+
+```bash
+pytest -q tests/test_resource_scheduler.py tests/test_model_openai_compatible.py tests/test_runtime_controls_and_profiling.py tests/test_eval_web_observability.py
+```
+
+Inspect:
+
+- `.snowl/runs/<run_id>/profiling.json`
+- `.snowl/runs/<run_id>/events.jsonl`
+- `.snowl/runs/<run_id>/run.log`
+
+Done means:
+
+- provider budgets are enforced where you expect
+- you have verified whether the change affects dispatch-time behavior, model-call-time behavior, or both
+- docs do not overstate provider-aware scheduling if only model-call admission changed
+
+### Container / runtime path change
+
+Minimal tests:
+
+```bash
+pytest -q tests/test_container_runtime_providers.py tests/test_terminalbench_benchmark.py tests/test_osworld_benchmark.py tests/test_eval_web_observability.py
+```
+
+Inspect:
+
+- `.snowl/runs/<run_id>/events.jsonl`
+- `.snowl/runs/<run_id>/profiling.json`
+- `.snowl/runs/<run_id>/diagnostics_index.json`
+- `.snowl/runs/<run_id>/diagnostics/`
+- `.snowl/runs/<run_id>/run.log`
+
+Done means:
+
+- benchmark-specific setup/teardown behavior is still visible in events or diagnostics
+- you have verified whether `max_container_slots` actually gates the path you changed
+- docs accurately describe whether the change lives in container providers, sandbox wrapping, or scheduler admission
+
+### Docs-only change
+
+Minimal checks:
+
+- re-read the owning code
+- verify referenced commands and files still exist
+
+Inspect:
+
+- the code/tests named by the docs, not just the docs themselves
+
+Done means:
+
+- current implementation, partial implementation, and design intent are clearly separated
+- forward-looking docs are not presented as current behavior
+- no runtime contract mismatch was hidden or softened
+
 ## Local Eval Commands
 
 ### Custom local project

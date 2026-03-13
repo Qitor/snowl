@@ -1,4 +1,15 @@
-"""GUI environment contract with optional Docker-backed runtime."""
+"""GUI environment adapter over container + HTTP control plane (OSWorld-style workflows).
+
+Framework role:
+- Starts/stops GUI containers, waits for readiness, executes UI actions, and captures observations/snapshots.
+- Persists operation history for debugging and emits structured events consumed by monitor views.
+
+Runtime/usage wiring:
+- Used by GUI-capable container providers and toolsets during trial execution and teardown.
+
+Change guardrails:
+- Keep action payload and observation shape stable; benchmark evaluators/tools parse these structures.
+"""
 
 from __future__ import annotations
 

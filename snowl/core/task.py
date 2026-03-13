@@ -1,4 +1,15 @@
-"""Task contracts, decorator helpers, and validation."""
+"""Core task contract for iterable samples, environment declaration, and provider protocol.
+
+Framework role:
+- Defines `Task` identity + sample iterator contract and `TaskProvider` split/count/discovery protocol.
+- Supplies `@task` declaration and validation used by eval autodiscovery/bootstrap.
+
+Runtime/usage wiring:
+- Planning layer iterates task samples through this contract before runtime execution begins.
+
+Change guardrails:
+- Preserve iterator and env-spec expectations; runtime assumes these invariants without defensive adaptation.
+"""
 
 from __future__ import annotations
 

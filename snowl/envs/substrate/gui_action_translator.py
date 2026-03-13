@@ -1,4 +1,15 @@
-"""Translate normalized GUI actions into controller execute payloads."""
+"""Low-level substrate helper (gui_action_translator) for environment backends.
+
+Framework role:
+- Encapsulates transport/process/backend primitives used by higher env adapters.
+
+Runtime/usage wiring:
+- Consumed by terminal/gui/sandbox environment implementations.
+- Key top-level symbols in this file: `GuiActionTranslator`.
+
+Change guardrails:
+- Keep API narrow and reusable; avoid introducing benchmark semantics here.
+"""
 
 from __future__ import annotations
 

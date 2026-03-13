@@ -1,4 +1,15 @@
-"""Built-in terminal tools for terminalbench-like agents."""
+"""Terminal tool adapter exposing shell/keystroke/capture primitives as `ToolSpec`s.
+
+Framework role:
+- Binds `TerminalEnv` operations to consistent tool names required by prompt/tool-calling flows.
+- Declares required ops so runtime can verify task env capabilities before agent execution.
+
+Runtime/usage wiring:
+- Used when tasks advertise terminal operations and agents need command-line interaction tools.
+
+Change guardrails:
+- Required-op tags and parameter names are part of runtime compatibility checks; keep them stable.
+"""
 
 from __future__ import annotations
 

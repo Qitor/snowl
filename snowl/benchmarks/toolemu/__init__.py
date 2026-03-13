@@ -1,4 +1,14 @@
-"""ToolEmu benchmark adapter and scorer."""
+"""ToolEmu benchmark package exports for adapter/runtime/scorer surfaces.
+
+Framework role:
+- Re-exports ToolEmu adapter, scorer, and runtime helper functions used by benchmark execution flows.
+
+Runtime/usage wiring:
+- Used by benchmark registration and targeted ToolEmu integrations.
+
+Change guardrails:
+- Keep exports synchronized with runtime helper contracts and scorer expectations.
+"""
 
 from snowl.benchmarks.toolemu.adapter import ToolEmuBenchmarkAdapter
 from snowl.benchmarks.toolemu.runtime import (

@@ -1,4 +1,19 @@
-"""Evaluation auto-discovery runner used by `snowl eval` CLI."""
+"""Eval control-plane orchestrator for project discovery, run planning, scheduling, artifact persistence, and recovery.
+
+Framework role:
+- Owns the real end-to-end behavior of `snowl eval` and therefore is the source of truth for runtime semantics.
+- Expands `Task x AgentVariant x Sample`, resolves runtime budgets, wires provider admission, and drives the trial dispatch loop.
+
+Runtime/usage wiring:
+- Calls `execute_agent_phase` and `score_trial_phase` directly in the main loop; this is why eval-loop behavior can diverge from `execute_trial` convenience APIs.
+- Writes live artifacts (`manifest.json`, `plan.json`, `events.jsonl`, `runtime_state.json`) that power CLI/Web observability.
+- Owns retry orchestration (`auto_retry` queue + `snowl retry` recovery ledger).
+- Key top-level symbols in this file: `EvalRenderer`, `PlanTrial`, `EvalPlan`, `EvalSummary`, `EvalRunResult`, `EvalRunBootstrap`.
+
+Change guardrails:
+- When changing scheduler semantics, validate both tests and generated run artifacts; behavior here is contract-defining.
+- Do not assume an exposed runtime helper is active unless this file wires it into the dispatch loop.
+"""
 
 from __future__ import annotations
 
@@ -2434,8 +2449,12 @@ async def run_eval_with_components(
             sandbox_runtime=shared_sandbox_runtime,
             on_event=_on_runtime_event,
         )
+        # The current main eval path admits a whole trial under the running slot.
+        # `execute_agent_phase(request)` will still do prepare work internally, so
+        # prepare is not independently scheduled here yet.
         async with scheduler.running_trial_slot():
             partial = await execute_agent_phase(request)
+        # Scoring is the one phase the main loop currently admits separately.
         async with scheduler.scoring_slot():
             outcome = await score_trial_phase(request, partial)
 

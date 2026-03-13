@@ -1,4 +1,16 @@
-"""Benchmark adapter registry and built-in adapters."""
+"""Benchmark adapter registry and built-in adapter wiring table.
+
+Framework role:
+- Maps benchmark names to factories and exposes creation/listing APIs used by CLI and benchmark orchestration.
+- Central place for adding/removing built-in benchmark integrations.
+
+Runtime/usage wiring:
+- Imported by benchmark command flow to resolve adapters by name.
+- Key top-level symbols in this file: `RegisteredBenchmark`, `BenchmarkRegistry`, `get_default_benchmark_registry`, `register_builtin_benchmarks`.
+
+Change guardrails:
+- Registration keys are user-facing CLI contract; treat renames/removals as breaking changes.
+"""
 
 from __future__ import annotations
 

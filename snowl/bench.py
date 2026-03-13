@@ -1,4 +1,16 @@
-"""Benchmark run orchestration."""
+"""Benchmark execution bridge that adapts benchmark adapters into the shared eval pipeline.
+
+Framework role:
+- Resolves benchmark adapters from registry, loads benchmark tasks, and forwards execution into `run_eval_with_components`.
+- Keeps benchmark CLI mode aligned with core eval runtime behavior.
+
+Runtime/usage wiring:
+- Primary entrypoint for `snowl bench run ...` command path.
+- Key top-level symbols in this file: `_parse_filter_kv`, `_parse_adapter_kv`, `list_benchmarks`, `run_benchmark`, `check_benchmark_conformance`.
+
+Change guardrails:
+- Keep benchmark-specific parsing in adapters; this file should stay orchestration-focused.
+"""
 
 from __future__ import annotations
 

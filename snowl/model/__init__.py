@@ -1,4 +1,14 @@
-"""Model clients and configuration loaders."""
+"""Model/provider package facade for chat clients and project-level model config helpers.
+
+Framework role:
+- Exposes OpenAI-compatible client/config plus project model-matrix loaders used during eval bootstrap.
+
+Runtime/usage wiring:
+- Imported by agents, scorer model-judge logic, and CLI/eval config loading paths.
+
+Change guardrails:
+- Keep provider client exports and project-config exports in sync with `project.yml` contract.
+"""
 
 from snowl.model.base import ChatModelClient
 from snowl.model.openai_compatible import (

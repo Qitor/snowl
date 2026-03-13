@@ -10,6 +10,14 @@ This file is specifically for future Codex work in Snowl.
 4. Make the smallest contract-preserving change.
 5. Validate with focused tests and, when relevant, artifact inspection.
 
+## If Docs Conflict, Trust In This Order
+
+1. Current code in `snowl/eval.py`, `snowl/runtime/*`, and the owning subsystem.
+2. Focused tests that exercise the behavior.
+3. `docs/current_state.md` and `docs/runtime_known_gaps.md`.
+4. `docs/architecture/runtime_and_scheduler.md`, `docs/testing_and_validation.md`, and `AGENTS.md`.
+5. Forward-looking design docs such as `docs/runtime_scheduling.md` and `docs/runtime_scheduling_v2.md`.
+
 ## Read First By Task Type
 
 ### Runtime Change
@@ -24,6 +32,13 @@ Read:
 6. `tests/test_runtime_engine.py`
 7. `tests/test_resource_scheduler.py`
 8. `tests/test_eval_web_observability.py`
+
+Do not start here:
+
+- Do not start with `docs/runtime_scheduling*.md` and assume the implementation matches the plan.
+- Do not start in `snowl/runtime/resource_scheduler.py` unless you have already confirmed the behavior is actually wired in from `snowl/eval.py`.
+- Do not start by extending `TaskExecutionPlan`, `TrialDescriptor`, `begin_prepare()`, or `begin_finalize()` unless the task is explicitly about wiring those into the main eval loop.
+- Do not start in a benchmark adapter if the bug is really shared runtime admission, retry, or artifact behavior.
 
 ### Benchmark Adapter Change
 
@@ -120,6 +135,14 @@ Strong candidates in this repo:
 - The main eval loop currently does not invoke `finalize_trial_phase()`, even though the engine exposes it and `execute_trial()` uses it.
 - `references/` contains external repos and local datasets; do not patch them unless the task is explicitly about reference setup.
 - Benchmark logic usually belongs in `snowl/benchmarks/<name>/`, not in shared runtime or UI layers.
+
+## Common Misread Patterns
+
+- Seeing an exposed runtime API does not mean the main eval loop uses it.
+- Seeing a scheduler budget does not mean every container-backed path is admitted through that budget.
+- Seeing a phase helper does not mean that phase is independently scheduled.
+- Seeing `spec_hash` in payloads or provider code does not mean the dispatcher is locality-aware.
+- Seeing provider admission helpers does not mean dispatch order is provider-aware.
 
 ## Practical Prompting For Future Codex Tasks
 

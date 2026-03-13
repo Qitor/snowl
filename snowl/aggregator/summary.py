@@ -1,4 +1,16 @@
-"""Cross-task/agent aggregation for eval outcomes."""
+"""Aggregation contracts for compare outputs and monitor-facing metric matrices.
+
+Framework role:
+- Converts per-trial `TrialOutcome` rows into two stable projections consumed by reports/UI.
+- Defines grouping semantics by `(task_id, agent_id, variant_id)` and mean-based metric rollups.
+
+Runtime/usage wiring:
+- `aggregate_outcomes` is called from `snowl.eval` after execution/scoring; its output is written into aggregate artifacts.
+- Key formats produced here (`task::agent(::variant)` and `agent#variant`) are consumed by compare rendering and downstream tooling.
+
+Change guardrails:
+- Treat key-shape or rollup-policy changes as contract changes; update tests/docs together.
+"""
 
 from __future__ import annotations
 

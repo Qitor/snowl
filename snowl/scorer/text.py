@@ -1,4 +1,15 @@
-"""Text matching scorers inspired by inspect.ai primitives."""
+"""Text-oriented built-in scorers (`includes`, `match`, `pattern`) with extractor customization hooks.
+
+Framework role:
+- Implements common lexical/regex matching metrics used by baseline benchmarks and smoke tests.
+- Supports pluggable output/target extractors for adapting to task-specific payload shapes.
+
+Runtime/usage wiring:
+- Imported directly in user projects and benchmark scorer wrappers.
+
+Change guardrails:
+- Keep normalization options and metric naming stable to preserve historical score comparability.
+"""
 
 from __future__ import annotations
 

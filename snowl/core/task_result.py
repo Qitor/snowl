@@ -1,4 +1,15 @@
-"""TaskResult schema with stable core fields and extensible payload."""
+"""Canonical trial outcome schema shared by runtime, scorers, artifacts, and observability.
+
+Framework role:
+- Defines stable status/timing/usage/error/artifact payload shapes for one executed trial.
+- Provides serialization helpers used by artifact persistence and replay/recovery tooling.
+
+Runtime/usage wiring:
+- Produced by runtime engine, consumed by scorers, aggregators, UI monitor, and web APIs.
+
+Change guardrails:
+- Consider this a high-stability contract; field/name changes require coordinated reader updates.
+"""
 
 from __future__ import annotations
 

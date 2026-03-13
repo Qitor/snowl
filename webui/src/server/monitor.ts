@@ -1883,6 +1883,8 @@ export class RunMonitorStore {
     let startEvent: JsonRecord | null = null;
     let finishEvent: JsonRecord | null = null;
     let errorEvent: JsonRecord | null = null;
+    const agentStepEvents: JsonRecord[] = [];
+    const modelIoEvents: JsonRecord[] = [];
 
     for (const row of rows) {
       const parsed = parseJsonObject(row.event_json);
@@ -1895,6 +1897,10 @@ export class RunMonitorStore {
         finishEvent = parsed;
       } else if (row.event_name === "runtime.trial.error") {
         errorEvent = parsed;
+      } else if (row.event_name === "runtime.agent.step") {
+        agentStepEvents.push(parsed);
+      } else if (row.event_name === "runtime.model.io") {
+        modelIoEvents.push(parsed);
       }
     }
 
@@ -1923,6 +1929,8 @@ export class RunMonitorStore {
       start_event: startEvent,
       finish_event: finishEvent,
       error_event: errorEvent,
+      agent_step_events: agentStepEvents,
+      model_io_events: modelIoEvents,
       attempt_history: attemptHistory,
       attempt_id: outcome?.attempt_id || null,
       attempt_no: outcome?.attempt_no || null,

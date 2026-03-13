@@ -1,4 +1,14 @@
-"""Helpers used by example benchmark task declarations."""
+"""Small helper layer for loading one benchmark task and env-driven sample limits.
+
+Framework role:
+- Provides convenience wrappers used by examples/tests to avoid repeating split/limit/filter plumbing.
+
+Runtime/usage wiring:
+- Bridges environment-variable overrides to adapter loading calls (`load_tasks`).
+
+Change guardrails:
+- Keep helpers thin; benchmark semantics should stay in adapters, not in this utility module.
+"""
 
 from __future__ import annotations
 

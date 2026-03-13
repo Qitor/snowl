@@ -1,9 +1,21 @@
-"""Console renderer for eval progress (Global + Trial views)."""
+"""CLI renderer implementations for plan/progress/events/summary output.
+
+Framework role:
+- Contains both simple text renderer and live multi-panel renderer used during long-running evals.
+- Converts normalized runtime events and monitor state into operator-friendly terminal views.
+
+Runtime/usage wiring:
+- Called by CLI/eval orchestration; consumes `normalize_ui_event` and interaction controller state.
+
+Change guardrails:
+- Renderer should consume state contracts, not redefine them; keep formatting changes non-breaking for operators.
+"""
 
 from __future__ import annotations
 
 from collections import deque
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import shutil
 import sys
@@ -53,6 +65,53 @@ class ConsoleRenderer:
         safe_text = text if len(text) <= max_width else text[: max_width - 1] + ">"
         with self._lock:
             print(safe_text)
+
+    def _debug_value(self, value: Any, *, limit: int = 520) -> str:
+        if value is None:
+            return "null"
+        if isinstance(value, str):
+            text = value.replace("\n", "\\n")
+        else:
+            try:
+                text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+            except Exception:
+                text = str(value)
+        return text if len(text) <= limit else text[: limit - 1] + "…"
+
+    def _emit_model_debug(self, event: dict[str, Any], *, prefix: str = "[live]") -> None:
+        for line in self._model_debug_lines(event, prefix=prefix):
+            self._emit(line)
+
+    def _model_debug_lines(self, event: dict[str, Any], *, prefix: str) -> list[str]:
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            payload = {}
+        request = payload.get("request")
+        if not isinstance(request, dict):
+            request = event.get("request") if isinstance(event.get("request"), dict) else {}
+        response = payload.get("response")
+        if not isinstance(response, dict):
+            response = event.get("response") if isinstance(event.get("response"), dict) else {}
+        error_type = payload.get("error_type")
+        if error_type is None:
+            error_type = event.get("error_type")
+
+        lines: list[str] = []
+        if request:
+            if "messages" in request:
+                lines.append(f"{prefix} provider.request.messages={self._debug_value(request.get('messages'))}")
+            if "generation_kwargs" in request:
+                lines.append(f"{prefix} provider.request.kwargs={self._debug_value(request.get('generation_kwargs'))}")
+
+        if error_type is not None:
+            lines.append(f"{prefix} provider.error_type={self._debug_value(error_type, limit=120)}")
+
+        if response:
+            if "message" in response:
+                lines.append(f"{prefix} provider.response.message={self._debug_value(response.get('message'))}")
+            if "raw" in response:
+                lines.append(f"{prefix} provider.response.raw={self._debug_value(response.get('raw'))}")
+        return lines
 
     def render_plan(self, plan: Any) -> None:
         if not self.verbose:
@@ -182,6 +241,10 @@ class ConsoleRenderer:
         for key in (
             "task_id",
             "agent_id",
+            "variant_id",
+            "provider_id",
+            "model",
+            "base_url",
             "project",
             "compose_file",
             "command_text",
@@ -190,6 +253,7 @@ class ConsoleRenderer:
             "ready",
             "status",
             "score",
+            "message",
             "stdout_tail",
             "stderr_tail",
         ):
@@ -198,6 +262,8 @@ class ConsoleRenderer:
                 details.append(f"{key}={_clip(value)}")
         suffix = (" " + " ".join(details)) if details else ""
         self._emit(f"[live] {name}{suffix}")
+        if name in {"runtime.model.query.start", "runtime.model.query.error", "runtime.model.io"}:
+            self._emit_model_debug(event)
 
 
 @dataclass
@@ -1833,6 +1899,9 @@ class LiveConsoleRenderer(ConsoleRenderer):
         suffix = (" " + " ".join(details)) if details else ""
         line = f"{self._now()} [{tag}] {name}{suffix}"
         self._events.append(line)
+        if name in {"runtime.model.query.start", "runtime.model.query.error", "runtime.model.io"}:
+            for extra_line in self._model_debug_lines(raw, prefix=f"{self._now()} [{tag}]"):
+                self._events.append(extra_line)
 
         model_value = _pick("model")
         if isinstance(model_value, str) and model_value.strip():

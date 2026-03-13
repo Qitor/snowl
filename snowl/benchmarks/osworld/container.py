@@ -1,4 +1,15 @@
-"""OSWorld-specific container launcher."""
+"""OSWorld container/VM bootstrap orchestration for runtime prepare phase.
+
+Framework role:
+- Handles OSWorld-specific boot inputs (cached qcow2 VM, download/extract fallback, compose env/volume wiring).
+- Produces ready-to-use `GuiEnv` sessions plus boot metadata consumed by runtime events/artifacts.
+
+Runtime/usage wiring:
+- Called by `OSWorldProvider` in `snowl.runtime.container_providers` during trial prepare/finalize lifecycle.
+
+Change guardrails:
+- Keep benchmark-specific startup behavior here; shared runtime should only see normalized session/metadata.
+"""
 
 from __future__ import annotations
 

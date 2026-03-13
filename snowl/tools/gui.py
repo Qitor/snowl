@@ -1,4 +1,15 @@
-"""Built-in GUI tools for OSWorld-like tasks."""
+"""GUI tool adapter that maps high-level GUI actions to normalized `ToolSpec` callables.
+
+Framework role:
+- Wraps `GuiEnv.execute_action` primitives with stable tool names and required-op declarations.
+- Provides backward-compatible aliases (`key`, `terminate`) used by existing prompts/agents.
+
+Runtime/usage wiring:
+- Runtime injects these tool specs into agent context for GUI-capable tasks.
+
+Change guardrails:
+- Tool name/argument changes are prompt-breaking; keep compatibility unless migration is coordinated.
+"""
 
 from __future__ import annotations
 

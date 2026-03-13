@@ -1,4 +1,18 @@
-"""Provider-aware and phase-aware resource scheduler for eval/runtime quotas."""
+"""Runtime quota and admission primitives (running/scoring/container/build/provider) with instrumentation snapshots.
+
+Framework role:
+- Defines budget controls and semaphores used to throttle local concurrency and provider pressure.
+- Provides phase/budget statistics used in profiling outputs and runtime diagnostics.
+
+Runtime/usage wiring:
+- Provider admission is consumed by model clients via slot resolvers; dispatch ordering is still controlled in `snowl.eval`.
+- Expose phase APIs (`begin_prepare`, `begin_finalize`) that may be partially wired depending on eval-loop usage.
+- Key top-level symbols in this file: `TrialDescriptor`, `TaskExecutionPlan`, `PhaseBudgetSnapshot`, `ResourceLimits`, `ResourceScheduler`, `_ScheduledSandboxRuntime`.
+
+Change guardrails:
+- Changing defaults or admission semantics here requires confirming where those APIs are actually invoked from eval paths.
+- Prefer additive metrics changes; profiling consumers rely on stable field names.
+"""
 
 from __future__ import annotations
 
@@ -239,6 +253,8 @@ class ResourceScheduler:
 
     @asynccontextmanager
     async def begin_prepare(self, plan: TaskExecutionPlan | None = None) -> AsyncIterator[None]:
+        # This API models prepare as its own admitted phase, but the current
+        # repo-level eval loop does not call it directly for all prepare paths.
         needs_container = bool(plan.requires_container) if plan is not None else True
         sem = self._get_container_sem() if needs_container else None
         async with _AsyncSemaphoreContext(
@@ -279,6 +295,8 @@ class ResourceScheduler:
     @asynccontextmanager
     async def begin_finalize(self, plan: TaskExecutionPlan | None = None) -> AsyncIterator[None]:
         _ = plan
+        # Finalize is exposed for future phase-level control, but the current
+        # main eval loop still skips explicit finalize admission.
         async with _AsyncSemaphoreContext(
             sem=None,
             wait_phase="finalize",
@@ -291,6 +309,8 @@ class ResourceScheduler:
     @asynccontextmanager
     async def provider_admission(self, provider_id: str | None, *, phase: str = "execute") -> AsyncIterator[None]:
         key = str(provider_id or "default").strip() or "default"
+        # Provider budgets are enforced most directly when model calls happen,
+        # not when the eval loop chooses which trial to dispatch next.
         sem = self._get_provider_sem(key)
         async with _AsyncSemaphoreContext(
             sem=sem,

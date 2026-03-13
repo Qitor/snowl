@@ -1,4 +1,17 @@
-"""Common container runtime orchestration for benchmark-specific phases."""
+"""Shared wrapper that translates a trial into benchmark-specific container provider prepare/finalize lifecycle calls.
+
+Framework role:
+- Decouples benchmark container setup details from the generic trial engine.
+- Normalizes prepare metadata (`requires_container`, `requires_build`, `spec_hash`, provider ids) for upstream runtime logic.
+
+Runtime/usage wiring:
+- Delegates concrete behavior to registry-backed providers in `snowl.runtime.container_providers`.
+- Used from trial prepare/finalize paths in runtime engine.
+- Key top-level symbols in this file: `ContainerPrepareResult`, `ContainerRuntime`, `_run_sync`.
+
+Change guardrails:
+- Keep provider-agnostic contract stable; benchmark quirks belong in provider implementations.
+"""
 
 from __future__ import annotations
 

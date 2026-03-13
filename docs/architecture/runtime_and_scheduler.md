@@ -1,6 +1,6 @@
 # Runtime And Scheduler
 
-This document explains the runtime architecture as implemented today. For future-state ideas, see `docs/runtime_scheduling.md` and `docs/runtime_scheduling_v2.md`.
+This document explains the runtime architecture as implemented today. For future-state ideas, see `docs/runtime_scheduling.md` and `docs/runtime_scheduling_v2.md`. For the seam inventory, see `docs/runtime_known_gaps.md`.
 
 ## Key Files
 
@@ -18,6 +18,39 @@ This document explains the runtime architecture as implemented today. For future
   - `project.yml` loading, runtime settings, recovery config.
 - `snowl/model/openai_compatible.py`
   - OpenAI-compatible client and per-provider admission hook.
+
+## Control Plane vs Execution Plane
+
+Use this split when deciding where a runtime change belongs.
+
+### Control plane
+
+The control plane decides what work exists, how much work may run, and how run state is persisted.
+
+Main control-plane responsibilities:
+
+- project loading and component discovery in `snowl/eval.py`
+- plan expansion into `PlanTrial`s
+- runtime budget resolution
+- queue dispatch, retry queue handling, and in-flight limits
+- artifact bootstrap and final artifact writing
+- recovery ledger updates
+- runtime-state heartbeats and event persistence
+
+If a change affects queue order, resource admission, retry scheduling, artifact status, or run lifecycle, start by reading `snowl/eval.py`.
+
+### Execution plane
+
+The execution plane performs the work of one trial once it has been dispatched.
+
+Main execution-plane responsibilities:
+
+- `prepare_trial_phase()`, `execute_agent_phase()`, `score_trial_phase()`, `finalize_trial_phase()` in `snowl/runtime/engine.py`
+- benchmark-specific environment setup in `snowl/runtime/container_runtime.py` and `snowl/runtime/container_providers.py`
+- sandbox and env operations in `snowl/envs/`
+- model-call behavior and per-request retries in `snowl/model/openai_compatible.py`
+
+If a change affects task execution semantics, scorer semantics, environment setup, or model-call behavior inside a dispatched trial, start in the execution plane.
 
 ## Planner / Eval / Runtime Relationship
 
@@ -96,6 +129,18 @@ By contrast, `execute_trial()` in `snowl/runtime/engine.py` does:
 - finalize
 
 That mismatch is real and should be treated as current technical debt.
+
+## Known Contract Mismatches
+
+These are confirmed mismatches between exposed runtime surfaces and the main eval-loop behavior.
+
+- `finalize_trial_phase()` is exposed and used by `execute_trial()`, but `_run_one()` in `snowl/eval.py` does not call it. Future runtime work must not assume finalize events or teardown payload updates happen in the main eval path.
+- `prepare_trial_phase()` is a real helper, but the main eval loop reaches it indirectly through `execute_agent_phase(request)` while already holding `scheduler.running_trial_slot()`. Future scheduler work must not describe prepare as independently admitted today.
+- Provider budgets are enforced most strongly at model-call time through `OpenAICompatibleChatClient.set_global_model_call_slot_resolver(...)` and `_acquire_model_slot()`. The dispatch loop does not currently choose the next trial based on provider headroom.
+- `spec_hash` is computed by container providers and carried into trial payload/trace, but it does not drive dispatch priority, batching, locality-aware reuse, or warm-pool preference.
+- `TaskExecutionPlan` and `TrialDescriptor` exist on `TrialRequest`, but `run_eval_with_components()` does not populate them for repo-level runs. Their presence is not proof of plan-aware scheduling.
+- `begin_prepare()` and `begin_finalize()` exist on `ResourceScheduler`, but the main eval loop uses only `running_trial_slot()` and `scoring_slot()` directly.
+- `max_container_slots` is a real control, but in current code it is enforced most directly through sandbox wrapping and scheduler APIs, not as a universal admission gate across all benchmark container prepare paths.
 
 ## Resource Budgets
 

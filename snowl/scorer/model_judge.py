@@ -1,4 +1,15 @@
-"""Model-as-a-judge JSON scorer."""
+"""LLM-as-judge scorer utilities and scorer implementation for JSON-structured judgments.
+
+Framework role:
+- Renders prompt templates from task/trace/context, executes judge model calls, and validates JSON/schema outputs.
+- Normalizes judge output into Snowl `Score` objects with rich debug metadata.
+
+Runtime/usage wiring:
+- Used by benchmark/custom judge-based scorers; may call async clients from sync scoring contexts.
+
+Change guardrails:
+- Prompt rendering and JSON/schema parsing behavior directly affect reproducibility and judge reliability.
+"""
 
 from __future__ import annotations
 

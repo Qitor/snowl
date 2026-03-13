@@ -1,4 +1,15 @@
-"""I/O helpers shared across benchmark adapters."""
+"""Shared utility module for benchmark adapters (io).
+
+Framework role:
+- Provides reusable dataset/split/filter/path/task helpers consumed by multiple adapters.
+
+Runtime/usage wiring:
+- Imported by concrete benchmark adapters to reduce duplicated plumbing code.
+- Key top-level symbols in this file: `ensure_path_exists`, `read_json_array`, `read_json_object`, `read_jsonl_rows`, `read_csv_rows`, `read_yaml_mapping`.
+
+Change guardrails:
+- Keep behavior generic; benchmark-specific rules belong in adapter packages.
+"""
 
 from __future__ import annotations
 

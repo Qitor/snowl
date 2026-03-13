@@ -1,4 +1,15 @@
-"""Interactive control state for console eval loops."""
+"""Interactive control-state machine for CLI hotkeys, command palette, and filters.
+
+Framework role:
+- Stores operator intent (pause/focus/group/filter/rerun) and translates inputs into actionable control state.
+- Maintains command history/suggestions and queued actions consumed by UI loop.
+
+Runtime/usage wiring:
+- Used by live renderer/input pump during interactive eval sessions.
+
+Change guardrails:
+- Keep input-to-action mapping deterministic; control drift can cause unsafe rerun/filter behavior.
+"""
 
 from __future__ import annotations
 

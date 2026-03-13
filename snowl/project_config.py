@@ -1,4 +1,17 @@
-"""Unified project.yml loader for Snowl eval projects."""
+"""Canonical `project.yml` loader/validator for provider, model matrix, code modules, runtime budgets, and recovery policy.
+
+Framework role:
+- Defines the external configuration contract consumed by eval and benchmark runs.
+- Converts raw YAML into typed config objects used across runtime, model, and discovery layers.
+
+Runtime/usage wiring:
+- Used by eval bootstrap, benchmark orchestration, and model-variant expansion helpers.
+- Configuration defaults here directly influence runtime controls and recovery semantics.
+- Key top-level symbols in this file: `ProjectProviderConfig`, `ProjectModelEntry`, `ProjectJudgeConfig`, `ProjectCodeConfig`, `ProjectEvalConfig`, `ProjectRuntimeConfig`.
+
+Change guardrails:
+- Contract changes require synchronized updates to docs, examples, and tests.
+"""
 
 from __future__ import annotations
 

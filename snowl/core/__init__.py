@@ -1,4 +1,14 @@
-"""Core Snowl protocols and data contracts."""
+"""Core contract package facade for tasks, agents, tools, scorers, env specs, and results.
+
+Framework role:
+- Re-exports typed contracts and validators that define Snowl's authoring/runtime boundary.
+
+Runtime/usage wiring:
+- Imported by nearly every subsystem; this module is the canonical contract entrypoint.
+
+Change guardrails:
+- Maintain backward-compatible exports when possible; contract churn here propagates repo-wide.
+"""
 
 from snowl.core.agent import (
     Action,

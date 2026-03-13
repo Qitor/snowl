@@ -1,4 +1,14 @@
-"""Shared helpers for benchmark adapters."""
+"""Shared utility module for benchmark adapters (__init__).
+
+Framework role:
+- Provides reusable dataset/split/filter/path/task helpers consumed by multiple adapters.
+
+Runtime/usage wiring:
+- Imported by concrete benchmark adapters to reduce duplicated plumbing code.
+
+Change guardrails:
+- Keep behavior generic; benchmark-specific rules belong in adapter packages.
+"""
 
 from snowl.benchmarks.utils.filtering import matches_filters
 from snowl.benchmarks.utils.io import (

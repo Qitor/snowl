@@ -1,4 +1,15 @@
-"""Terminal environment contract and local implementation."""
+"""Terminal execution environment with optional docker-compose + tmux orchestration.
+
+Framework role:
+- Executes shell commands, sends terminal keystrokes, captures output, and manages compose lifecycle.
+- Enforces compose-build admission via global build slot context hooks shared with runtime scheduler.
+
+Runtime/usage wiring:
+- Used by terminal benchmarks/providers and by terminal toolset APIs during agent execution.
+
+Change guardrails:
+- Command/compose/tmux behavior is benchmark-critical; preserve event fields and timeout semantics.
+"""
 
 from __future__ import annotations
 

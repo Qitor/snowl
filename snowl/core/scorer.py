@@ -1,4 +1,15 @@
-"""Scorer contracts, decorator helpers, and score validation."""
+"""Core scoring contract for metric maps, score context, declaration, and validation.
+
+Framework role:
+- Defines `Scorer.score(...) -> dict[str, Score]` and the shared `ScoreContext` metadata passed to scorers.
+- Validates that scorer outputs are structurally safe for artifacts, compare views, and monitor summaries.
+
+Runtime/usage wiring:
+- Used directly by runtime scoring phase and by benchmark/built-in scorer implementations.
+
+Change guardrails:
+- Keep metric map semantics strict; loose validation here propagates invalid artifacts across the stack.
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,15 @@
-"""Reusable adapter template for row-based benchmarks."""
+"""Reusable row-oriented adapter template for benchmark implementations.
+
+Framework role:
+- Encapsulates common split/filter/sample-to-task plumbing so benchmark adapters only implement domain-specific mapping hooks.
+
+Runtime/usage wiring:
+- Subclassed by concrete adapters in benchmark packages.
+- Key top-level symbols in this file: `BaseBenchmarkAdapter`.
+
+Change guardrails:
+- Template behavior changes fan out to many adapters; validate broadly.
+"""
 
 from __future__ import annotations
 

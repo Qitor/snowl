@@ -1,4 +1,14 @@
-"""UI renderers."""
+"""Operator-UI package facade for renderers, events, controls, and panel configs.
+
+Framework role:
+- Re-exports monitor contracts and console components used by CLI interactive/non-interactive flows.
+
+Runtime/usage wiring:
+- Consumed by eval/CLI code that emits normalized runtime events and renders progress.
+
+Change guardrails:
+- Preserve UI contract exports (`UIEvent`, `TaskMonitorState`, etc.) to keep CLI and web observability aligned.
+"""
 
 from snowl.ui.console import ConsoleRenderer, LiveConsoleRenderer
 from snowl.ui.contracts import (

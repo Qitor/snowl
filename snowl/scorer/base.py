@@ -1,4 +1,15 @@
-"""Shared utilities for built-in scorers."""
+"""Shared scorer primitives for extracting outputs/targets and normalizing text comparisons.
+
+Framework role:
+- Provides default extractor behavior across heterogeneous task-result payloads.
+- Keeps backward-compatible extractor invocation (`fn(task_result)` or `fn(task_result, trace, context)`).
+
+Runtime/usage wiring:
+- Imported by built-in text/test/model-judge scorers and common custom scorer patterns.
+
+Change guardrails:
+- Extractor defaults affect many scorers; treat behavior changes as cross-scorer compatibility updates.
+"""
 
 from __future__ import annotations
 

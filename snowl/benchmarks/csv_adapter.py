@@ -1,4 +1,15 @@
-"""Second benchmark adapter: CSV benchmark loader."""
+"""Generic CSV-to-Task adapter used for quick benchmark onboarding.
+
+Framework role:
+- Implements `BaseBenchmarkAdapter` hooks for row loading, split selection, sample shaping, and metadata passthrough.
+- Lets teams evaluate tabular datasets without writing a benchmark-specific adapter package first.
+
+Runtime/usage wiring:
+- Instantiated through benchmark registry/custom wiring, then executed through the shared eval pipeline.
+
+Change guardrails:
+- Keep row-to-sample mapping stable; field-name defaults are part of the adapter contract.
+"""
 
 from __future__ import annotations
 

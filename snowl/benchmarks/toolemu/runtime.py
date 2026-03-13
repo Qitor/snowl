@@ -1,4 +1,15 @@
-"""ToolEmu native runtime helpers used by Snowl integrations."""
+"""Benchmark-local runtime helper module for `toolemu` integrations.
+
+Framework role:
+- Holds benchmark runtime quirks that should not leak into shared eval/runtime code.
+
+Runtime/usage wiring:
+- Referenced by benchmark-specific adapters/scorers or integration glue.
+- Key top-level symbols in this file: `_project_root`, `toolemu_root`, `_safe_token`, `_ensure_toolemu_importable`, `_load_openai_llm`, `build_tool_emu_llm`.
+
+Change guardrails:
+- Keep benchmark assumptions local unless promoting a shared runtime contract.
+"""
 
 from __future__ import annotations
 

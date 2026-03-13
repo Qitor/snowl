@@ -1,4 +1,15 @@
-"""AgentVariant schema and wrappers for variant-aware execution."""
+"""Core variant contract for binding one logical agent to multiple model/config variants.
+
+Framework role:
+- Defines `AgentVariant` metadata container and adapter wrapper that preserves the `Agent` runtime interface.
+- Enforces variant identity validity (`agent_id`, `variant_id`, params/provenance mapping).
+
+Runtime/usage wiring:
+- Used by eval planning to expand one agent declaration into multiple runnable trial identities.
+
+Change guardrails:
+- Keep variant identity semantics stable; compare tables and rerun routing depend on these keys.
+"""
 
 from __future__ import annotations
 

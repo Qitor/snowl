@@ -1,4 +1,14 @@
-"""Built-in scorer library."""
+"""Scorer package export surface for built-in scoring primitives and factories.
+
+Framework role:
+- Aggregates text/model-judge/test-result scorers and composition utilities for benchmark and custom workflows.
+
+Runtime/usage wiring:
+- Imported by user scorers, benchmark integrations, and examples.
+
+Change guardrails:
+- Keep scorer factory names stable; they are frequently referenced in project code and docs.
+"""
 
 from snowl.scorer.base import (
     OutputExtractor,

@@ -1,4 +1,15 @@
-"""Composable scorer primitives (weighted + chained)."""
+"""Scorer combinators for chaining and weighted aggregation of metric producers.
+
+Framework role:
+- Combines multiple scorers with optional namespace isolation and strict/non-strict failure handling.
+- Produces composite metrics (`weighted_score`, `chain_error_count`) used in multi-judge workflows.
+
+Runtime/usage wiring:
+- Used in benchmark/custom scorer stacks where one trial needs multiple metric perspectives.
+
+Change guardrails:
+- Keep error-handling semantics explicit; silent drops can hide scorer regressions.
+"""
 
 from __future__ import annotations
 

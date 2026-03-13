@@ -1,6 +1,6 @@
 # Current State
 
-This file describes the implementation that exists today. It is intentionally separate from planning docs such as `docs/runtime_scheduling.md` and `docs/runtime_scheduling_v2.md`, which are forward-looking.
+This file describes the implementation that exists today. It is intentionally separate from planning docs such as `docs/runtime_scheduling.md` and `docs/runtime_scheduling_v2.md`, which are forward-looking. For the runtime seam inventory, see `docs/runtime_known_gaps.md`.
 
 ## Implemented Now
 
@@ -37,6 +37,18 @@ What works well today:
 - Deferred auto-retry and manual `snowl retry` both reuse a recovery ledger instead of inventing a separate retry system.
 - Live observability artifacts are written early enough for the monitor to show running runs before completion.
 
+## Runtime / Scheduler Status By Topic
+
+| Topic | Implemented now | Partially implemented / inconsistent | Planned / not yet real |
+| --- | --- | --- | --- |
+| Provider budgets | `provider_budgets` are real controls and model calls acquire `scheduler.provider_slot(...)` through `OpenAICompatibleChatClient`. | Dispatch does not prioritize by provider headroom, so trials can be admitted and then wait later on model-call slots. | Scheduler-visible provider-aware dispatch and richer provider backpressure policies. |
+| Prepare phase | `prepare_trial_phase()` exists and performs container/sandbox setup. | In main eval flow, prepare still runs under `running_trial_slot()` semantics via `execute_agent_phase(request)`. | Independently admitted prepare scheduling. |
+| Score decoupling | Score is admitted separately under `scoring_slot()` and no longer uses the same slot as execution. | The split is coarse; prepare and finalize are not independently scheduled in the main loop. | Fully phase-aware scheduling across prepare, execute, score, and finalize. |
+| Finalize behavior | `finalize_trial_phase()` exists and is used by `execute_trial()`. | The main eval loop does not consistently invoke it, so repo-level runs and standalone engine runs are not identical. | Finalize as a normal, explicitly scheduled phase in repo-level evals. |
+| Container slot enforcement | `max_container_slots` exists and is tracked in scheduler/profiling data. Sandbox runtimes can be wrapped with it. | It is not a universal admission gate across every benchmark container prepare path in the main eval loop. | One control plane that gates container-backed work consistently. |
+| `spec_hash` locality | Container providers compute `spec_hash` and trial payloads/traces can carry it. | Queue dispatch does not use it for batching, warm-locality, or reuse preference. | Locality-aware dispatch and stronger prepare reuse. |
+| Phase-aware retry | Provider HTTP retry and deferred whole-trial auto retry are real. | Retry is still mostly whole-trial; prepare/score/finalize are not retried as distinct scheduled phases. | Phase-specific retry and recovery policies. |
+
 ### Observability
 
 Current live run artifacts include:
@@ -61,6 +73,7 @@ These areas are real, but still coarse or inconsistent:
 
 - `TaskExecutionPlan` and `TrialDescriptor` exist in `snowl/runtime/resource_scheduler.py`, but `run_eval_with_components()` does not yet populate or use them for smarter dispatch.
 - The scheduler exposes prepare/execute/score/finalize APIs, but the main eval loop only uses execute and score admission directly.
+- `TrialRequest.execution_plan` and `TrialRequest.trial_descriptor` exist, but repo-level eval code does not populate them.
 - `spec_hash` is computed by container providers, but the runtime does not yet use it for locality-aware dispatch, warm-pool reuse, or batching.
 - `max_container_slots` is wired into sandbox wrapping and scheduler APIs, but not all container-provider prepare paths are centrally admitted through that budget yet.
 - The main dispatch loop is still close to FIFO: it drains `fresh_queue` in plan order, then consumes deferred retries when ready.
@@ -107,5 +120,7 @@ The following show up in docs and scaffolding, but are not current runtime behav
 
 - Treat `docs/runtime_scheduling*.md` as design notes, not source-of-truth behavior docs.
 - Treat `run_eval()` as the runtime path that matters for end-to-end repo behavior, even when `execute_trial()` looks slightly cleaner in isolation.
+- Do not assume `prepare_trial_phase()` or `finalize_trial_phase()` are independently scheduled just because helpers exist.
 - Do not assume `max_container_slots` fully governs every container-backed path yet.
+- Do not assume `TaskExecutionPlan`, `TrialDescriptor`, or `spec_hash` are wired into dispatch just because the types exist.
 - Do not assume multiple providers, distributed execution, or cross-run pooling exist just because the scheduler types look extensible.
