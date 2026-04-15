@@ -8,23 +8,32 @@ This file is task-oriented. Use it to choose the smallest safe workflow for the 
 
 1. `docs/current_state.md`
 2. `docs/architecture/runtime_and_scheduler.md`
-3. `snowl/eval.py`
-4. `snowl/runtime/engine.py`
-5. `snowl/runtime/resource_scheduler.py`
+3. `docs/container_lifecycle_management.md` if the change touches benchmark containers
+4. `snowl/eval.py`
+5. `snowl/runtime/engine.py`
+6. `snowl/runtime/resource_scheduler.py`
 
 ### Recommended Workflow
 
 1. Confirm whether the behavior lives in the eval loop, the engine, or the scheduler API.
-2. Add or update a focused test first when possible.
-3. Make the smallest contract-preserving change.
-4. Run the narrowest credible runtime test subset.
-5. Inspect produced artifacts, not just test output.
-6. Update docs if the behavior change affects future task routing or runtime expectations.
+2. If containers are involved, confirm whether the behavior belongs to task-declared `runtime_container` metadata, provider startup/teardown, or shared runtime lifecycle ownership.
+3. Do not let agents start or stop benchmark containers; extend the runtime contract instead.
+4. Add or update a focused test first when possible.
+5. Make the smallest contract-preserving change.
+6. Run the narrowest credible runtime test subset.
+7. Inspect produced artifacts, not just test output.
+8. Update docs if the behavior change affects future task routing or runtime expectations.
 
 ### Minimum Validation
 
 ```bash
 pytest -q tests/test_runtime_engine.py tests/test_resource_scheduler.py tests/test_eval_web_observability.py
+```
+
+If you touched runtime-owned benchmark containers, also run:
+
+```bash
+pytest -q tests/test_container_lifecycle.py tests/test_container_runtime_providers.py tests/test_terminalbench_benchmark.py tests/test_osworld_benchmark.py tests/test_runtime_controls_and_profiling.py
 ```
 
 If you touched CLI/runtime/bootstrap behavior, also run:
@@ -152,6 +161,8 @@ Inspect these first:
 
 If debugging container-backed work:
 
+- confirm the task/sample emits `runtime_container` metadata first
 - Check pretask-derived events in `events.jsonl`
+- check `profiling.json["container_cleanup"]`
 - Check compose/log paths emitted by TerminalBench provider events
 - Check Docker availability before blaming scheduler behavior

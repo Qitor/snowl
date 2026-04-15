@@ -107,13 +107,18 @@ def test_console_renderer_prints_provider_request_debug(capsys) -> None:
     r = ConsoleRenderer(verbose=True, width=1000)
     r.render_runtime_event(
         {
-            "event": "runtime.model.query.start",
+            "event": "runtime.model.io",
             "task_id": "t1",
             "agent_id": "a1",
             "model": "Qwen/Qwen3-32B",
             "base_url": "https://provider.example/v1",
             "provider_id": "siliconflow",
-            "message": "waiting for provider response",
+            "direction": "input",
+            "message": "model input captured before provider call",
+            "model_input": {
+                "messages": [{"role": "user", "content": "hello"}],
+                "generation_kwargs": {"temperature": 0.2},
+            },
             "request": {
                 "messages": [{"role": "user", "content": "hello"}],
                 "generation_kwargs": {"temperature": 0.2},
@@ -121,10 +126,12 @@ def test_console_renderer_prints_provider_request_debug(capsys) -> None:
         }
     )
     out = capsys.readouterr().out
-    assert "runtime.model.query.start" in out
+    assert "runtime.model.io" in out
+    assert "runtime.model.io.direction=input" in out
+    assert "model_input=" in out
     assert "provider.request.messages=" in out
     assert '"content": "hello"' in out
-    assert "waiting for provider response" in out
+    assert "model input captured before provider call" in out
 
 
 def test_console_renderer_prints_provider_raw_response_debug(capsys) -> None:
@@ -134,6 +141,8 @@ def test_console_renderer_prints_provider_raw_response_debug(capsys) -> None:
             "event": "runtime.model.io",
             "task_id": "t1",
             "agent_id": "a1",
+            "direction": "output",
+            "model_output": {"role": "assistant", "content": "done"},
             "response": {
                 "message": {"role": "assistant", "content": "done"},
                 "raw": {"choices": [{"message": {"role": "assistant", "content": "done"}}]},
@@ -142,5 +151,7 @@ def test_console_renderer_prints_provider_raw_response_debug(capsys) -> None:
     )
     out = capsys.readouterr().out
     assert "runtime.model.io" in out
+    assert "runtime.model.io.direction=output" in out
+    assert "model_output=" in out
     assert "provider.response.message=" in out
     assert "provider.response.raw=" in out

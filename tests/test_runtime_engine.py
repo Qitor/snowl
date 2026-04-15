@@ -7,6 +7,8 @@ import httpx
 from snowl.agents import ChatAgent
 from snowl.core import EnvSpec, Score, ScoreContext, Task, TaskResult
 from snowl.model import OpenAICompatibleChatClient, OpenAICompatibleConfig
+from snowl.runtime.container_lifecycle import RuntimeContainerLifecycleManager
+from snowl.runtime.container_providers import ContainerProviderRegistry, ContainerSession
 from snowl.runtime import TrialLimits, TrialRequest, execute_trial
 
 
@@ -353,3 +355,102 @@ def test_execute_trial_emits_trial_input_output_for_detail_view() -> None:
     finish_event = next(evt for evt in emitted if evt.get("event") == "runtime.trial.finish")
     assert ((start_event.get("payload") or {}).get("sample_input") or {}).get("input") == "hello-input"
     assert ((finish_event.get("payload") or {}).get("final_output") or {}).get("content") == "agent-output"
+
+
+def test_execute_trial_releases_runtime_owned_container_resource(monkeypatch) -> None:
+    class _DummyProvider:
+        name = "dummybench"
+
+        async def prepare(self, context):  # type: ignore[no-untyped-def]
+            _ = context
+            return ContainerSession(
+                kind="dummy_container",
+                env=type("Env", (), {"container_id": "container-1"})(),
+                benchmark="dummybench",
+                metadata={"origin": "test"},
+            )
+
+        async def close(self, context, session):  # type: ignore[no-untyped-def]
+            _ = (context, session)
+            return {"closed": True}
+
+        def describe_requirements(self, context):  # type: ignore[no-untyped-def]
+            return {
+                "benchmark": "dummybench",
+                "requires_container": True,
+                "requires_build": False,
+                "spec_hash": context.container_spec.spec_hash,
+                "prepare_provider_ids": (),
+            }
+
+    registry = ContainerProviderRegistry()
+    registry.register("dummybench", _DummyProvider())
+    monkeypatch.setattr(
+        "snowl.runtime.container_runtime.default_container_provider_registry",
+        lambda: registry,
+    )
+
+    task = Task(
+        task_id="task-1",
+        env_spec=EnvSpec(env_type="local"),
+        sample_iter_factory=lambda: iter([]),
+        metadata={
+            "benchmark": "dummybench",
+            "runtime_container": {
+                "benchmark": "dummybench",
+                "provider_name": "dummybench",
+                "requires_container": True,
+                "cleanup_policy": "destroy_on_release",
+            },
+        },
+    )
+    manager = RuntimeContainerLifecycleManager(run_id="run-1")
+
+    req = TrialRequest(
+        task=task,
+        agent=type(
+            "A",
+            (),
+            {
+                "agent_id": "a1",
+                "run": staticmethod(
+                    lambda state, context, tools=None: _complete_state(state, context, tools)
+                ),
+            },
+        )(),
+        scorer=PassScorer(),
+        sample={
+            "id": "s1",
+            "input": "hello",
+            "metadata": {
+                "runtime_container": {
+                    "benchmark": "dummybench",
+                    "provider_name": "dummybench",
+                    "requires_container": True,
+                }
+            },
+        },
+        container_lifecycle=manager,
+        run_id="run-1",
+        trial_id="trial-1",
+    )
+
+    async def _run() -> None:
+        out = await execute_trial(req)
+        assert out.task_result.status.value == "success"
+
+    async def _complete_state(state, context, tools=None):  # type: ignore[no-untyped-def]
+        from snowl.core import StopReason
+        _ = (context, tools)
+        state.output = {
+            "message": {"role": "assistant", "content": "ok"},
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
+        state.stop_reason = StopReason.COMPLETED
+        return state
+
+    asyncio.run(_run())
+    snapshot = manager.snapshot()
+    assert snapshot["containers_created"] == 1
+    assert snapshot["containers_destroyed"] == 1
+    assert snapshot["suspected_leaked_resources"] == 0

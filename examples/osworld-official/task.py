@@ -20,12 +20,24 @@ def task() -> Task:
         split=PROJECT.eval.split or "test",
         limit=PROJECT.eval.limit if PROJECT.eval.limit is not None else 20,
     )
+    osworld_settings = PROJECT.benchmark_settings("osworld")
     return Task(
         task_id=base_task.task_id,
         env_spec=base_task.env_spec,
         sample_iter_factory=base_task.sample_iter_factory,
         metadata={
             **dict(base_task.metadata),
-            "osworld_settings": PROJECT.benchmark_settings("osworld"),
+            "osworld_settings": osworld_settings,
+            "runtime_container": {
+                "benchmark": "osworld",
+                "provider_name": "osworld",
+                "requires_container": True,
+                "cleanup_policy": "destroy_on_release",
+                "startup": dict(osworld_settings),
+                "spec_hash_basis": {
+                    "benchmark": "osworld",
+                    **dict(osworld_settings),
+                },
+            },
         },
     )

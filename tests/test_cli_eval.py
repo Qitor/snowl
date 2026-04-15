@@ -219,6 +219,53 @@ scorer = S()
     assert rc == 0
 
 
+def test_cli_eval_accepts_container_preserve_flags(tmp_path: Path) -> None:
+    (tmp_path / "task.py").write_text(
+        """
+from snowl.core import EnvSpec, Task
+task = Task(task_id="t1", env_spec=EnvSpec(env_type="local"), sample_iter_factory=lambda: iter([{"id":"s1","input":"x"}]))
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "agent.py").write_text(
+        """
+from snowl.core import StopReason
+class A:
+    agent_id = "a1"
+    async def run(self, state, context, tools=None):
+        _ = (context, tools)
+        state.output = {"message":{"role":"assistant","content":"ok"}, "usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}, "trace_events":[]}
+        state.stop_reason = StopReason.COMPLETED
+        return state
+agent = A()
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "scorer.py").write_text(
+        """
+from snowl.core import Score
+class S:
+    scorer_id = "s1"
+    def score(self, task_result, trace, context):
+        _ = (task_result, trace, context)
+        return {"accuracy": Score(value=1.0)}
+scorer = S()
+""",
+        encoding="utf-8",
+    )
+    _write_project_yml(tmp_path)
+    rc = main(
+        [
+            "eval",
+            str(tmp_path / "project.yml"),
+            "--no-ui",
+            "--keep-containers",
+            "--keep-failed-containers",
+        ]
+    )
+    assert rc == 0
+
+
 def test_cli_eval_keyboard_interrupt_prints_log_path(tmp_path: Path, monkeypatch, capsys) -> None:
     runs = tmp_path / ".snowl" / "runs" / "run-20260303T110000Z"
     runs.mkdir(parents=True)

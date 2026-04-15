@@ -5,15 +5,15 @@ project:
 provider:
   id: siliconflow
   kind: openai_compatible
-  base_url: https://api.siliconflow.cn/v1
-  api_key: sk-irodedqyvgqjdilarnwmrixfwigoxvaenmcfnjmfvbaxrkxm
+  base_url: https://kimi-k25-fyh-128k.openapi-qb-ai.sii.edu.cn/v1
+  api_key: CVuXZ/EHsJQMV2peuex0chkH+99/QaKq089fciMtqHo=
   timeout: 200
   max_retries: 2
 
 agent_matrix:
   models:
-    - id: qwen3_32b
-      model: Qwen/Qwen3-32B
+    - id: kimi_k2.5
+      model: kimi_k2.5
     # - id: qwen3_9b
     #   model: Qwen/Qwen3.5-9B
 

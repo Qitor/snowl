@@ -129,6 +129,27 @@ class TerminalBenchBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
                 "run_tests_path": str(task_dir / "run-tests.sh"),
                 "docker_compose_path": (str(compose_path) if compose_path is not None else ""),
                 "tests_dir": str(task_dir / "tests"),
+                "runtime_container": {
+                    "benchmark": "terminalbench",
+                    "provider_name": "terminalbench",
+                    "requires_container": bool(compose_path is not None and compose_path.exists()),
+                    "cleanup_policy": "destroy_on_release",
+                    "startup": {
+                        "compose_file": (str(compose_path.resolve()) if compose_path is not None else ""),
+                        "compose_service": "client",
+                        "task_root": str(task_dir.resolve()),
+                        "task_id": task_id,
+                        "safe_task": task_id,
+                        "safe_sample": f"tb-{task_id}-{digest}",
+                    },
+                    "spec_hash_basis": {
+                        "benchmark": "terminalbench",
+                        "compose_file": (str(compose_path.resolve()) if compose_path is not None else ""),
+                        "compose_service": "client",
+                        "task_root": str(task_dir.resolve()),
+                        "task_id": task_id,
+                    },
+                },
             },
         }
         return sample

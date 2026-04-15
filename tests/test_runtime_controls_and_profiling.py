@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from snowl.eval import run_eval
+from snowl.runtime.container_providers import ContainerProviderRegistry, ContainerSession
 from scripts.throughput_baseline import run_baseline
 from scripts.runtime_scheduler_benchmark import run_benchmark as run_scheduler_benchmark
 from snowl.envs.sandbox_runtime import BoundedSandboxRuntime
@@ -186,3 +187,107 @@ def test_non_sandbox_tasks_do_not_instantiate_shared_sandbox_runtime(
     result = asyncio.run(run_eval(tmp_path, renderer=None))
     assert result.summary.total == 1
     assert calls["count"] == 0
+
+
+def test_run_eval_emits_container_cleanup_summary_for_runtime_owned_resources(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    (tmp_path / "task.py").write_text(
+        """
+from snowl.core import EnvSpec, Task
+
+def _samples():
+    yield {"id": "s1", "input": "x", "metadata": {"runtime_container": {"requires_container": True}}}
+
+task = Task(
+    task_id="t1",
+    env_spec=EnvSpec(env_type="local"),
+    sample_iter_factory=_samples,
+    metadata={
+        "benchmark": "dummybench",
+        "runtime_container": {
+            "benchmark": "dummybench",
+            "provider_name": "dummybench",
+            "requires_container": True,
+            "cleanup_policy": "destroy_on_release",
+        },
+    },
+)
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "agent.py").write_text(
+        """
+from snowl.core import StopReason
+class A:
+    agent_id = "a1"
+    async def run(self, state, context, tools=None):
+        _ = (context, tools)
+        state.output = {"message":{"role":"assistant","content":"ok"}, "usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}, "trace_events":[]}
+        state.stop_reason = StopReason.COMPLETED
+        return state
+agent = A()
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "scorer.py").write_text(
+        """
+from snowl.core import Score
+class S:
+    scorer_id = "s1"
+    def score(self, task_result, trace, context):
+        _ = (task_result, trace, context)
+        return {"accuracy": Score(value=1.0)}
+scorer = S()
+""",
+        encoding="utf-8",
+    )
+
+    class _DummyProvider:
+        name = "dummybench"
+
+        async def prepare(self, context):  # type: ignore[no-untyped-def]
+            _ = context
+            return ContainerSession(
+                kind="dummy_container",
+                env=type("Env", (), {"container_id": "container-1"})(),
+                benchmark="dummybench",
+                metadata={"origin": "test"},
+            )
+
+        async def close(self, context, session):  # type: ignore[no-untyped-def]
+            _ = (context, session)
+            return {"closed": True}
+
+        def describe_requirements(self, context):  # type: ignore[no-untyped-def]
+            return {
+                "benchmark": "dummybench",
+                "requires_container": True,
+                "requires_build": False,
+                "spec_hash": context.container_spec.spec_hash,
+                "prepare_provider_ids": (),
+            }
+
+    registry = ContainerProviderRegistry()
+    registry.register("dummybench", _DummyProvider())
+    monkeypatch.setattr(
+        "snowl.runtime.container_runtime.default_container_provider_registry",
+        lambda: registry,
+    )
+
+    result = asyncio.run(run_eval(tmp_path, renderer=None))
+    out_dir = Path(result.artifacts_dir)
+    profiling = json.loads((out_dir / "profiling.json").read_text(encoding="utf-8"))
+    events = [
+        json.loads(line)
+        for line in (out_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert profiling["container_cleanup"]["containers_created"] == 1
+    assert profiling["container_cleanup"]["containers_destroyed"] == 1
+    assert profiling["container_cleanup"]["suspected_leaked_resources"] == 0
+    event_names = [str(evt.get("event")) for evt in events]
+    assert "runtime.resource.registered" in event_names
+    assert "runtime.cleanup.barrier.finish" in event_names

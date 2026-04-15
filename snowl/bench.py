@@ -66,6 +66,8 @@ async def run_benchmark(
     max_sandboxes: int | None = None,
     max_builds: int | None = None,
     max_model_calls: int | None = None,
+    keep_containers: bool = False,
+    keep_failed_containers: bool = False,
     experiment_id: str | None = None,
     on_run_bootstrap: Callable[[EvalRunBootstrap], None] | None = None,
 ) -> EvalRunResult:
@@ -118,6 +120,8 @@ async def run_benchmark(
         max_sandboxes=max_sandboxes,
         max_builds=max_builds,
         max_model_calls=max_model_calls,
+        keep_containers=keep_containers,
+        keep_failed_containers=keep_failed_containers,
         project_config=project_config,
         experiment_id=experiment_id,
         on_run_bootstrap=on_run_bootstrap,

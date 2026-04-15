@@ -29,6 +29,7 @@ from snowl.core.task_result import ArtifactRef, ErrorInfo, TaskResult, TaskStatu
 from snowl.core.tool import ToolSpec, resolve_tool_spec
 from snowl.envs.sandbox_runtime import SandboxRuntime, WarmPoolSandboxRuntime
 from snowl.errors import SnowlValidationError
+from snowl.runtime.container_lifecycle import RuntimeContainerLifecycleManager
 from snowl.runtime.container_runtime import ContainerPrepareResult, ContainerRuntime
 from snowl.runtime.resource_scheduler import TaskExecutionPlan, TrialDescriptor
 from snowl.ui.contracts import build_score_explanations
@@ -56,6 +57,9 @@ class TrialRequest:
     on_event: Callable[[dict[str, Any]], None] | None = None
     execution_plan: TaskExecutionPlan | None = None
     trial_descriptor: TrialDescriptor | None = None
+    container_lifecycle: RuntimeContainerLifecycleManager | None = None
+    run_id: str | None = None
+    trial_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -280,6 +284,8 @@ async def prepare_trial_phase(request: TrialRequest) -> PreparedTrial:
     )
 
     container_runtime = ContainerRuntime(
+        run_id=request.run_id,
+        trial_id=request.trial_id,
         task_id=request.task.task_id,
         agent_id=getattr(request.agent, "agent_id"),
         variant_id=variant_id,
@@ -287,6 +293,7 @@ async def prepare_trial_phase(request: TrialRequest) -> PreparedTrial:
         task_metadata=request.task.metadata,
         sample=request.sample,
         emit=emit,
+        lifecycle_manager=request.container_lifecycle,
     )
     container_prepare = ContainerPrepareResult(
         session=None,
@@ -300,6 +307,8 @@ async def prepare_trial_phase(request: TrialRequest) -> PreparedTrial:
         container_prepare = await container_runtime.prepare_phase()
         if container_prepare.session is not None:
             context.metadata["__snowl_container_session"] = container_prepare.session
+        if container_prepare.container_spec is not None:
+            context.metadata["__snowl_runtime_container_spec"] = container_prepare.container_spec.to_metadata()
     except Exception as exc:
         return PreparedTrial(
             request=request,
@@ -568,6 +577,7 @@ async def execute_agent_phase(prepared: PreparedTrial | TrialRequest) -> Partial
     if prepared.container_prepare.spec_hash:
         payload["container"] = {
             "spec_hash": prepared.container_prepare.spec_hash,
+            "resource_id": prepared.container_prepare.resource_id,
             **dict(prepared.container_prepare.metadata),
         }
 
@@ -614,6 +624,7 @@ async def execute_agent_phase(prepared: PreparedTrial | TrialRequest) -> Partial
     if prepared.container_prepare.spec_hash:
         trace["container"] = {
             "spec_hash": prepared.container_prepare.spec_hash,
+            "resource_id": prepared.container_prepare.resource_id,
             **dict(prepared.container_prepare.metadata),
         }
 
@@ -786,7 +797,9 @@ async def finalize_trial_phase(
         )
 
     try:
-        close_out = await prepared.container_runtime.finalize_phase()
+        close_out = await prepared.container_runtime.finalize_phase(
+            outcome_status=outcome.task_result.status.value,
+        )
         if close_out is not None:
             container_close = dict(close_out)
     except Exception as exc:

@@ -86,17 +86,33 @@ class ConsoleRenderer:
         payload = event.get("payload")
         if not isinstance(payload, dict):
             payload = {}
+        name = str(event.get("event") or payload.get("event") or "")
+        direction = payload.get("direction")
+        if direction is None:
+            direction = event.get("direction")
         request = payload.get("request")
         if not isinstance(request, dict):
             request = event.get("request") if isinstance(event.get("request"), dict) else {}
         response = payload.get("response")
         if not isinstance(response, dict):
             response = event.get("response") if isinstance(event.get("response"), dict) else {}
+        model_input = payload.get("model_input")
+        if model_input is None:
+            model_input = event.get("model_input")
+        model_output = payload.get("model_output")
+        if model_output is None:
+            model_output = event.get("model_output")
         error_type = payload.get("error_type")
         if error_type is None:
             error_type = event.get("error_type")
 
         lines: list[str] = []
+        if direction is not None:
+            lines.append(f"{prefix} runtime.model.io.direction={self._debug_value(direction, limit=32)}")
+        if model_input is not None:
+            lines.append(f"{prefix} model_input={self._debug_value(model_input)}")
+        if model_output is not None:
+            lines.append(f"{prefix} model_output={self._debug_value(model_output)}")
         if request:
             if "messages" in request:
                 lines.append(f"{prefix} provider.request.messages={self._debug_value(request.get('messages'))}")
@@ -105,6 +121,9 @@ class ConsoleRenderer:
 
         if error_type is not None:
             lines.append(f"{prefix} provider.error_type={self._debug_value(error_type, limit=120)}")
+
+        if name == "runtime.model.query.error":
+            return lines
 
         if response:
             if "message" in response:
@@ -262,7 +281,7 @@ class ConsoleRenderer:
                 details.append(f"{key}={_clip(value)}")
         suffix = (" " + " ".join(details)) if details else ""
         self._emit(f"[live] {name}{suffix}")
-        if name in {"runtime.model.query.start", "runtime.model.query.error", "runtime.model.io"}:
+        if name in {"runtime.model.query.error", "runtime.model.io"}:
             self._emit_model_debug(event)
 
 
@@ -1899,7 +1918,7 @@ class LiveConsoleRenderer(ConsoleRenderer):
         suffix = (" " + " ".join(details)) if details else ""
         line = f"{self._now()} [{tag}] {name}{suffix}"
         self._events.append(line)
-        if name in {"runtime.model.query.start", "runtime.model.query.error", "runtime.model.io"}:
+        if name in {"runtime.model.query.error", "runtime.model.io"}:
             for extra_line in self._model_debug_lines(raw, prefix=f"{self._now()} [{tag}]"):
                 self._events.append(extra_line)
 

@@ -158,6 +158,9 @@ export type RuntimeEvent = Record<string, unknown> & {
   sample_id?: string;
   trial_key?: string;
   message?: string;
+  direction?: string;
+  model_input?: unknown;
+  model_output?: unknown;
 };
 
 export type TrialAttemptRow = {

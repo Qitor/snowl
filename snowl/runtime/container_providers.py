@@ -16,9 +16,6 @@ Change guardrails:
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
-import os
 import re
 import shutil
 from dataclasses import dataclass, field
@@ -28,6 +25,7 @@ from typing import Any, Callable, Mapping, Protocol
 from snowl.benchmarks.osworld.container import OSWorldContainerLauncher
 from snowl.core import EnvSpec
 from snowl.envs import GuiEnv, TerminalEnv
+from snowl.runtime.container_contract import RuntimeContainerSpec
 
 
 @dataclass
@@ -40,18 +38,23 @@ class ContainerSession:
 
 @dataclass(frozen=True)
 class ContainerProviderContext:
+    run_id: str | None
+    trial_id: str | None
     task_id: str
     agent_id: str
     variant_id: str
     task_env_type: str
     task_metadata: Mapping[str, Any]
     sample: Mapping[str, Any]
+    container_spec: RuntimeContainerSpec
     emit: Callable[[dict[str, Any]], None] | None = None
 
     def emit_event(self, event: dict[str, Any]) -> None:
         if self.emit is None:
             return
         payload = {
+            "run_id": self.run_id,
+            "trial_id": self.trial_id,
             "task_id": self.task_id,
             "agent_id": self.agent_id,
             "variant_id": self.variant_id,
@@ -132,75 +135,43 @@ class ContainerProviderRegistry:
 class TerminalBenchProvider:
     name = "terminalbench"
 
-    def _trial_identity(self, context: ContainerProviderContext) -> dict[str, Any]:
-        sample_meta = dict(context.sample.get("metadata", {}) or {})
-        task_id = str(sample_meta.get("task_id") or "task")
-        sample_id = str(context.sample.get("id") or "sample")
-        variant_id = str(context.variant_id or "default")
-        safe_task = re.sub(r"[^a-zA-Z0-9._-]+", "-", task_id).strip("-") or "task"
-        safe_sample = re.sub(r"[^a-zA-Z0-9._-]+", "-", sample_id).strip("-") or "sample"
-        safe_variant = re.sub(r"[^a-zA-Z0-9._-]+", "-", variant_id).strip("-") or "default"
-        return {
-            "task_id": task_id,
-            "sample_id": sample_id,
-            "variant_id": variant_id,
-            "safe_task": safe_task,
-            "safe_sample": safe_sample,
-            "safe_variant": safe_variant,
-            "sample_meta": sample_meta,
-        }
-
     def describe_requirements(self, context: ContainerProviderContext) -> dict[str, Any]:
-        ident = self._trial_identity(context)
-        sample_meta = ident["sample_meta"]
-        compose_path = str(sample_meta.get("docker_compose_path") or "").strip()
-        compose_build = bool(
-            sample_meta.get("compose_build")
-            if sample_meta.get("compose_build") is not None
-            else context.task_metadata.get("compose_build", True)
-        )
-        spec_basis = {
-            "benchmark": "terminalbench",
-            "compose_file": str(Path(compose_path).resolve()) if compose_path else "",
-            "compose_service": str(sample_meta.get("compose_service", "client")),
-            "compose_build": compose_build,
-            "task_root": str(Path(str(sample_meta.get("task_root") or Path.cwd())).resolve()),
-            "task_id": ident["task_id"],
-        }
-        spec_hash = hashlib.sha1(json.dumps(spec_basis, sort_keys=True).encode("utf-8")).hexdigest()
+        startup = dict(context.container_spec.startup)
+        compose_path = str(startup.get("compose_file") or "").strip()
+        compose_build = bool(startup.get("compose_build", True))
         return {
             "benchmark": "terminalbench",
-            "requires_container": bool(compose_path and Path(compose_path).exists()),
+            "requires_container": bool(context.container_spec.requires_container),
             "requires_build": compose_build and bool(compose_path and Path(compose_path).exists()),
-            "spec_hash": spec_hash,
+            "spec_hash": context.container_spec.spec_hash,
             "prepare_provider_ids": (),
-            "estimated_prepare_cost": "heavy" if compose_path else "none",
+            "estimated_prepare_cost": "heavy" if context.container_spec.requires_container else "none",
+            "startup": startup,
         }
 
     async def prepare(self, context: ContainerProviderContext) -> ContainerSession:
-        ident = self._trial_identity(context)
-        sample_meta = ident["sample_meta"]
-        safe_task = ident["safe_task"]
-        safe_sample = ident["safe_sample"]
-        safe_variant = ident["safe_variant"]
-        trial_name = f"snowl-tb-{safe_task}-{safe_sample[:12]}-{safe_variant[:12]}"
-        workdir = sample_meta.get("task_root") or str(Path.cwd())
+        startup = dict(context.container_spec.startup)
+        safe_task = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(startup.get("safe_task") or "task")).strip("-") or "task"
+        safe_sample = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(startup.get("safe_sample") or "sample")).strip("-") or "sample"
+        safe_variant = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(startup.get("safe_variant") or "default")).strip("-") or "default"
+        trial_name = str(startup.get("compose_project") or f"snowl-tb-{safe_task}-{safe_sample[:12]}-{safe_variant[:12]}")
+        workdir = startup.get("task_root") or str(Path.cwd())
         workdir_path = Path(str(workdir)).resolve()
-        logs_root = workdir_path / ".snowl_logs" / safe_sample / safe_variant
-        agent_logs_root = workdir_path / ".snowl_agent_logs" / safe_sample / safe_variant
+        logs_root = Path(str(startup.get("task_logs_path") or (workdir_path / ".snowl_logs" / safe_sample / safe_variant))).resolve()
+        agent_logs_root = Path(
+            str(startup.get("task_agent_logs_path") or (workdir_path / ".snowl_agent_logs" / safe_sample / safe_variant))
+        ).resolve()
         logs_root.mkdir(parents=True, exist_ok=True)
         agent_logs_root.mkdir(parents=True, exist_ok=True)
-        docker_compose_path = str(sample_meta.get("docker_compose_path") or "").strip()
+        docker_compose_path = str(startup.get("compose_file") or "").strip()
         use_compose = bool(docker_compose_path and Path(docker_compose_path).exists())
-        compose_build = bool(
-            sample_meta.get("compose_build")
-            if sample_meta.get("compose_build") is not None
-            else context.task_metadata.get("compose_build", True)
-        )
+        compose_build = bool(startup.get("compose_build", True))
         compose_env = {
-            "T_BENCH_TASK_DOCKER_CLIENT_CONTAINER_NAME": trial_name,
-            "T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME": f"tb__{safe_task}__{safe_variant}__client",
-            "T_BENCH_TASK_DOCKER_NAME_PREFIX": f"tb__{safe_task}__{safe_variant}",
+            "T_BENCH_TASK_DOCKER_CLIENT_CONTAINER_NAME": str(startup.get("client_container_name") or trial_name),
+            "T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME": str(
+                startup.get("client_image_name") or f"tb__{safe_task}__{safe_variant}__client"
+            ),
+            "T_BENCH_TASK_DOCKER_NAME_PREFIX": str(startup.get("compose_name_prefix") or f"tb__{safe_task}__{safe_variant}"),
             "T_BENCH_CONTAINER_LOGS_PATH": "/var/log/tbench",
             "T_BENCH_CONTAINER_AGENT_LOGS_PATH": "/agent-logs",
             "T_BENCH_TEST_DIR": "/tests",
@@ -224,7 +195,7 @@ class TerminalBenchProvider:
             use_docker_compose=use_compose,
             compose_build=compose_build,
             compose_project=trial_name,
-            compose_service=str(sample_meta.get("compose_service", "client")),
+            compose_service=str(startup.get("compose_service") or "client"),
             compose_env=compose_env,
         )
 
@@ -315,6 +286,8 @@ class TerminalBenchProvider:
             benchmark="terminalbench",
             metadata={
                 "project": env.compose_project,
+                "compose_file": env.compose_file,
+                "compose_service": env.compose_service,
                 "spec_hash": self.describe_requirements(context).get("spec_hash"),
             },
         )
@@ -355,23 +328,14 @@ class OSWorldProvider:
     name = "osworld"
 
     def describe_requirements(self, context: ContainerProviderContext) -> dict[str, Any]:
-        settings = dict(context.task_metadata.get("osworld_settings") or {})
-        spec_basis = {
-            "benchmark": "osworld",
-            "image": str(settings.get("image") or "happysixd/osworld-docker"),
-            "ports": settings.get("ports") or {},
-            "observation_type": settings.get("observation_type"),
-            "max_steps": settings.get("max_steps"),
-            "recording": settings.get("recording"),
-        }
-        spec_hash = hashlib.sha1(json.dumps(spec_basis, sort_keys=True).encode("utf-8")).hexdigest()
         return {
             "benchmark": "osworld",
-            "requires_container": True,
+            "requires_container": bool(context.container_spec.requires_container),
             "requires_build": False,
-            "spec_hash": spec_hash,
+            "spec_hash": context.container_spec.spec_hash,
             "prepare_provider_ids": (),
             "estimated_prepare_cost": "heavy",
+            "startup": dict(context.container_spec.startup),
         }
 
     async def prepare(self, context: ContainerProviderContext) -> ContainerSession:
@@ -379,7 +343,7 @@ class OSWorldProvider:
         launcher = OSWorldContainerLauncher(
             repo_root=Path(__file__).resolve().parents[2],
             emit=context.emit_event,
-            settings=context.task_metadata.get("osworld_settings"),
+            settings=context.container_spec.startup,
         )
         prepared = await asyncio.to_thread(launcher.prepare, docker_path=docker_path)
         return ContainerSession(

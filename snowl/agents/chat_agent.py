@@ -46,6 +46,28 @@ class ChatAgent:
         if callable(emit):
             emit(
                 {
+                    "event": "runtime.model.io",
+                    "phase": "agent",
+                    "agent_id": self.agent_id,
+                    "task_id": context.task_id,
+                    "sample_id": context.sample_id,
+                    "direction": "input",
+                    "message": "model input captured before provider call",
+                    "model": self.model_client.model,
+                    "base_url": self.model_client.base_url,
+                    "provider_id": self.model_client.provider_id,
+                    "model_input": {
+                        "messages": request_messages,
+                        "generation_kwargs": request_kwargs,
+                    },
+                    "request": {
+                        "messages": request_messages,
+                        "generation_kwargs": request_kwargs,
+                    },
+                }
+            )
+            emit(
+                {
                     "event": "runtime.model.query.start",
                     "phase": "agent",
                     "agent_id": self.agent_id,
@@ -55,10 +77,6 @@ class ChatAgent:
                     "model": self.model_client.model,
                     "base_url": self.model_client.base_url,
                     "provider_id": self.model_client.provider_id,
-                    "request": {
-                        "messages": request_messages,
-                        "generation_kwargs": request_kwargs,
-                    },
                 }
             )
         try:
@@ -80,10 +98,6 @@ class ChatAgent:
                         "model": self.model_client.model,
                         "base_url": self.model_client.base_url,
                         "provider_id": self.model_client.provider_id,
-                        "request": {
-                            "messages": request_messages,
-                            "generation_kwargs": request_kwargs,
-                        },
                     }
                 )
             raise
@@ -111,14 +125,12 @@ class ChatAgent:
                     "agent_id": self.agent_id,
                     "task_id": context.task_id,
                     "sample_id": context.sample_id,
-                    "message": "full model request/response captured",
+                    "direction": "output",
+                    "message": "model output captured after provider response",
                     "model": self.model_client.model,
-                    "request": {
-                        "messages": request_messages,
-                        "generation_kwargs": request_kwargs,
-                    },
                     "base_url": self.model_client.base_url,
                     "provider_id": self.model_client.provider_id,
+                    "model_output": dict(response.message),
                     "response": {
                         "message": dict(response.message),
                         "raw": response.raw,

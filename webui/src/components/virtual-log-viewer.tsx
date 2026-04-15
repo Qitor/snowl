@@ -21,6 +21,10 @@ type LogRow = {
   phase: string;
   attention: boolean;
   rawText: string;
+  modelInputLabel: string | null;
+  modelInputPreview: string | null;
+  modelOutputLabel: string | null;
+  modelOutputPreview: string | null;
 };
 
 const EVENT_SUMMARY_MAP: Record<string, string> = {
@@ -32,6 +36,7 @@ const EVENT_SUMMARY_MAP: Record<string, string> = {
   "runtime.model.query.start": "Model request started",
   "runtime.model.query.finish": "Model response received",
   "runtime.model.query.error": "Model request failed",
+  "runtime.model.io": "Model I/O captured",
   "runtime.agent.step": "Agent step completed",
   "runtime.env.preflight.download.start": "Pretask download started",
   "runtime.env.preflight.download.progress": "Pretask download in progress",
@@ -66,6 +71,116 @@ function humanizeEventKey(eventKey: string): string {
   return toTitleCaseWords(reduced);
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function hasDisplayValue(value: unknown): boolean {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  if (typeof value === "string") {
+    return value.trim().length > 0 && value.trim() !== "null";
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  if (typeof value === "object") {
+    return Object.keys(value as Record<string, unknown>).length > 0;
+  }
+  return true;
+}
+
+function toPreviewText(value: unknown, maxLen = 220): string {
+  if (!hasDisplayValue(value)) {
+    return "-";
+  }
+  if (typeof value === "string") {
+    const compact = value.replace(/\s+/g, " ").trim();
+    if (compact.length <= maxLen) {
+      return compact;
+    }
+    return `${compact.slice(0, maxLen - 1)}…`;
+  }
+  try {
+    const compact = JSON.stringify(value);
+    if (compact.length <= maxLen) {
+      return compact;
+    }
+    return `${compact.slice(0, maxLen - 1)}…`;
+  } catch {
+    return "[unserializable payload]";
+  }
+}
+
+function extractMessageListPreview(value: unknown): string | null {
+  if (!Array.isArray(value) || value.length === 0) {
+    return null;
+  }
+  const parts: string[] = [];
+  for (const item of value.slice(0, 2)) {
+    const row = asRecord(item);
+    if (!row) {
+      continue;
+    }
+    const role = String(row.role || "message").trim();
+    const content = row.content;
+    if (typeof content === "string" && content.trim()) {
+      parts.push(`${role}: ${toPreviewText(content, 120)}`);
+      continue;
+    }
+    if (Array.isArray(content)) {
+      const textPart = content.find((entry) => {
+        const part = asRecord(entry);
+        return typeof part?.text === "string" && part.text.trim();
+      });
+      const text = asRecord(textPart)?.text;
+      if (typeof text === "string" && text.trim()) {
+        parts.push(`${role}: ${toPreviewText(text, 120)}`);
+      }
+    }
+  }
+  return parts.length > 0 ? parts.join(" | ") : null;
+}
+
+function extractModelPreview(value: unknown): string | null {
+  if (!hasDisplayValue(value)) {
+    return null;
+  }
+  if (typeof value === "string") {
+    return toPreviewText(value, 220);
+  }
+  const record = asRecord(value);
+  if (!record) {
+    return toPreviewText(value, 220);
+  }
+  const directMessages = extractMessageListPreview(record.messages);
+  if (directMessages) {
+    return directMessages;
+  }
+  const message = asRecord(record.message);
+  const messageContent = message?.content;
+  if (typeof messageContent === "string" && messageContent.trim()) {
+    return toPreviewText(messageContent, 220);
+  }
+  const content = record.content;
+  if (typeof content === "string" && content.trim()) {
+    return toPreviewText(content, 220);
+  }
+  const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+  if (toolCalls.length > 0) {
+    const firstCall = asRecord(toolCalls[0]);
+    const fn = asRecord(firstCall?.function);
+    const name = String(fn?.name || "tool_call").trim();
+    const args = fn?.arguments;
+    return hasDisplayValue(args) ? `tool ${name}(${toPreviewText(args, 140)})` : `tool ${name}`;
+  }
+  return toPreviewText(value, 220);
+}
+
 function buildRow(event: RuntimeEvent): LogRow {
   const eventKey = String(event.event || "runtime.event");
   const eventId = String(event.event_id || "");
@@ -76,9 +191,18 @@ function buildRow(event: RuntimeEvent): LogRow {
   const agentId = String(event.agent_id || "").trim();
   const variantId = String(event.variant_id || "default").trim();
   const model = String(event.model || "").trim();
+  const direction = String(event.direction || "").trim().toLowerCase();
   const ts = typeof event.ts_ms === "number" ? new Date(event.ts_ms).toLocaleTimeString() : "--:--:--";
   const identityRaw = [agentId || "-", variantId || "default", model || ""].filter(Boolean).join(" / ");
-  const summary = message || humanizeEventKey(eventKey);
+  const modelInputPreview = extractModelPreview(event.model_input);
+  const modelOutputPreview = extractModelPreview(event.model_output);
+  const summary =
+    message ||
+    (eventKey === "runtime.model.io" && direction === "input"
+      ? "Model input captured"
+      : eventKey === "runtime.model.io" && direction === "output"
+        ? "Model output captured"
+        : humanizeEventKey(eventKey));
   const lower = `${eventKey} ${message}`.toLowerCase();
   const attention =
     lower.includes("error") ||
@@ -97,6 +221,10 @@ function buildRow(event: RuntimeEvent): LogRow {
     phase: phase || "-",
     attention,
     rawText: JSON.stringify(event, null, 2),
+    modelInputLabel: modelInputPreview ? "Model input" : null,
+    modelInputPreview,
+    modelOutputLabel: modelOutputPreview ? "Model output" : null,
+    modelOutputPreview,
   };
 }
 
@@ -168,6 +296,26 @@ export function VirtualLogViewer({ events }: VirtualLogViewerProps) {
                   </>
                 ) : null}
               </div>
+              {item.modelInputPreview || item.modelOutputPreview ? (
+                <div className="mt-2 grid gap-2">
+                  {item.modelInputPreview ? (
+                    <div className="rounded-xl border border-cyan-800/60 bg-cyan-950/25 px-3 py-2">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-cyan-200/80">
+                        {item.modelInputLabel}
+                      </div>
+                      <div className="mt-1 text-[13px] leading-6 text-cyan-50/95">{item.modelInputPreview}</div>
+                    </div>
+                  ) : null}
+                  {item.modelOutputPreview ? (
+                    <div className="rounded-xl border border-emerald-800/60 bg-emerald-950/25 px-3 py-2">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-200/80">
+                        {item.modelOutputLabel}
+                      </div>
+                      <div className="mt-1 text-[13px] leading-6 text-emerald-50/95">{item.modelOutputPreview}</div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               <details className="mt-2">
                 <summary className="cursor-pointer text-sm text-cyan-200/90 hover:text-cyan-100">
                   View raw event payload

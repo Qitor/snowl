@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
+from snowl.runtime.container_contract import resolve_runtime_container_spec
 from snowl.runtime.container_providers import (
     ContainerProviderContext,
     ContainerProviderRegistry,
@@ -13,17 +15,51 @@ from snowl.runtime.container_providers import (
 from snowl.runtime.container_runtime import ContainerRuntime
 
 
+def _context_spec(*, benchmark: str, requires_container: bool, startup: dict[str, object] | None = None):
+    return resolve_runtime_container_spec(
+        task_metadata={
+            "benchmark": benchmark,
+            "runtime_container": {
+                "benchmark": benchmark,
+                "provider_name": benchmark,
+                "requires_container": requires_container,
+                "cleanup_policy": "destroy_on_release",
+            },
+        },
+        sample={
+            "id": "sample-1",
+            "metadata": {
+                "runtime_container": {
+                    "benchmark": benchmark,
+                    "provider_name": benchmark,
+                    "requires_container": requires_container,
+                    "startup": dict(startup or {}),
+                }
+            },
+        },
+    )
+
+
 def test_container_runtime_uses_provider_registry() -> None:
     events: list[dict[str, object]] = []
 
     class _DummyProvider:
         name = "dummy"
 
-        def prepare(self, context: ContainerProviderContext) -> ContainerSession:
+        def describe_requirements(self, context: ContainerProviderContext) -> dict[str, object]:
+            return {
+                "benchmark": "dummybench",
+                "requires_container": True,
+                "requires_build": False,
+                "spec_hash": context.container_spec.spec_hash,
+                "prepare_provider_ids": (),
+            }
+
+        async def prepare(self, context: ContainerProviderContext) -> ContainerSession:
             context.emit_event({"event": "dummy.prepare"})
             return ContainerSession(kind="dummy", env={"ok": True}, benchmark="dummy")
 
-        def close(self, context: ContainerProviderContext, session: ContainerSession) -> dict[str, object]:
+        async def close(self, context: ContainerProviderContext, session: ContainerSession) -> dict[str, object]:
             _ = session
             context.emit_event({"event": "dummy.close"})
             return {"closed": True}
@@ -36,8 +72,24 @@ def test_container_runtime_uses_provider_registry() -> None:
         agent_id="agent-1",
         variant_id="v1",
         task_env_type="local",
-        task_metadata={"benchmark": "dummybench"},
-        sample={"id": "s1"},
+        task_metadata={
+            "benchmark": "dummybench",
+            "runtime_container": {
+                "benchmark": "dummybench",
+                "provider_name": "dummybench",
+                "requires_container": True,
+            },
+        },
+        sample={
+            "id": "s1",
+            "metadata": {
+                "runtime_container": {
+                    "benchmark": "dummybench",
+                    "provider_name": "dummybench",
+                    "requires_container": True,
+                }
+            },
+        },
         emit=events.append,
         provider_registry=registry,
     )
@@ -61,6 +113,23 @@ def test_container_runtime_returns_none_for_unknown_benchmark() -> None:
     )
     assert runtime.prepare() is None
     assert runtime.close() is None
+
+
+def test_container_runtime_requires_contract_for_container_prepare() -> None:
+    registry = ContainerProviderRegistry()
+    registry.register("dummybench", object())  # type: ignore[arg-type]
+
+    runtime = ContainerRuntime(
+        task_id="task-1",
+        agent_id="agent-1",
+        variant_id="v1",
+        task_env_type="local",
+        task_metadata={"benchmark": "dummybench"},
+        sample={"id": "s1"},
+        provider_registry=registry,
+    )
+
+    assert runtime.prepare() is None
 
 
 def test_default_provider_registry_contains_terminalbench_and_osworld() -> None:
@@ -121,6 +190,8 @@ def test_terminalbench_provider_emits_compatible_lifecycle_events(monkeypatch, t
 
     provider = TerminalBenchProvider()
     context = ContainerProviderContext(
+        run_id="run-1",
+        trial_id="trial-1",
         task_id="task-1",
         agent_id="agent-1",
         variant_id="v1",
@@ -135,16 +206,29 @@ def test_terminalbench_provider_emits_compatible_lifecycle_events(monkeypatch, t
                 "compose_service": "client",
             },
         },
+        container_spec=_context_spec(
+            benchmark="terminalbench",
+            requires_container=True,
+            startup={
+                "compose_file": str(compose_file),
+                "compose_service": "client",
+                "task_root": str(tmp_path),
+                "task_id": "tb-task",
+                "safe_task": "tb-task",
+                "safe_sample": "sample-1",
+                "safe_variant": "v1",
+            },
+        ),
         emit=events.append,
     )
 
-    session = provider.prepare(context)
+    session = asyncio.run(provider.prepare(context))
     assert session.kind == "terminal_compose"
     assert session.env.compose_env["T_BENCH_TASK_DOCKER_CLIENT_CONTAINER_NAME"].endswith("-v1")
     assert session.env.compose_env["T_BENCH_TASK_DOCKER_NAME_PREFIX"].endswith("__v1")
     assert session.env.compose_env["T_BENCH_TASK_LOGS_PATH"].endswith("/sample-1/v1")
     assert session.env.compose_env["T_BENCH_TASK_AGENT_LOGS_PATH"].endswith("/sample-1/v1")
-    provider.close(context, session)
+    asyncio.run(provider.close(context, session))
 
     names = [str(evt.get("event")) for evt in events]
     assert "terminalbench.container.starting" in names
@@ -183,6 +267,8 @@ def test_terminalbench_provider_isolates_resources_per_variant(monkeypatch, tmp_
 
     def _context(variant_id: str) -> ContainerProviderContext:
         return ContainerProviderContext(
+            run_id="run-1",
+            trial_id=f"trial-{variant_id}",
             task_id="task-1",
             agent_id="agent-1",
             variant_id=variant_id,
@@ -197,11 +283,24 @@ def test_terminalbench_provider_isolates_resources_per_variant(monkeypatch, tmp_
                     "compose_service": "client",
                 },
             },
+            container_spec=_context_spec(
+                benchmark="terminalbench",
+                requires_container=True,
+                startup={
+                    "compose_file": str(compose_file),
+                    "compose_service": "client",
+                    "task_root": str(tmp_path),
+                    "task_id": "tb-task",
+                    "safe_task": "tb-task",
+                    "safe_sample": "sample-1",
+                    "safe_variant": variant_id,
+                },
+            ),
             emit=lambda _evt: None,
         )
 
-    session_v1 = provider.prepare(_context("v1"))
-    session_v2 = provider.prepare(_context("v2"))
+    session_v1 = asyncio.run(provider.prepare(_context("v1")))
+    session_v2 = asyncio.run(provider.prepare(_context("v2")))
 
     assert session_v1.env.compose_project != session_v2.env.compose_project
     assert session_v1.env.compose_env["T_BENCH_TASK_LOGS_PATH"] != session_v2.env.compose_env["T_BENCH_TASK_LOGS_PATH"]
@@ -219,9 +318,10 @@ def test_osworld_provider_prepare_and_close_emit_events(monkeypatch) -> None:
             return {"event": "gui.container.stop", "exit_code": 0}
 
     class _FakeLauncher:
-        def __init__(self, *, repo_root, emit=None):  # type: ignore[no-untyped-def]
+        def __init__(self, *, repo_root, emit=None, settings=None):  # type: ignore[no-untyped-def]
             _ = repo_root
             self._emit = emit
+            self._settings = settings
 
         def prepare(self, *, docker_path: str):
             if callable(self._emit):
@@ -233,18 +333,25 @@ def test_osworld_provider_prepare_and_close_emit_events(monkeypatch) -> None:
 
     provider = OSWorldProvider()
     context = ContainerProviderContext(
+        run_id="run-1",
+        trial_id="trial-1",
         task_id="task-1",
         agent_id="agent-1",
         variant_id="v1",
         task_env_type="gui",
         task_metadata={"benchmark": "osworld"},
         sample={"id": "sample-1"},
+        container_spec=_context_spec(
+            benchmark="osworld",
+            requires_container=True,
+            startup={"image": "happysixd/osworld-docker"},
+        ),
         emit=events.append,
     )
 
-    session = provider.prepare(context)
+    session = asyncio.run(provider.prepare(context))
     assert session.kind == "gui_container"
-    close_out = provider.close(context, session)
+    close_out = asyncio.run(provider.close(context, session))
     assert close_out == {"event": "gui.container.stop", "exit_code": 0}
 
     names = [str(evt.get("event")) for evt in events]

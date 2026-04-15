@@ -96,22 +96,26 @@ Done means:
 Minimal tests:
 
 ```bash
-pytest -q tests/test_container_runtime_providers.py tests/test_terminalbench_benchmark.py tests/test_osworld_benchmark.py tests/test_eval_web_observability.py
+pytest -q tests/test_container_lifecycle.py tests/test_container_runtime_providers.py tests/test_terminalbench_benchmark.py tests/test_osworld_benchmark.py tests/test_runtime_controls_and_profiling.py
 ```
 
 Inspect:
 
 - `.snowl/runs/<run_id>/events.jsonl`
 - `.snowl/runs/<run_id>/profiling.json`
+- `.snowl/runs/<run_id>/profiling.json["container_cleanup"]`
 - `.snowl/runs/<run_id>/diagnostics_index.json`
 - `.snowl/runs/<run_id>/diagnostics/`
 - `.snowl/runs/<run_id>/run.log`
 
 Done means:
 
+- task/sample `runtime_container` metadata resolves to the provider path you intended
 - benchmark-specific setup/teardown behavior is still visible in events or diagnostics
+- runtime-owned resources are registered and either destroyed or explicitly preserved
+- run-end cleanup barrier emits a summary and leaves no accidental survivors
 - you have verified whether `max_container_slots` actually gates the path you changed
-- docs accurately describe whether the change lives in container providers, sandbox wrapping, or scheduler admission
+- docs accurately describe whether the change lives in task contract resolution, container providers, runtime lifecycle ownership, sandbox wrapping, or scheduler admission
 
 ### Docs-only change
 

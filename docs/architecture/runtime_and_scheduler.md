@@ -11,9 +11,13 @@ This document explains the runtime architecture as implemented today. For future
 - `snowl/runtime/resource_scheduler.py`
   - Budget objects, semaphores, queue timing stats, provider admission, sandbox-slot wrapping.
 - `snowl/runtime/container_runtime.py`
-  - Benchmark-aware container prepare/finalize wrapper.
+  - Task-declared container contract resolution plus runtime-owned container prepare/finalize wrapper.
 - `snowl/runtime/container_providers.py`
-  - TerminalBench and OSWorld provider implementations and `spec_hash` calculation.
+  - TerminalBench and OSWorld provider implementations, provider-specific startup mapping, and concrete teardown logic.
+- `snowl/runtime/container_contract.py`
+  - Normalizes task/sample `runtime_container` metadata into one runtime-owned container request.
+- `snowl/runtime/container_lifecycle.py`
+  - Runtime-owned registry, lease/release state, run-end cleanup barrier, and preserve-policy handling.
 - `snowl/project_config.py`
   - `project.yml` loading, runtime settings, recovery config.
 - `snowl/model/openai_compatible.py`
@@ -46,11 +50,32 @@ The execution plane performs the work of one trial once it has been dispatched.
 Main execution-plane responsibilities:
 
 - `prepare_trial_phase()`, `execute_agent_phase()`, `score_trial_phase()`, `finalize_trial_phase()` in `snowl/runtime/engine.py`
-- benchmark-specific environment setup in `snowl/runtime/container_runtime.py` and `snowl/runtime/container_providers.py`
+- task-declared container resolution plus benchmark-specific environment setup in `snowl/runtime/container_runtime.py` and `snowl/runtime/container_providers.py`
 - sandbox and env operations in `snowl/envs/`
 - model-call behavior and per-request retries in `snowl/model/openai_compatible.py`
 
 If a change affects task execution semantics, scorer semantics, environment setup, or model-call behavior inside a dispatched trial, start in the execution plane.
+
+## Task-Declared Container Contract And Ownership
+
+Snowl now treats container-backed work as a three-layer contract:
+
+- Task/sample metadata declares whether the trial needs a runtime-managed container and the normalized startup inputs under `runtime_container`.
+- Runtime/engine resolves that metadata into a `RuntimeContainerSpec`, creates the provider session, registers the resource, leases it to the trial, and owns release/cleanup.
+- Agents consume only the injected `__snowl_container_session`; they must not start or stop containers themselves.
+
+Current implementation details:
+
+- Contract normalization lives in `snowl/runtime/container_contract.py`.
+- Runtime registration and cleanup ownership live in `snowl/runtime/container_lifecycle.py`.
+- `prepare_trial_phase()` injects both `__snowl_container_session` and `__snowl_runtime_container_spec` into agent context.
+- TerminalBench and OSWorld example agents now treat a missing runtime-managed session as a runtime contract violation.
+
+What this does not mean yet:
+
+- runtime-owned containers are not warm-pooled by default
+- `spec_hash` does not yet drive dispatch priority or reuse
+- `max_container_slots` is still not a universal admission gate across every benchmark container path
 
 ## Planner / Eval / Runtime Relationship
 
@@ -102,45 +127,43 @@ The main eval loop in `snowl/eval.py` is the real runtime behavior for repo-leve
 4. Dispatch up to `max_running_trials + max_scoring_tasks` in-flight trial coroutines.
 5. For each trial:
    - construct `TrialRequest`
-   - call `execute_agent_phase(request)` under `scheduler.running_trial_slot()`
-   - call `score_trial_phase(request, partial)` under `scheduler.scoring_slot()`
+   - call `prepare_trial_phase(request)` under `scheduler.running_trial_slot()`
+   - call `execute_agent_phase(prepared)` under the same running-trial admission
+   - call `score_trial_phase(prepared, partial)` under `scheduler.scoring_slot()`
+   - call `finalize_trial_phase(prepared, outcome)` after scoring
    - record the recovery attempt
    - schedule deferred auto retry if the outcome is retry-eligible
-6. After all work completes:
+6. In the run `finally` path:
+   - cancel outstanding trial tasks best effort
+   - run the runtime-owned container cleanup barrier
+   - persist cleanup summary before the event writer is closed
+7. After all work completes:
    - compute summary and aggregate outputs
    - write final artifacts
    - mark `runtime_state.json` and `manifest.json` completed
 
 ### Important nuance
 
-`execute_agent_phase(request)` internally performs prepare work when given a raw `TrialRequest`, because it first calls `prepare_trial_phase(request)`.
-
-So in the main eval loop:
-
-- prepare currently happens inside the coroutine admitted by `running_trial_slot()`
-- score happens separately under `scoring_slot()`
-- finalize is not invoked from the main eval loop today
-
-By contrast, `execute_trial()` in `snowl/runtime/engine.py` does:
+The main eval loop and `execute_trial()` are now aligned on phase order:
 
 - prepare
 - execute
 - score
 - finalize
 
-That mismatch is real and should be treated as current technical debt.
+The remaining mismatch is not phase omission; it is phase admission depth. Prepare still happens while the trial is already holding `running_trial_slot()`, and finalize is still a helper call rather than a separately scheduled phase.
 
 ## Known Contract Mismatches
 
 These are confirmed mismatches between exposed runtime surfaces and the main eval-loop behavior.
 
-- `finalize_trial_phase()` is exposed and used by `execute_trial()`, but `_run_one()` in `snowl/eval.py` does not call it. Future runtime work must not assume finalize events or teardown payload updates happen in the main eval path.
-- `prepare_trial_phase()` is a real helper, but the main eval loop reaches it indirectly through `execute_agent_phase(request)` while already holding `scheduler.running_trial_slot()`. Future scheduler work must not describe prepare as independently admitted today.
+- `prepare_trial_phase()` is a real helper, but the main eval loop still admits it under `scheduler.running_trial_slot()` semantics. Future scheduler work must not describe prepare as independently admitted today.
 - Provider budgets are enforced most strongly at model-call time through `OpenAICompatibleChatClient.set_global_model_call_slot_resolver(...)` and `_acquire_model_slot()`. The dispatch loop does not currently choose the next trial based on provider headroom.
-- `spec_hash` is computed by container providers and carried into trial payload/trace, but it does not drive dispatch priority, batching, locality-aware reuse, or warm-pool preference.
+- Runtime-owned container cleanup is centralized for runtime-managed resources, but `max_container_slots` still does not serve as a universal dispatcher gate for every benchmark container prepare path.
+- `spec_hash` is computed from the normalized container contract and carried into trial payload/trace, but it does not drive dispatch priority, batching, locality-aware reuse, or warm-pool preference.
 - `TaskExecutionPlan` and `TrialDescriptor` exist on `TrialRequest`, but `run_eval_with_components()` does not populate them for repo-level runs. Their presence is not proof of plan-aware scheduling.
 - `begin_prepare()` and `begin_finalize()` exist on `ResourceScheduler`, but the main eval loop uses only `running_trial_slot()` and `scoring_slot()` directly.
-- `max_container_slots` is a real control, but in current code it is enforced most directly through sandbox wrapping and scheduler APIs, not as a universal admission gate across all benchmark container prepare paths.
+- Benchmark/sample metadata may still carry raw provider startup fields such as compose paths or OSWorld settings for benchmark compatibility, but runtime ownership decisions must come from the normalized `runtime_container` contract, not from agent-side interpretation of those raw fields.
 
 ## Resource Budgets
 
@@ -171,6 +194,52 @@ These are confirmed mismatches between exposed runtime surfaces and the main eva
 - Exposed in the scheduler and tracked in profiling stats.
 - Used to wrap sandbox runtimes via `scheduler.wrap_sandbox_runtime(...)`.
 - Not yet a universal gate on all container-provider prepare paths in the main eval loop.
+
+## Runtime-Owned Container Lifecycle
+
+This is the current container ownership model for runtime-managed benchmarks.
+
+### Registration and lease
+
+- `ContainerRuntime.prepare_phase()` resolves one `RuntimeContainerSpec`.
+- If `requires_container` is true and a provider exists, runtime acquires the provider session and immediately registers it in `RuntimeContainerLifecycleManager`.
+- Registration records at least:
+  - `run_id`
+  - `trial_id`
+  - `benchmark`
+  - `provider_name`
+  - `spec_hash`
+  - concrete identifiers such as `container_id`, `compose_project`, and `compose_file` when available
+- The resource is then leased to the current trial.
+
+### Release and default cleanup policy
+
+- `finalize_trial_phase()` releases the runtime-owned container lease.
+- Current default policy is conservative:
+  - released benchmark containers are marked dirty
+  - runtime tears them down immediately
+  - warm reuse is not enabled by default
+- Explicit preserve behavior is CLI-driven:
+  - `--keep-containers`
+  - `--keep-failed-containers`
+
+### Run-end cleanup barrier
+
+- `run_eval_with_components()` creates one lifecycle manager per run.
+- In the run `finally` path, Snowl calls `cleanup_run(...)` before closing `events.jsonl`.
+- The barrier emits:
+  - `runtime.cleanup.barrier.start`
+  - `runtime.cleanup.barrier.finish`
+  - `runtime.cleanup.leak_suspected` when non-preserved survivors remain
+- `profiling.json` now includes `container_cleanup`.
+
+### What still stays benchmark-specific
+
+- provider startup/teardown commands still live in:
+  - `TerminalBenchProvider`
+  - `OSWorldProvider`
+- runtime owns *when* they are invoked and how they are tracked
+- providers still own *how* the container is actually started and stopped
 
 ## Current Provider Budget Behavior
 
@@ -214,14 +283,14 @@ Container providers compute `spec_hash`, but the dispatcher does not yet:
 - prefer warm-locality
 - reuse prepare work across compatible trials
 
-### TerminalBench and OSWorld are benchmark-specific
+### TerminalBench and OSWorld are the only fully standardized runtime-owned paths today
 
-Container handling is still concentrated in:
+Snowl has a shared container contract and lifecycle manager now, but the concrete provider adapters are still implemented only for:
 
 - `TerminalBenchProvider`
 - `OSWorldProvider`
 
-Snowl does not yet have a generalized container orchestration layer that every benchmark shares equally.
+Future container-backed benchmarks should join this runtime-owned contract instead of adding agent-managed startup code.
 
 ### Sandboxes and containers are not the same path
 

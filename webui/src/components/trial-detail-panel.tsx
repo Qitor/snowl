@@ -16,6 +16,16 @@ type AgentStepView = {
   message: string;
 };
 
+type ModelIoView = {
+  step: number;
+  mode: string;
+  model: string;
+  input: unknown;
+  output: unknown;
+  inputEvent: Record<string, unknown> | null;
+  outputEvent: Record<string, unknown> | null;
+};
+
 type TrialDetailPanelProps = {
   trialKey: string;
   detail: Record<string, unknown> | null;
@@ -203,6 +213,60 @@ function summarizeTraceObservation(observation: unknown): string {
   return resultText ? `${observationType}: ${resultText}` : toPreviewText(observation, 360);
 }
 
+function buildModelIoViews(detail: Record<string, unknown> | null): ModelIoView[] {
+  if (!detail) {
+    return [];
+  }
+  const views = new Map<number, ModelIoView>();
+  const ensureView = (step: number): ModelIoView => {
+    const normalizedStep = Math.max(1, Number.isFinite(step) ? Math.floor(step) : 1);
+    if (!views.has(normalizedStep)) {
+      views.set(normalizedStep, {
+        step: normalizedStep,
+        mode: "-",
+        model: "-",
+        input: null,
+        output: null,
+        inputEvent: null,
+        outputEvent: null,
+      });
+    }
+    return views.get(normalizedStep) as ModelIoView;
+  };
+
+  const modelIoEvents = Array.isArray(detail.model_io_events) ? detail.model_io_events : [];
+  for (let i = 0; i < modelIoEvents.length; i += 1) {
+    const event = asRecord(modelIoEvents[i]);
+    if (!event) {
+      continue;
+    }
+    const stepCandidate = Number(event.step || 0);
+    const step = Number.isFinite(stepCandidate) && stepCandidate > 0 ? stepCandidate : i + 1;
+    const view = ensureView(step);
+    const mode = String(event.mode || "").trim();
+    const model = String(event.model || "").trim();
+    const direction = String(event.direction || "").trim().toLowerCase();
+    if (mode && view.mode === "-") {
+      view.mode = mode;
+    }
+    if (model && view.model === "-") {
+      view.model = model;
+    }
+    if (direction === "input") {
+      view.input = event.model_input ?? event.request ?? view.input;
+      view.inputEvent = event;
+    } else if (direction === "output") {
+      view.output = event.model_output ?? event.response ?? view.output;
+      view.outputEvent = event;
+    } else if (!hasDisplayValue(view.output)) {
+      view.output = event.model_output ?? event.response ?? view.output;
+      view.outputEvent = event;
+    }
+  }
+
+  return Array.from(views.values()).sort((lhs, rhs) => lhs.step - rhs.step);
+}
+
 function buildAgentStepViews(detail: Record<string, unknown> | null): AgentStepView[] {
   if (!detail) {
     return [];
@@ -266,8 +330,13 @@ function buildAgentStepViews(detail: Record<string, unknown> | null): AgentStepV
       row.mode = mode;
     }
 
-    const response = asRecord(event.response);
-    const message = asRecord(response?.message);
+    const modelOutputRaw = event.model_output ?? event.response ?? null;
+    if (typeof modelOutputRaw === "string" && modelOutputRaw.trim()) {
+      row.thought = toPreviewText(modelOutputRaw, 560);
+      continue;
+    }
+    const modelOutput = asRecord(modelOutputRaw);
+    const message = asRecord(modelOutput?.message) || modelOutput;
     const thought = message?.content;
     if (typeof thought === "string" && thought.trim()) {
       row.thought = toPreviewText(thought, 560);
@@ -383,6 +452,7 @@ export function TrialDetailPanel({
   const qaQuestionPreview = extractQuestionText(detail?.sample_input);
   const qaAnswerPreview = extractAnswerText(detail?.final_output);
   const hasQaPreview = qaQuestionPreview !== "-" || qaAnswerPreview !== "-";
+  const modelIoViews = buildModelIoViews(detail);
   const agentStepViews = buildAgentStepViews(detail);
   const attemptHistory = Array.isArray(detail?.attempt_history) ? (detail?.attempt_history as TrialAttemptRow[]) : [];
   const rawTrialSections = [
@@ -515,6 +585,39 @@ export function TrialDetailPanel({
                 ) : null}
               </div>
             </div>
+
+            {modelIoViews.length > 0 ? (
+              <div className="space-y-2 rounded-[24px] border bg-muted/15 p-4">
+                <div className="text-sm uppercase tracking-[0.14em] text-muted-foreground">Model Input / Output</div>
+                <div className="grid gap-2">
+                  {modelIoViews.map((io) => (
+                    <div key={`model-io-${io.step}`} className="rounded-2xl border bg-background p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline">step {io.step}</Badge>
+                        {io.mode !== "-" ? <Badge variant="outline">mode {io.mode}</Badge> : null}
+                        {io.model !== "-" ? <Badge variant="outline">{io.model}</Badge> : null}
+                      </div>
+                      {hasDisplayValue(io.input) ? (
+                        <div className="mt-3">
+                          <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Model input</div>
+                          <pre className="mt-1 max-h-[220px] overflow-auto rounded-xl border bg-slate-950 px-3 py-2 text-[12px] leading-6 whitespace-pre-wrap break-all text-cyan-100">
+                            {toPrettyText(io.input)}
+                          </pre>
+                        </div>
+                      ) : null}
+                      {hasDisplayValue(io.output) ? (
+                        <div className="mt-3">
+                          <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Model output</div>
+                          <pre className="mt-1 max-h-[220px] overflow-auto rounded-xl border bg-slate-950 px-3 py-2 text-[12px] leading-6 whitespace-pre-wrap break-all text-cyan-100">
+                            {toPrettyText(io.output)}
+                          </pre>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             {agentStepViews.length > 0 ? (
               <div className="space-y-2 rounded-[24px] border bg-muted/15 p-4">

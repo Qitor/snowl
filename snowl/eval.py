@@ -65,7 +65,9 @@ from snowl.project_config import (
     find_project_file,
     load_project_config,
 )
-from snowl.runtime import TrialOutcome, TrialRequest, execute_trial, execute_agent_phase, score_trial_phase
+from snowl.runtime import TrialOutcome, TrialRequest, execute_agent_phase, score_trial_phase
+from snowl.runtime.container_lifecycle import RuntimeContainerLifecycleManager
+from snowl.runtime.engine import finalize_trial_phase, prepare_trial_phase
 from snowl.runtime.resource_scheduler import ResourceScheduler
 from snowl.ui.contracts import TaskMonitor, normalize_ui_event
 from snowl.ui.input import StdinInputPump
@@ -1957,6 +1959,8 @@ async def run_eval_with_components(
     max_builds: int | None = None,
     max_scoring_tasks: int | None = None,
     provider_budgets: dict[str, int] | None = None,
+    keep_containers: bool = False,
+    keep_failed_containers: bool = False,
     max_trials: int | None = None,
     max_sandboxes: int | None = None,
     max_model_calls: int | None = None,
@@ -2150,6 +2154,13 @@ async def run_eval_with_components(
                 )
                 event_rows.append(dict(persisted_synth))
         return persisted
+
+    container_lifecycle = RuntimeContainerLifecycleManager(
+        run_id=run_id,
+        emit=lambda evt: _record_event(dict(evt)),
+        keep_containers=keep_containers,
+        keep_failed_containers=keep_failed_containers,
+    )
 
     model_profile = _build_initial_model_profile(entry_path)
     model_profile_evt = normalize_ui_event(
@@ -2448,15 +2459,20 @@ async def run_eval_with_components(
             tools=tool_specs,
             sandbox_runtime=shared_sandbox_runtime,
             on_event=_on_runtime_event,
+            container_lifecycle=container_lifecycle,
+            run_id=run_id,
+            trial_id=key,
         )
         # The current main eval path admits a whole trial under the running slot.
         # `execute_agent_phase(request)` will still do prepare work internally, so
         # prepare is not independently scheduled here yet.
         async with scheduler.running_trial_slot():
-            partial = await execute_agent_phase(request)
+            prepared = await prepare_trial_phase(request)
+            partial = await execute_agent_phase(prepared)
         # Scoring is the one phase the main loop currently admits separately.
         async with scheduler.scoring_slot():
-            outcome = await score_trial_phase(request, partial)
+            outcome = await score_trial_phase(prepared, partial)
+        outcome, _ = await finalize_trial_phase(prepared, outcome)
 
         async with checkpoint_lock:
             attempt_row = _record_recovery_attempt(
@@ -2634,6 +2650,7 @@ async def run_eval_with_components(
             renderer.render_runtime_event(retry_scheduled_evt)
 
     cancelled_reason: str | None = None
+    container_cleanup_summary: dict[str, Any] = {}
     try:
         while fresh_queue or recovery_queue or inflight:
             while len(inflight) < max_inflight_trials:
@@ -2717,6 +2734,11 @@ async def run_eval_with_components(
     finally:
         interaction_stop.set()
         runtime_state_stop.set()
+        if inflight:
+            for task in inflight:
+                task.cancel()
+            await asyncio.gather(*inflight, return_exceptions=True)
+            inflight.clear()
         if interaction_task is not None:
             interaction_task.cancel()
             try:
@@ -2730,6 +2752,10 @@ async def run_eval_with_components(
             pass
         if input_pump is not None:
             input_pump.stop()
+        container_cleanup_summary = await container_lifecycle.cleanup_run(
+            reason=(cancelled_reason or "run_finally"),
+        )
+        _log(f"container_cleanup {json.dumps(container_cleanup_summary, ensure_ascii=False)}")
         if cancelled_reason is not None:
             ended_ts = int(datetime.now(timezone.utc).timestamp() * 1000)
             runtime_state_writer.mark_cancelled(reason=cancelled_reason, ts_ms=ended_ts)
@@ -2781,6 +2807,7 @@ async def run_eval_with_components(
             "limit_exceeded": summary.limit_exceeded,
             "cancelled": summary.cancelled,
         },
+        "container_cleanup": dict(container_cleanup_summary),
         "interaction": {
             "controller_state": (
                 {
@@ -2869,6 +2896,8 @@ async def run_eval(
     max_builds: int | None = None,
     max_scoring_tasks: int | None = None,
     provider_budgets: dict[str, int] | None = None,
+    keep_containers: bool = False,
+    keep_failed_containers: bool = False,
     max_trials: int | None = None,
     max_sandboxes: int | None = None,
     max_model_calls: int | None = None,
@@ -2905,6 +2934,8 @@ async def run_eval(
         max_builds=max_builds,
         max_scoring_tasks=max_scoring_tasks,
         provider_budgets=provider_budgets,
+        keep_containers=keep_containers,
+        keep_failed_containers=keep_failed_containers,
         max_trials=max_trials,
         max_sandboxes=max_sandboxes,
         max_model_calls=max_model_calls,
@@ -2930,6 +2961,8 @@ async def retry_run(
     max_builds: int | None = None,
     max_scoring_tasks: int | None = None,
     provider_budgets: dict[str, int] | None = None,
+    keep_containers: bool = False,
+    keep_failed_containers: bool = False,
     experiment_id: str | None = None,
     on_run_bootstrap: Callable[[EvalRunBootstrap], None] | None = None,
 ) -> EvalRunResult:
@@ -2979,6 +3012,8 @@ async def retry_run(
             max_builds=max_builds,
             max_scoring_tasks=max_scoring_tasks,
             provider_budgets=provider_budgets,
+            keep_containers=keep_containers,
+            keep_failed_containers=keep_failed_containers,
             project_config=project_config,
             experiment_id=experiment_id or str(manifest.get("experiment_id") or run_id),
             on_run_bootstrap=on_run_bootstrap,
@@ -3005,6 +3040,8 @@ async def retry_run(
         max_builds=max_builds,
         max_scoring_tasks=max_scoring_tasks,
         provider_budgets=provider_budgets,
+        keep_containers=keep_containers,
+        keep_failed_containers=keep_failed_containers,
         project_config=project_config,
         experiment_id=experiment_id or str(manifest.get("experiment_id") or run_id),
         on_run_bootstrap=on_run_bootstrap,

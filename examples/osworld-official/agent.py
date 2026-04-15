@@ -365,15 +365,22 @@ class OSWorldOfficialAgent:
         event_emitter = context.metadata.get("__snowl_emit_event")
         emit = event_emitter if callable(event_emitter) else (lambda *_args, **_kwargs: None)
         container_session = context.metadata.get("__snowl_container_session")
+        runtime_container_spec = dict(context.metadata.get("__snowl_runtime_container_spec", {}) or {})
         sample = dict(context.metadata.get("sample", {}))
         sample_meta = dict(sample.get("metadata", {}))
         variant_id = str(context.metadata.get("variant_id") or "default")
+        requires_runtime_container = bool(runtime_container_spec.get("requires_container", True))
 
         managed_env = (
             getattr(container_session, "env", None)
             if getattr(container_session, "kind", "") == "gui_container"
             else None
         )
+        if requires_runtime_container and managed_env is None:
+            raise RuntimeError(
+                "OSWorld task requires a runtime-managed container session, but engine/runtime did not inject one. "
+                "This is a runtime contract violation; do not start containers from the agent."
+            )
         env = (
             managed_env
             if managed_env is not None
@@ -418,15 +425,8 @@ class OSWorldOfficialAgent:
         run_error: Exception | None = None
 
         try:
-            if not managed_by_runtime:
+            if managed_by_runtime:
                 emit({"event": "osworld.container.config", "image": str(OSWORLD_SETTINGS.get("image", "happysixd/osworld-docker"))})
-                emit({"event": "osworld.container.starting"})
-                start_evt = env.start_container(
-                    image=str(OSWORLD_SETTINGS.get("image", "happysixd/osworld-docker")),
-                    cap_add=_resolve_cap_add(),
-                )
-                trace_events.append(start_evt)
-                emit({"event": "osworld.container.started", "exit_code": start_evt.get("exit_code"), "ready": start_evt.get("ready")})
 
             if record_enabled:
                 rec_start = env.start_recording()
@@ -528,9 +528,34 @@ class OSWorldOfficialAgent:
                 request_messages.append({"role": "user", "content": user_content})
                 emit(
                     {
+                        "event": "runtime.model.io",
+                        "phase": "agent",
+                        "model": getattr(self._client, "model", None),
+                        "base_url": getattr(self._client, "base_url", None),
+                        "provider_id": getattr(self._client, "provider_id", None),
+                        "step": step,
+                        "direction": "input",
+                        "message": "model input captured before provider call",
+                        "model_input": {
+                            "messages": _sanitize_messages_for_log(request_messages),
+                            "observation_meta": observation_meta,
+                            "generation_kwargs": {"temperature": self.temperature},
+                        },
+                        "request": {
+                            "messages": _sanitize_messages_for_log(request_messages),
+                            "observation_meta": observation_meta,
+                            "generation_kwargs": {"temperature": self.temperature},
+                        },
+                    }
+                )
+                emit(
+                    {
                         "event": "runtime.model.query.start",
                         "phase": "agent",
                         "model": getattr(self._client, "model", None),
+                        "base_url": getattr(self._client, "base_url", None),
+                        "provider_id": getattr(self._client, "provider_id", None),
+                        "message": "waiting for provider response",
                     }
                 )
                 try:
@@ -544,6 +569,8 @@ class OSWorldOfficialAgent:
                             "event": "runtime.model.query.error",
                             "phase": "error",
                             "model": getattr(self._client, "model", None),
+                            "base_url": getattr(self._client, "base_url", None),
+                            "provider_id": getattr(self._client, "provider_id", None),
                             "message": str(exc),
                         }
                     )
@@ -556,6 +583,8 @@ class OSWorldOfficialAgent:
                         "input_tokens": int(getattr(response.usage, "input_tokens", 0)),
                         "output_tokens": int(getattr(response.usage, "output_tokens", 0)),
                         "total_tokens": int(getattr(response.usage, "total_tokens", 0)),
+                        "base_url": getattr(self._client, "base_url", None),
+                        "provider_id": getattr(self._client, "provider_id", None),
                     }
                 )
                 emit(
@@ -563,13 +592,12 @@ class OSWorldOfficialAgent:
                         "event": "runtime.model.io",
                         "phase": "agent",
                         "model": getattr(self._client, "model", None),
+                        "base_url": getattr(self._client, "base_url", None),
+                        "provider_id": getattr(self._client, "provider_id", None),
                         "step": step,
-                        "message": "full model request/response captured",
-                        "request": {
-                            "messages": _sanitize_messages_for_log(request_messages),
-                            "observation_meta": observation_meta,
-                            "generation_kwargs": {"temperature": self.temperature},
-                        },
+                        "direction": "output",
+                        "message": "model output captured after provider response",
+                        "model_output": dict(response.message),
                         "response": {
                             "message": dict(response.message),
                             "raw": dict(response.raw),
@@ -784,12 +812,6 @@ class OSWorldOfficialAgent:
                             "bytes": int(rec_stop.get("bytes") or 0),
                         }
                     )
-            if not managed_by_runtime:
-                emit({"event": "osworld.container.stopping"})
-                stop_evt = env.stop_container()
-                trace_events.append(stop_evt)
-                emit({"event": "osworld.container.stopped", "exit_code": stop_evt.get("exit_code")})
-
             state.output = {
                 "message": {"role": "assistant", "content": latest_observation},
                 "usage": usage_total,

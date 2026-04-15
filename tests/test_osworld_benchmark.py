@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
 import sys
@@ -9,7 +10,8 @@ import pytest
 
 from snowl.bench import check_benchmark_conformance, list_benchmarks
 from snowl.benchmarks.osworld import OSWorldBenchmarkAdapter, OSWorldScorer
-from snowl.core import EnvSpec, ScoreContext, TaskResult, TaskStatus
+from snowl.core import AgentContext, AgentState, EnvSpec, ScoreContext, TaskResult, TaskStatus
+from snowl.model import OpenAICompatibleConfig
 from snowl.envs import GuiEnv
 from snowl.tools import build_gui_tools
 
@@ -329,3 +331,40 @@ def test_osworld_observation_frames_are_variant_scoped(tmp_path: Path, monkeypat
     assert "sample-1" in out
     assert "model-a" in out
     assert Path(out).exists()
+
+
+def test_osworld_official_agent_requires_runtime_managed_container() -> None:
+    root = Path(__file__).resolve().parents[1]
+    path = root / "examples" / "osworld-official" / "agent.py"
+    module_name = "example_osw_agent_runtime_contract"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+
+    agent = module.OSWorldOfficialAgent(
+        model_config=OpenAICompatibleConfig(
+            base_url="https://example.com/v1",
+            api_key="sk-test",
+            model="test-model",
+            timeout=30,
+            max_retries=0,
+        )
+    )
+    context = AgentContext(
+        task_id="osworld:test",
+        sample_id="osw-s1",
+        metadata={
+            "sample": {"id": "osw-s1", "input": "do task", "metadata": {}},
+            "__snowl_runtime_container_spec": {
+                "benchmark": "osworld",
+                "provider_name": "osworld",
+                "requires_container": True,
+            },
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="runtime-managed container session"):
+        asyncio.run(agent.run(AgentState(messages=[{"role": "user", "content": "go"}]), context))

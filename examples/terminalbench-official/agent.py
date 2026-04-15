@@ -215,9 +215,33 @@ class TerminusOfficialAgent:
         for parse_attempt in range(1, self.max_parse_retries + 1):
             emit(
                 {
+                    "event": "runtime.model.io",
+                    "phase": "agent",
+                    "direction": "input",
+                    "message": "model input captured before provider call",
+                    "model": getattr(client, "model", None),
+                    "base_url": getattr(client, "base_url", None),
+                    "provider_id": getattr(client, "provider_id", None),
+                    "episode": episode,
+                    "parse_attempt": parse_attempt,
+                    "model_input": {
+                        "messages": list(traj),
+                        "generation_kwargs": {"temperature": self.temperature},
+                    },
+                    "request": {
+                        "messages": list(traj),
+                        "generation_kwargs": {"temperature": self.temperature},
+                    },
+                }
+            )
+            emit(
+                {
                     "event": "runtime.model.query.start",
                     "phase": "agent",
                     "model": getattr(client, "model", None),
+                    "base_url": getattr(client, "base_url", None),
+                    "provider_id": getattr(client, "provider_id", None),
+                    "message": "waiting for provider response",
                     "episode": episode,
                     "parse_attempt": parse_attempt,
                 }
@@ -233,6 +257,8 @@ class TerminusOfficialAgent:
                         "event": "runtime.model.query.error",
                         "phase": "error",
                         "model": getattr(client, "model", None),
+                        "base_url": getattr(client, "base_url", None),
+                        "provider_id": getattr(client, "provider_id", None),
                         "message": str(exc),
                         "episode": episode,
                         "parse_attempt": parse_attempt,
@@ -247,8 +273,33 @@ class TerminusOfficialAgent:
                     "input_tokens": int(getattr(resp.usage, "input_tokens", 0)),
                     "output_tokens": int(getattr(resp.usage, "output_tokens", 0)),
                     "total_tokens": int(getattr(resp.usage, "total_tokens", 0)),
+                    "base_url": getattr(client, "base_url", None),
+                    "provider_id": getattr(client, "provider_id", None),
                     "episode": episode,
                     "parse_attempt": parse_attempt,
+                }
+            )
+            emit(
+                {
+                    "event": "runtime.model.io",
+                    "phase": "agent",
+                    "direction": "output",
+                    "message": "model output captured after provider response",
+                    "model": getattr(client, "model", None),
+                    "base_url": getattr(client, "base_url", None),
+                    "provider_id": getattr(client, "provider_id", None),
+                    "episode": episode,
+                    "parse_attempt": parse_attempt,
+                    "model_output": dict(resp.message),
+                    "response": {
+                        "message": dict(resp.message),
+                        "raw": dict(resp.raw),
+                        "usage": {
+                            "input_tokens": int(getattr(resp.usage, "input_tokens", 0)),
+                            "output_tokens": int(getattr(resp.usage, "output_tokens", 0)),
+                            "total_tokens": int(getattr(resp.usage, "total_tokens", 0)),
+                        },
+                    },
                 }
             )
             usage_total["input_tokens"] += resp.usage.input_tokens
@@ -285,12 +336,19 @@ class TerminusOfficialAgent:
         event_emitter = context.metadata.get("__snowl_emit_event")
         emit = event_emitter if callable(event_emitter) else (lambda *_args, **_kwargs: None)
         container_session = context.metadata.get("__snowl_container_session")
+        runtime_container_spec = dict(context.metadata.get("__snowl_runtime_container_spec", {}) or {})
         client = self._ensure_client()
+        requires_runtime_container = bool(runtime_container_spec.get("requires_container"))
         managed_env = (
             getattr(container_session, "env", None)
             if getattr(container_session, "kind", "") == "terminal_compose"
             else None
         )
+        if requires_runtime_container and managed_env is None:
+            raise RuntimeError(
+                "TerminalBench task requires a runtime-managed container session, but engine/runtime did not inject one. "
+                "This is a runtime contract violation; do not start compose from the agent."
+            )
         env = managed_env if managed_env is not None else self._build_env(context)
         managed_by_runtime = managed_env is not None
         sample = dict(context.metadata.get("sample", {}))
@@ -330,35 +388,23 @@ class TerminusOfficialAgent:
             emit(payload)
 
         try:
-            if env.use_docker_compose and not managed_by_runtime:
+            if managed_by_runtime:
                 emit(
                     {
                         "event": "terminalbench.container.config",
                         "compose_file": env.compose_file,
                         "project": env.compose_project,
-                        "service": env.compose_service,
-                        "compose_build": env.compose_build,
+                        "service": getattr(env, "compose_service", None),
+                        "compose_build": getattr(env, "compose_build", None),
                         "env_injected": {
-                            "client_container": env.compose_env.get("T_BENCH_TASK_DOCKER_CLIENT_CONTAINER_NAME"),
-                            "client_image": env.compose_env.get("T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME"),
-                            "test_dir": env.compose_env.get("T_BENCH_TEST_DIR"),
-                            "task_logs": env.compose_env.get("T_BENCH_TASK_LOGS_PATH"),
-                            "agent_logs": env.compose_env.get("T_BENCH_TASK_AGENT_LOGS_PATH"),
+                            "client_container": getattr(env, "compose_env", {}).get("T_BENCH_TASK_DOCKER_CLIENT_CONTAINER_NAME"),
+                            "client_image": getattr(env, "compose_env", {}).get("T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME"),
+                            "test_dir": getattr(env, "compose_env", {}).get("T_BENCH_TEST_DIR"),
+                            "task_logs": getattr(env, "compose_env", {}).get("T_BENCH_TASK_LOGS_PATH"),
+                            "agent_logs": getattr(env, "compose_env", {}).get("T_BENCH_TASK_AGENT_LOGS_PATH"),
                         },
                     }
                 )
-                emit_cmd("terminalbench.container.starting", None, compose_file=env.compose_file, project=env.compose_project)
-                up_out = env.compose_up(on_event=emit_env_stream)
-                trace_events.append(up_out)
-                build_out = up_out.get("build")
-                if isinstance(build_out, Mapping):
-                    emit_cmd("terminalbench.container.build", build_out, project=env.compose_project)
-                emit_cmd("terminalbench.container.started", up_out, project=env.compose_project)
-                if up_out.get("exit_code", 1) != 0:
-                    raise RuntimeError(
-                        "terminalbench docker compose up failed: "
-                        + str((up_out.get("stderr") or up_out.get("stdout") or "").strip())
-                    )
             elif not env.use_docker_compose:
                 emit(
                     {
@@ -487,11 +533,7 @@ class TerminusOfficialAgent:
                     {"event": "terminalbench.parser_results", "parser_results": parser_results}
                 )
         finally:
-            if env.use_docker_compose and not managed_by_runtime:
-                emit_cmd("terminalbench.container.stopping", None, project=env.compose_project)
-                down_out = env.compose_down(on_event=emit_env_stream)
-                trace_events.append(down_out)
-                emit_cmd("terminalbench.container.stopped", down_out, project=env.compose_project)
+            pass
 
         state.output = {
             "message": {"role": "assistant", "content": test_output},

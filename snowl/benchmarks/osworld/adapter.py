@@ -133,6 +133,12 @@ class OSWorldBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
             "source": example.get("source"),
             "example_path": str(file_path),
             "task_config": dict(example),
+            "runtime_container": {
+                "benchmark": "osworld",
+                "provider_name": "osworld",
+                "requires_container": True,
+                "cleanup_policy": "destroy_on_release",
+            },
         }
         return {
             "id": f"osw-{domain}-{example_id}",

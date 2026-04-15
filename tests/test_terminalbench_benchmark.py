@@ -243,6 +243,7 @@ class _FakeModelClient:
         self.calls += 1
         return SimpleNamespace(
             message={"role": "assistant", "content": content},
+            raw={"message": {"role": "assistant", "content": content}},
             usage=SimpleNamespace(input_tokens=1, output_tokens=1, total_tokens=2),
         )
 
@@ -252,6 +253,9 @@ class _FakeTerminalEnv:
         self.use_docker_compose = False
         self.compose_project = "fake-proj"
         self.compose_file = None
+        self.compose_service = "client"
+        self.compose_build = False
+        self.compose_env = {}
         self.sent: list[dict[str, object]] = []
         self._captures = list(captures) if captures is not None else ["terminal-state"]
         self._capture_index = 0
@@ -300,6 +304,11 @@ def _build_context(tmp_path: Path, env: _FakeTerminalEnv, events: list[dict[str,
             "sample": sample,
             "__snowl_emit_event": lambda evt: events.append(dict(evt)),
             "__snowl_container_session": SimpleNamespace(kind="terminal_compose", env=env),
+            "__snowl_runtime_container_spec": {
+                "benchmark": "terminalbench",
+                "provider_name": "terminalbench",
+                "requires_container": True,
+            },
         },
     )
 
@@ -393,6 +402,38 @@ def test_terminalbench_official_agent_records_raw_model_traj(tmp_path: Path) -> 
         },
     ]
     assert "solve task" in str(traj[0]["content"])
+
+
+def test_terminalbench_official_agent_requires_runtime_managed_container(tmp_path: Path) -> None:
+    module = _load_terminalbench_official_agent_module()
+    agent = module.TerminusOfficialAgent(model_config=_terminal_model_config(), max_episodes=1)
+    agent._client = _FakeModelClient(["{}"])
+
+    sample = {
+        "id": "tb-s1",
+        "input": "solve task",
+        "metadata": {
+            "task_id": "tb-task",
+            "task_root": str(tmp_path),
+            "run_tests_path": "",
+            "docker_compose_path": "",
+        },
+    }
+    context = AgentContext(
+        task_id="terminalbench:test",
+        sample_id="tb-s1",
+        metadata={
+            "sample": sample,
+            "__snowl_runtime_container_spec": {
+                "benchmark": "terminalbench",
+                "provider_name": "terminalbench",
+                "requires_container": True,
+            },
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="runtime-managed container session"):
+        asyncio.run(agent.run(AgentState(messages=[{"role": "user", "content": "go"}]), context))
 
 
 def test_terminalbench_official_agent_uses_official_message_history_progression(tmp_path: Path) -> None:

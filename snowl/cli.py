@@ -597,6 +597,8 @@ def _cmd_eval(
     max_builds: int | None,
     max_scoring_tasks: int | None,
     provider_budget: list[str] | None,
+    keep_containers: bool,
+    keep_failed_containers: bool,
     ui_refresh_ms: int | None,
     ui_max_events: int | None,
     ui_max_failures: int | None,
@@ -679,6 +681,8 @@ def _cmd_eval(
                     max_builds=max_builds,
                     max_scoring_tasks=max_scoring_tasks,
                     provider_budgets=_parse_provider_budgets(provider_budget),
+                    keep_containers=keep_containers,
+                    keep_failed_containers=keep_failed_containers,
                     experiment_id=experiment_id,
                     on_run_bootstrap=_on_run_bootstrap,
                 )
@@ -721,6 +725,8 @@ def _cmd_retry(
     max_builds: int | None,
     max_scoring_tasks: int | None,
     provider_budget: list[str] | None,
+    keep_containers: bool,
+    keep_failed_containers: bool,
     ui_refresh_ms: int | None,
     ui_max_events: int | None,
     ui_max_failures: int | None,
@@ -786,6 +792,8 @@ def _cmd_retry(
                     max_builds=max_builds,
                     max_scoring_tasks=max_scoring_tasks,
                     provider_budgets=_parse_provider_budgets(provider_budget),
+                    keep_containers=keep_containers,
+                    keep_failed_containers=keep_failed_containers,
                     experiment_id=experiment_id,
                     on_run_bootstrap=_on_run_bootstrap,
                 )
@@ -846,6 +854,8 @@ def _cmd_bench_run(
     max_builds: int | None,
     max_scoring_tasks: int | None,
     provider_budget: list[str] | None,
+    keep_containers: bool,
+    keep_failed_containers: bool,
     ui_refresh_ms: int | None,
     ui_max_events: int | None,
     ui_max_failures: int | None,
@@ -924,6 +934,8 @@ def _cmd_bench_run(
                     max_builds=max_builds,
                     max_scoring_tasks=max_scoring_tasks,
                     provider_budgets=_parse_provider_budgets(provider_budget),
+                    keep_containers=keep_containers,
+                    keep_failed_containers=keep_failed_containers,
                     experiment_id=experiment_id,
                     on_run_bootstrap=_on_run_bootstrap,
                 )
@@ -1064,6 +1076,16 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser.add_argument("--max-builds", type=int, default=None, help="Max concurrent container/image builds.")
     eval_parser.add_argument("--max-scoring-tasks", type=int, default=None, help="Max concurrent scoring tasks.")
     eval_parser.add_argument(
+        "--keep-containers",
+        action="store_true",
+        help="Preserve runtime-owned containers after the run for debugging.",
+    )
+    eval_parser.add_argument(
+        "--keep-failed-containers",
+        action="store_true",
+        help="Preserve runtime-owned containers only for non-success trials.",
+    )
+    eval_parser.add_argument(
         "--provider-budget",
         action="append",
         default=None,
@@ -1128,6 +1150,16 @@ def build_parser() -> argparse.ArgumentParser:
     retry_parser.add_argument("--max-container-slots", type=int, default=None, help="Max concurrent container/sandbox slots.")
     retry_parser.add_argument("--max-builds", type=int, default=None, help="Max concurrent container/image builds.")
     retry_parser.add_argument("--max-scoring-tasks", type=int, default=None, help="Max concurrent scoring tasks.")
+    retry_parser.add_argument(
+        "--keep-containers",
+        action="store_true",
+        help="Preserve runtime-owned containers after the retry session for debugging.",
+    )
+    retry_parser.add_argument(
+        "--keep-failed-containers",
+        action="store_true",
+        help="Preserve runtime-owned containers only for non-success retry trials.",
+    )
     retry_parser.add_argument(
         "--provider-budget",
         action="append",
@@ -1215,6 +1247,16 @@ def build_parser() -> argparse.ArgumentParser:
     bench_run.add_argument("--max-container-slots", type=int, default=None, help="Max concurrent container/sandbox slots.")
     bench_run.add_argument("--max-builds", type=int, default=None, help="Max concurrent container/image builds.")
     bench_run.add_argument("--max-scoring-tasks", type=int, default=None, help="Max concurrent scoring tasks.")
+    bench_run.add_argument(
+        "--keep-containers",
+        action="store_true",
+        help="Preserve runtime-owned containers after benchmark run for debugging.",
+    )
+    bench_run.add_argument(
+        "--keep-failed-containers",
+        action="store_true",
+        help="Preserve runtime-owned containers only for non-success benchmark trials.",
+    )
     bench_run.add_argument(
         "--provider-budget",
         action="append",
@@ -1313,6 +1355,8 @@ def main(argv: list[str] | None = None) -> int:
             max_builds=args.max_builds,
             max_scoring_tasks=args.max_scoring_tasks,
             provider_budget=args.provider_budget,
+            keep_containers=bool(args.keep_containers),
+            keep_failed_containers=bool(args.keep_failed_containers),
             ui_refresh_ms=args.ui_refresh_ms,
             ui_max_events=args.ui_max_events,
             ui_max_failures=args.ui_max_failures,
@@ -1349,6 +1393,8 @@ def main(argv: list[str] | None = None) -> int:
                 max_builds=args.max_builds,
                 max_scoring_tasks=args.max_scoring_tasks,
                 provider_budget=args.provider_budget,
+                keep_containers=bool(args.keep_containers),
+                keep_failed_containers=bool(args.keep_failed_containers),
                 ui_refresh_ms=args.ui_refresh_ms,
                 ui_max_events=args.ui_max_events,
                 ui_max_failures=args.ui_max_failures,
@@ -1381,6 +1427,8 @@ def main(argv: list[str] | None = None) -> int:
             max_builds=args.max_builds,
             max_scoring_tasks=args.max_scoring_tasks,
             provider_budget=args.provider_budget,
+            keep_containers=bool(args.keep_containers),
+            keep_failed_containers=bool(args.keep_failed_containers),
             ui_refresh_ms=args.ui_refresh_ms,
             ui_max_events=args.ui_max_events,
             ui_max_failures=args.ui_max_failures,
