@@ -1,3 +1,13 @@
+export type ModelMetadata = {
+  company?: string;
+  country?: string;
+  source_type?: "open_source" | "closed_source";
+  license_type?: string;
+  reasoning?: "none" | "low" | "medium" | "high" | "unknown";
+  model_family?: string;
+  release_channel?: string;
+};
+
 export type ExperimentRow = {
   experiment_id: string;
   run_count: number;
@@ -33,6 +43,7 @@ export type RunRow = {
   recovered_trials?: number;
   still_failing_trials?: number;
   unfinished_trials?: number;
+  model_metadata?: ModelMetadata;
 };
 
 export type RunSnapshot = {
@@ -91,6 +102,7 @@ export type IdentitySummaryRow = {
   status_counts?: Record<string, number>;
   scored_trials?: number;
   metric_counts?: Record<string, number>;
+  model_metadata?: ModelMetadata;
 };
 
 export type RunSummaryResponse = {
@@ -176,4 +188,44 @@ export type TrialAttemptRow = {
   superseded_by_attempt_id?: string | null;
   retry_source?: string | null;
   scores?: Record<string, unknown>;
+};
+
+export type DomainOverview = {
+  domain: string;
+  capability_score: number;
+  safety_score: number;
+  risk_index: number;
+  benchmark_count: number;
+  model_count: number;
+  benchmarks: BenchmarkSummary[];
+};
+
+export type BenchmarkSummary = {
+  name: string;
+  display_name: string;
+  domain: string;
+  benchmark_type: "capability" | "safety";
+  family: string;
+  primary_metric: string;
+  higher_is_better: boolean;
+  sample_preview_mode: string;
+  dashboard_tags: string[];
+  models_evaluated: number;
+  latest_run_id: string | null;
+};
+
+export type LeaderboardRow = {
+  model: string;
+  domain: string;
+  benchmark_type: "capability" | "safety";
+  primary_metric_mean: number;
+  rank: number;
+  benchmarks_evaluated: number;
+  model_metadata: ModelMetadata | null;
+};
+
+export type BenchmarkSample = {
+  id: string;
+  input_preview: string;
+  metadata: Record<string, unknown>;
 };

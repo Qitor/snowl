@@ -14,10 +14,13 @@ Snowl currently supports:
 - Multi-model sweeps through `agent_matrix.models`, expanded into `AgentVariant`s.
 - One active scorer per trial.
 - Built-in benchmark adapters for `strongreject`, `terminalbench`, `osworld`, `toolemu`, `agentsafetybench`, plus generic `jsonl` and `csv`.
+- Third-party/local benchmark adapters can be loaded with `--adapter module.py:object`; `snowl bench scaffold` creates a JSONL-oriented adapter template.
+- `snowl suite check` and `snowl suite run` execute a simple sequential multi-benchmark suite and write `.snowl/suites/<suite_run_id>/suite_summary.json`.
 - Built-in baseline agents in `snowl/agents/chat_agent.py` and `snowl/agents/react_agent.py`.
 - Run artifacts under `.snowl/runs/<run_id>/`.
 - Plain CLI eval flow plus an auto-started web monitor sidecar.
 - Recovery via `snowl retry <run_id>` and deferred in-run auto-retry for non-success trials.
+- Internal eval control-plane helpers for normalized specs, planning, runtime policy, artifact writing, event persistence, trial lifecycle, and recovery. These helpers are not public extension APIs yet.
 
 ### Runtime and Scheduler
 
@@ -39,6 +42,7 @@ What works well today:
 - Repo-level `run_eval()` now performs trial finalize and a run-end cleanup barrier before closing live event output.
 - Deferred auto-retry and manual `snowl retry` both reuse a recovery ledger instead of inventing a separate retry system.
 - Live observability artifacts are written early enough for the monitor to show running runs before completion.
+- `run_eval_with_components()` still owns queue orchestration, while one-trial prepare/execute/score/finalize side effects are routed through an internal `EvalTrialLifecycle` helper.
 
 ## Runtime / Scheduler Status By Topic
 
@@ -83,6 +87,7 @@ These areas are real, but still coarse or inconsistent:
 - The main dispatch loop is still close to FIFO: it drains `fresh_queue` in plan order, then consumes deferred retries when ready.
 - Provider capacity is enforced at model-call admission time, not by a scheduler that prioritizes work based on provider headroom.
 - Task/sample rows may still carry raw benchmark startup fields such as compose paths or OSWorld settings, but runtime ownership decisions should come from the normalized `runtime_container` contract.
+- `EvalSpec`, `PlanBuilder`, `RuntimePolicy`, `RunArtifactStore`, `RunEventBus`, `EvalTrialLifecycle`, and `RecoveryManager` are internal boundaries. They stabilize code organization but do not yet define plugin or YAML v2 contracts.
 
 ## Known Bottlenecks
 
@@ -110,6 +115,8 @@ These look limited because they are deliberate scope choices for now:
 - One provider block per project.
 - One scorer per trial.
 - Generic benchmark adapters (`jsonl`, `csv`) stay simple and local instead of introducing plugin infrastructure first.
+- External benchmark adapters are local-file based only; there is no package marketplace, dependency installer, or remote plugin trust model yet.
+- Suite execution is sequential. There is no cross-benchmark scheduler or shared admission policy beyond the runtime settings passed into each child benchmark run.
 - Auto web monitor startup is operator-focused and local; it is not a remote service.
 
 ## Planned But Not Implemented

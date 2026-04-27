@@ -5,7 +5,7 @@ Framework role:
 - Expands `Task x AgentVariant x Sample`, resolves runtime budgets, wires provider admission, and drives the trial dispatch loop.
 
 Runtime/usage wiring:
-- Calls `execute_agent_phase` and `score_trial_phase` directly in the main loop; this is why eval-loop behavior can diverge from `execute_trial` convenience APIs.
+- Uses `EvalTrialLifecycle` for one-trial prepare/execute/score/finalize while retaining queue and retry orchestration here.
 - Writes live artifacts (`manifest.json`, `plan.json`, `events.jsonl`, `runtime_state.json`) that power CLI/Web observability.
 - Owns retry orchestration (`auto_retry` queue + `snowl retry` recovery ledger).
 - Key top-level symbols in this file: `EvalRenderer`, `PlanTrial`, `EvalPlan`, `EvalSummary`, `EvalRunResult`, `EvalRunBootstrap`.
@@ -18,7 +18,6 @@ Change guardrails:
 from __future__ import annotations
 
 import asyncio
-import csv
 import importlib.util
 import inspect
 import json
@@ -26,7 +25,6 @@ import hashlib
 import os
 import re
 import sys
-import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,11 +32,11 @@ from types import ModuleType
 from typing import Any, Callable, Protocol, TypeVar
 
 from snowl.aggregator import (
-    AGGREGATE_SCHEMA_URI,
     RESULT_SCHEMA_URI,
     RESULT_SCHEMA_VERSION,
     aggregate_outcomes,
 )
+from snowl.artifacts import RunArtifactStore
 from snowl.core import (
     Agent,
     AgentVariant,
@@ -57,7 +55,15 @@ from snowl.core.declarations import Declaration, get_declaration, has_declaratio
 from snowl.errors import SnowlValidationError
 from snowl.envs import WarmPoolSandboxRuntime
 from snowl.envs.terminal_env import set_compose_build_slot_factory
+from snowl.eval_loop import EvalTrialLifecycle
+from snowl.eval_spec import EvalSpec
 from snowl.model import OpenAICompatibleChatClient
+from snowl.observability.events import (
+    RunEventBus,
+    count_existing_events,
+    derive_pretask_events as _derive_pretask_events,
+)
+from snowl.planning import EvalPlan, PlanBuilder, PlanTrial, trial_key as make_trial_key, trial_models
 from snowl.project_config import (
     ProjectCodeConfig,
     ProjectConfig,
@@ -65,10 +71,12 @@ from snowl.project_config import (
     find_project_file,
     load_project_config,
 )
-from snowl.runtime import TrialOutcome, TrialRequest, execute_agent_phase, score_trial_phase
+from snowl.runtime import TrialOutcome
 from snowl.runtime.container_lifecycle import RuntimeContainerLifecycleManager
-from snowl.runtime.engine import finalize_trial_phase, prepare_trial_phase
+from snowl.runtime.policy import RuntimePolicy, benchmark_name_for_task
+from snowl.runtime.recovery import RecoveryManager, recovery_retry_allowed
 from snowl.runtime.resource_scheduler import ResourceScheduler
+from snowl.runtime.results import outcome_from_serialized, to_serializable_outcome
 from snowl.ui.contracts import TaskMonitor, normalize_ui_event
 from snowl.ui.input import StdinInputPump
 
@@ -89,28 +97,6 @@ class EvalRenderer(Protocol):
     def render_runtime_event(self, event: dict[str, Any]) -> None: ...
 
     def render_summary(self, summary: "EvalSummary", artifacts_dir: str, rerun_cmd: str) -> None: ...
-
-
-@dataclass(frozen=True)
-class PlanTrial:
-    task: Task
-    agent: Agent
-    sample: dict[str, Any]
-    task_id: str
-    agent_id: str
-    variant_id: str
-    model: str | None
-    sample_id: str | None
-
-
-@dataclass(frozen=True)
-class EvalPlan:
-    mode: str
-    task_ids: list[str]
-    agent_ids: list[str]
-    variant_ids: list[str]
-    sample_count: int
-    trials: list[PlanTrial]
 
 
 @dataclass(frozen=True)
@@ -522,68 +508,6 @@ def _select_by_id(items: list[TItem], ids: list[str] | None, id_getter) -> list[
     return selected
 
 
-def _build_plan(tasks: list[Task], agents: list[Agent]) -> EvalPlan:
-    task_ids = [t.task_id for t in tasks]
-    agent_ids = sorted({getattr(a, "agent_id") for a in agents})
-    variant_ids = sorted({str(getattr(a, "variant_id", "default")) for a in agents})
-
-    sample_buckets: list[tuple[Task, list[dict[str, Any]]]] = []
-    sample_count = 0
-    for task in tasks:
-        samples = [dict(sample) for sample in task.iter_samples()]
-        sample_count += len(samples)
-        sample_buckets.append((task, samples))
-
-    trials: list[PlanTrial] = []
-    for task, samples in sample_buckets:
-        for sample in samples:
-            sample_id = str(sample.get("id")) if sample.get("id") is not None else None
-            for agent in agents:
-                trials.append(
-                    PlanTrial(
-                        task=task,
-                        agent=agent,
-                        sample=sample,
-                        task_id=task.task_id,
-                        agent_id=getattr(agent, "agent_id"),
-                        variant_id=str(getattr(agent, "variant_id", "default")),
-                        model=(
-                            str(getattr(agent, "model"))
-                            if getattr(agent, "model", None) is not None
-                            else None
-                        ),
-                        sample_id=sample_id,
-                    )
-                )
-
-    if len(task_ids) == 1 and len(agent_ids) == 1 and len(variant_ids) == 1:
-        mode = "single"
-    elif len(task_ids) > 1 and len(agent_ids) == 1 and len(variant_ids) == 1:
-        mode = "task_sweep"
-    elif len(task_ids) == 1 and (len(agent_ids) > 1 or len(variant_ids) > 1):
-        mode = "agent_compare"
-    else:
-        mode = "matrix"
-
-    return EvalPlan(
-        mode=mode,
-        task_ids=task_ids,
-        agent_ids=agent_ids,
-        variant_ids=variant_ids,
-        sample_count=sample_count,
-        trials=trials,
-    )
-
-
-def _trial_key(trial: PlanTrial) -> str:
-    if trial.sample_id is not None:
-        sample_token = trial.sample_id
-    else:
-        sample_json = json.dumps(trial.sample, ensure_ascii=False, sort_keys=True)
-        sample_token = hashlib.sha1(sample_json.encode("utf-8")).hexdigest()[:12]
-    return f"{trial.task_id}::{trial.agent_id}::{trial.variant_id}::{sample_token}"
-
-
 def _checkpoint_path(base_dir: Path, checkpoint_key: str) -> Path:
     return base_dir / ".snowl" / "checkpoints" / f"{checkpoint_key}.json"
 
@@ -605,7 +529,11 @@ def _latest_run_dir(base_dir: Path) -> Path | None:
     runs_dir = base_dir / ".snowl" / "runs"
     if not runs_dir.exists():
         return None
-    candidates = [p for p in runs_dir.iterdir() if p.is_dir()]
+    candidates = [
+        p
+        for p in runs_dir.iterdir()
+        if p.is_dir() and p.name != "by_run_id" and ((p / "manifest.json").exists() or (p / "outcomes.json").exists())
+    ]
     if not candidates:
         return None
     return sorted(candidates)[-1]
@@ -652,19 +580,6 @@ def _summarize(outcomes: list[TrialOutcome]) -> EvalSummary:
     )
 
 
-def _write_json_file(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _utc_iso_from_ms(ts_ms: int) -> str:
-    return datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc).isoformat()
-
-
-def _trial_models(plan: EvalPlan) -> dict[str, str | None]:
-    return {_trial_key(trial): trial.model for trial in plan.trials}
-
-
 def _task_monitor_rows(task_monitor: TaskMonitor, *, model_by_trial_key: dict[str, str | None] | None = None) -> list[dict[str, Any]]:
     return [
         {
@@ -709,244 +624,16 @@ def _seed_task_monitor_from_serialized_outcome(task_monitor: TaskMonitor, row: d
     )
 
 
-def _write_live_run_metadata(
-    *,
-    out_dir: Path,
-    run_id: str,
-    experiment_id: str,
-    benchmark: str,
-    plan: EvalPlan,
-    task_monitor: TaskMonitor,
-    controls: dict[str, Any],
-    trial_count: int,
-    event_stream_mode: str,
-    manifest_extra: dict[str, Any] | None = None,
-) -> None:
-    model_by_trial_key = _trial_models(plan)
-    _write_json_file(
-        out_dir / "plan.json",
-        {
-            "mode": plan.mode,
-            "task_ids": plan.task_ids,
-            "agent_ids": plan.agent_ids,
-            "variant_ids": plan.variant_ids,
-            "sample_count": plan.sample_count,
-            "trial_count": trial_count,
-        },
-    )
-    manifest_payload = {
-        "schema_version": RESULT_SCHEMA_VERSION,
-        "result_schema_uri": RESULT_SCHEMA_URI,
-        "aggregate_schema_uri": AGGREGATE_SCHEMA_URI,
-        "run_id": run_id,
-        "experiment_id": experiment_id,
-        "benchmark": benchmark,
-        "event_stream_mode": event_stream_mode,
-        "status": "running",
-        "runtime_state": "runtime_state.json",
-        "research_exports": {
-            "events_jsonl": "events.jsonl",
-        },
-    }
-    if manifest_extra:
-        manifest_payload.update(dict(manifest_extra))
-    _write_json_file(out_dir / "manifest.json", manifest_payload)
-    _write_json_file(
-        out_dir / "profiling.json",
-        {
-            "run": {
-                "run_id": run_id,
-                "experiment_id": experiment_id,
-                "benchmark": benchmark,
-            },
-            "controls": controls,
-            "throughput": {
-                "trial_count": trial_count,
-            },
-            "task_monitor": _task_monitor_rows(task_monitor, model_by_trial_key=model_by_trial_key),
-        },
-    )
-
-
-def _update_live_manifest_status(
-    out_dir: Path,
-    *,
-    status: str,
-    ended_ts_ms: int | None = None,
-    termination_reason: str | None = None,
-) -> None:
-    manifest_path = out_dir / "manifest.json"
-    manifest: dict[str, Any] = {}
-    try:
-        raw = manifest_path.read_text(encoding="utf-8")
-        parsed = json.loads(raw)
-        if isinstance(parsed, dict):
-            manifest = dict(parsed)
-    except Exception:
-        manifest = {}
-    manifest["status"] = status
-    if ended_ts_ms is not None:
-        manifest["ended_at_ts_ms"] = int(ended_ts_ms)
-        manifest["ended_at_utc"] = _utc_iso_from_ms(int(ended_ts_ms))
-    if termination_reason:
-        manifest["termination_reason"] = str(termination_reason)
-    _write_json_file(manifest_path, manifest)
-
-
-class _LiveRunStateWriter:
-    def __init__(
-        self,
-        *,
-        path: Path,
-        run_id: str,
-        experiment_id: str,
-        benchmark: str,
-        started_ts_ms: int,
-        owner_pid: int | None = None,
-    ) -> None:
-        self._path = path
-        self._lock = threading.Lock()
-        pid = int(owner_pid or os.getpid())
-        self._state: dict[str, Any] = {
-            "run_id": run_id,
-            "experiment_id": experiment_id,
-            "benchmark": benchmark,
-            "status": "running",
-            "owner_pid": pid,
-            "started_ts_ms": int(started_ts_ms),
-            "started_at_utc": _utc_iso_from_ms(int(started_ts_ms)),
-            "heartbeat_ts_ms": int(started_ts_ms),
-            "last_event_ts_ms": int(started_ts_ms),
-            "last_progress_ts_ms": None,
-            "ended_ts_ms": None,
-            "termination_reason": None,
-        }
-        self._flush_locked()
-
-    def _flush_locked(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = self._path.with_suffix(self._path.suffix + ".tmp")
-        tmp_path.write_text(json.dumps(self._state, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp_path.replace(self._path)
-
-    def heartbeat(self, *, ts_ms: int | None = None) -> None:
-        with self._lock:
-            if self._state.get("status") != "running":
-                return
-            heartbeat_ts = int(ts_ms or int(datetime.now(timezone.utc).timestamp() * 1000))
-            self._state["heartbeat_ts_ms"] = heartbeat_ts
-            self._flush_locked()
-
-    def record_event(self, *, ts_ms: int | None = None, progress: bool = False) -> None:
-        with self._lock:
-            if self._state.get("status") != "running":
-                return
-            event_ts = int(ts_ms or int(datetime.now(timezone.utc).timestamp() * 1000))
-            self._state["heartbeat_ts_ms"] = max(int(self._state.get("heartbeat_ts_ms") or 0), event_ts)
-            self._state["last_event_ts_ms"] = max(int(self._state.get("last_event_ts_ms") or 0), event_ts)
-            if progress:
-                previous = self._state.get("last_progress_ts_ms")
-                self._state["last_progress_ts_ms"] = max(int(previous or 0), event_ts)
-            self._flush_locked()
-
-    def mark_completed(self, *, ts_ms: int | None = None) -> None:
-        with self._lock:
-            ended_ts = int(ts_ms or int(datetime.now(timezone.utc).timestamp() * 1000))
-            self._state["status"] = "completed"
-            self._state["heartbeat_ts_ms"] = max(int(self._state.get("heartbeat_ts_ms") or 0), ended_ts)
-            self._state["last_event_ts_ms"] = max(int(self._state.get("last_event_ts_ms") or 0), ended_ts)
-            self._state["ended_ts_ms"] = ended_ts
-            self._state["ended_at_utc"] = _utc_iso_from_ms(ended_ts)
-            self._state["termination_reason"] = "completed"
-            self._flush_locked()
-
-    def mark_cancelled(self, *, reason: str = "cancelled", ts_ms: int | None = None) -> None:
-        with self._lock:
-            ended_ts = int(ts_ms or int(datetime.now(timezone.utc).timestamp() * 1000))
-            self._state["status"] = "cancelled"
-            self._state["heartbeat_ts_ms"] = max(int(self._state.get("heartbeat_ts_ms") or 0), ended_ts)
-            self._state["last_event_ts_ms"] = max(int(self._state.get("last_event_ts_ms") or 0), ended_ts)
-            self._state["ended_ts_ms"] = ended_ts
-            self._state["ended_at_utc"] = _utc_iso_from_ms(ended_ts)
-            self._state["termination_reason"] = str(reason or "cancelled")
-            self._flush_locked()
-
-
 def _to_serializable_outcome(outcome: TrialOutcome) -> dict[str, Any]:
-    scores = {
-        k: {
-            "value": v.value,
-            "explanation": v.explanation,
-            "metadata": dict(v.metadata),
-        }
-        for k, v in outcome.scores.items()
-    }
-    return {
-        "schema_version": RESULT_SCHEMA_VERSION,
-        "schema_uri": RESULT_SCHEMA_URI,
-        "task_result": outcome.task_result.to_dict(),
-        "scores": scores,
-        "trace": outcome.trace,
-    }
-
-
-def _trial_key_from_task_result_dict(task_result: dict[str, Any]) -> str | None:
-    payload = dict(task_result.get("payload") or {})
-    task_id = str(task_result.get("task_id") or "").strip()
-    agent_id = str(task_result.get("agent_id") or "").strip()
-    variant_id = str(payload.get("variant_id") or "default").strip() or "default"
-    sample_id = task_result.get("sample_id")
-    if not task_id or not agent_id or sample_id is None:
-        return None
-    return f"{task_id}::{agent_id}::{variant_id}::{sample_id}"
+    return to_serializable_outcome(
+        outcome,
+        schema_version=RESULT_SCHEMA_VERSION,
+        schema_uri=RESULT_SCHEMA_URI,
+    )
 
 
 def _outcome_from_serialized(row: dict[str, Any]) -> TrialOutcome:
-    from snowl.core import Score, TaskResult  # local to avoid import cycle
-
-    task_result = TaskResult.from_dict(dict(row.get("task_result") or {}))
-    scores = {
-        str(k): Score(
-            value=float(v.get("value") or 0.0),
-            explanation=v.get("explanation"),
-            metadata=dict(v.get("metadata") or {}),
-        )
-        for k, v in dict(row.get("scores") or {}).items()
-        if isinstance(v, dict)
-    }
-    return TrialOutcome(task_result=task_result, scores=scores, trace=dict(row.get("trace") or {}))
-
-
-def _classify_failure_from_serialized(row: dict[str, Any]) -> str:
-    task_result = dict(row.get("task_result") or {})
-    status = str(task_result.get("status") or "").strip().lower()
-    error = dict(task_result.get("error") or {})
-    code = str(error.get("code") or "").strip().lower()
-    message = str(error.get("message") or "").strip().lower()
-
-    if status == "cancelled":
-        return "user.cancelled"
-    if status == "incorrect":
-        return "semantic.failure"
-    if code.startswith("container_") or "docker" in code or "compose" in code or "docker" in message:
-        return "infra.container"
-    if code.startswith("scorer_") or "judge" in code or "judge" in message:
-        return "evaluation.judge"
-    if code.startswith("provider_") or "quota" in message or "rate limit" in message or "api" in message:
-        return "infra.provider"
-    if code.startswith("scheduler_"):
-        return "infra.scheduler"
-    if status in {"error", "limit_exceeded"}:
-        return "task.execution"
-    return "unknown"
-
-
-def _recovery_path(run_dir: Path) -> Path:
-    return run_dir / "recovery.json"
-
-
-def _attempts_jsonl_path(run_dir: Path) -> Path:
-    return run_dir / "attempts.jsonl"
+    return outcome_from_serialized(row)
 
 
 def _read_json_file(path: Path, *, default: Any) -> Any:
@@ -954,188 +641,6 @@ def _read_json_file(path: Path, *, default: Any) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return default
-
-
-def _bootstrap_recovery_state(*, run_dir: Path, run_id: str) -> dict[str, Any]:
-    recovery_path = _recovery_path(run_dir)
-    existing = _read_json_file(recovery_path, default=None)
-    if isinstance(existing, dict) and existing.get("run_id") == run_id:
-        existing.setdefault("attempts_by_trial", {})
-        existing.setdefault("effective_attempts", {})
-        existing.setdefault("sessions", [])
-        existing.setdefault("next_attempt_no", 1)
-        return existing
-
-    outcomes = _read_json_file(run_dir / "outcomes.json", default=[])
-    attempts_by_trial: dict[str, list[dict[str, Any]]] = {}
-    effective_attempts: dict[str, str] = {}
-    next_attempt_no = 1
-    for row in outcomes if isinstance(outcomes, list) else []:
-        if not isinstance(row, dict):
-            continue
-        task_result = dict(row.get("task_result") or {})
-        trial_key = _trial_key_from_task_result_dict(task_result)
-        if not trial_key:
-            continue
-        attempt_no = int(row.get("attempt_no") or 1)
-        attempt_id = str(row.get("attempt_id") or f"{trial_key}::attempt-{attempt_no:04d}")
-        payload = dict(task_result.get("payload") or {})
-        started_ts = None
-        ended_ts = None
-        timing = dict(task_result.get("timing") or {})
-        if timing:
-            started_ts = timing.get("started_at_ms")
-            ended_ts = timing.get("ended_at_ms")
-        attempt_row = {
-            "attempt_id": attempt_id,
-            "attempt_no": attempt_no,
-            "trial_key": trial_key,
-            "task_id": task_result.get("task_id"),
-            "agent_id": task_result.get("agent_id"),
-            "variant_id": payload.get("variant_id") or "default",
-            "sample_id": task_result.get("sample_id"),
-            "model": payload.get("model"),
-            "status": task_result.get("status"),
-            "failure_class": _classify_failure_from_serialized(row),
-            "effective": True,
-            "supersedes_attempt_id": None,
-            "superseded_by_attempt_id": None,
-            "started_ts_ms": started_ts,
-            "ended_ts_ms": ended_ts,
-            "duration_ms": (max(0, int(ended_ts) - int(started_ts)) if started_ts is not None and ended_ts is not None else None),
-            "retry_source": "initial_run",
-            "task_result": task_result,
-            "scores": dict(row.get("scores") or {}),
-            "trace": dict(row.get("trace") or {}),
-        }
-        attempts_by_trial.setdefault(trial_key, []).append(attempt_row)
-        effective_attempts[trial_key] = attempt_id
-        next_attempt_no = max(next_attempt_no, attempt_no + 1)
-
-    recovery = {
-        "schema_version": RESULT_SCHEMA_VERSION,
-        "run_id": run_id,
-        "attempts_by_trial": attempts_by_trial,
-        "effective_attempts": effective_attempts,
-        "sessions": [],
-        "next_attempt_no": next_attempt_no,
-    }
-    recovery_path.write_text(json.dumps(recovery, ensure_ascii=False, indent=2), encoding="utf-8")
-    _write_attempts_jsonl(run_dir=run_dir, recovery=recovery)
-    return recovery
-
-
-def _write_attempts_jsonl(*, run_dir: Path, recovery: dict[str, Any]) -> None:
-    rows: list[dict[str, Any]] = []
-    attempts_by_trial = recovery.get("attempts_by_trial") or {}
-    if isinstance(attempts_by_trial, dict):
-        for bucket in attempts_by_trial.values():
-            if isinstance(bucket, list):
-                for row in bucket:
-                    if isinstance(row, dict):
-                        rows.append(dict(row))
-    rows.sort(key=lambda row: (str(row.get("trial_key") or ""), int(row.get("attempt_no") or 0)))
-    with _attempts_jsonl_path(run_dir).open("w", encoding="utf-8") as fh:
-        for row in rows:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-
-
-def _effective_recovery_rows(recovery: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    out: dict[str, dict[str, Any]] = {}
-    attempts_by_trial = recovery.get("attempts_by_trial") or {}
-    effective_attempts = recovery.get("effective_attempts") or {}
-    if not isinstance(attempts_by_trial, dict) or not isinstance(effective_attempts, dict):
-        return out
-    for trial_key, bucket in attempts_by_trial.items():
-        if not isinstance(bucket, list):
-            continue
-        effective_id = str(effective_attempts.get(trial_key) or "").strip()
-        for row in bucket:
-            if not isinstance(row, dict):
-                continue
-            if effective_id and str(row.get("attempt_id") or "") == effective_id:
-                out[str(trial_key)] = dict(row)
-                break
-    return out
-
-
-def _write_recovery_state(*, run_dir: Path, recovery: dict[str, Any]) -> None:
-    _recovery_path(run_dir).write_text(json.dumps(recovery, ensure_ascii=False, indent=2), encoding="utf-8")
-    _write_attempts_jsonl(run_dir=run_dir, recovery=recovery)
-
-
-def _attempt_status_from_outcome(outcome: TrialOutcome) -> str:
-    return str(outcome.task_result.status.value or "").strip().lower()
-
-
-def _attempt_is_success(outcome: TrialOutcome) -> bool:
-    return _attempt_status_from_outcome(outcome) == "success"
-
-
-def _attempt_is_terminal_status(status: str) -> bool:
-    return status in {"success", "incorrect", "error", "limit_exceeded", "cancelled"}
-
-
-def _recovery_retry_allowed(outcome: TrialOutcome) -> bool:
-    return not _attempt_is_success(outcome)
-
-
-def _record_recovery_attempt(
-    *,
-    recovery: dict[str, Any],
-    effective_rows: dict[str, dict[str, Any]],
-    key: str,
-    trial: PlanTrial,
-    outcome: TrialOutcome,
-    retry_source: str,
-    current_effective_outcomes: dict[str, TrialOutcome],
-) -> dict[str, Any]:
-    previous = effective_rows.get(key)
-    previous_attempt_id = str((previous or {}).get("attempt_id") or "").strip() or None
-    attempts_by_trial = recovery.setdefault("attempts_by_trial", {})
-    attempts_by_trial.setdefault(key, [])
-    bucket = attempts_by_trial.get(key)
-    attempt_no = len(bucket) + 1 if isinstance(bucket, list) else 1
-    serializable = _to_serializable_outcome(outcome)
-    failure_class = _classify_failure_from_serialized(serializable)
-    task_result = dict(serializable.get("task_result") or {})
-    payload = dict(task_result.get("payload") or {})
-    timing = dict(task_result.get("timing") or {})
-    started_ts = timing.get("started_at_ms")
-    ended_ts = timing.get("ended_at_ms")
-    attempt_row = {
-        "attempt_id": f"{key}::attempt-{attempt_no:04d}",
-        "attempt_no": attempt_no,
-        "trial_key": key,
-        "task_id": task_result.get("task_id"),
-        "agent_id": task_result.get("agent_id"),
-        "variant_id": payload.get("variant_id") or trial.variant_id,
-        "sample_id": task_result.get("sample_id"),
-        "model": payload.get("model") or trial.model,
-        "status": task_result.get("status"),
-        "failure_class": failure_class,
-        "effective": True,
-        "supersedes_attempt_id": previous_attempt_id,
-        "superseded_by_attempt_id": None,
-        "started_ts_ms": started_ts,
-        "ended_ts_ms": ended_ts,
-        "duration_ms": (max(0, int(ended_ts) - int(started_ts)) if started_ts is not None and ended_ts is not None else None),
-        "retry_source": retry_source,
-        "task_result": task_result,
-        "scores": dict(serializable.get("scores") or {}),
-        "trace": dict(serializable.get("trace") or {}),
-    }
-    if isinstance(attempts_by_trial[key], list):
-        for row in attempts_by_trial[key]:
-            if isinstance(row, dict):
-                row["effective"] = False
-                if previous_attempt_id and str(row.get("attempt_id") or "") == previous_attempt_id:
-                    row["superseded_by_attempt_id"] = attempt_row["attempt_id"]
-        attempts_by_trial[key].append(attempt_row)
-    recovery.setdefault("effective_attempts", {})[key] = attempt_row["attempt_id"]
-    effective_rows[key] = attempt_row
-    current_effective_outcomes[key] = outcome
-    return attempt_row
 
 
 def _resolve_run_dir_for_id(base_dir: Path, run_id: str) -> Path:
@@ -1154,16 +659,6 @@ def _resolve_run_dir_for_id(base_dir: Path, run_id: str) -> Path:
     if direct.exists():
         return direct.resolve()
     raise SnowlValidationError(f"Run not found for retry: {run_id}")
-
-
-def _count_existing_events(path: Path) -> int:
-    if not path.exists():
-        return 0
-    try:
-        with path.open("r", encoding="utf-8") as fh:
-            return sum(1 for line in fh if line.strip())
-    except Exception:
-        return 0
 
 
 def _pid_alive(pid: int | None) -> bool:
@@ -1221,277 +716,6 @@ def _default_experiment_id(*, base_dir: Path, started_ms: int) -> str:
     return f"{project}-{ts}-{digest}"
 
 
-def _benchmark_name_for_task(task: Task) -> str:
-    metadata = getattr(task, "metadata", {}) or {}
-    if not isinstance(metadata, dict):
-        return "custom"
-    value = str(metadata.get("benchmark") or metadata.get("benchmark_name") or "").strip().lower()
-    return value or "custom"
-
-
-class _LiveEventsWriter:
-    """Append-only live events writer with stable event ids."""
-
-    def __init__(self, *, path: Path, run_id: str, initial_event_index: int = 0) -> None:
-        self._path = path
-        self._run_id = run_id
-        self._lock = threading.Lock()
-        self._event_index = max(0, int(initial_event_index))
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._fh = self._path.open("a", encoding="utf-8")
-
-    def append(self, row: dict[str, Any]) -> dict[str, Any]:
-        with self._lock:
-            self._event_index += 1
-            idx = self._event_index
-            event_id = str(row.get("event_id") or f"{self._run_id}:{idx}")
-            event_row = {
-                "schema_version": RESULT_SCHEMA_VERSION,
-                "run_id": self._run_id,
-                "event_index": idx,
-                "seq": idx,
-                "event_id": event_id,
-                **dict(row),
-            }
-            event_row["event_index"] = idx
-            event_row["seq"] = idx
-            event_row["event_id"] = event_id
-            event_row["run_id"] = self._run_id
-            self._fh.write(json.dumps(event_row, ensure_ascii=False) + "\n")
-            self._fh.flush()
-            return event_row
-
-    def close(self) -> None:
-        with self._lock:
-            try:
-                self._fh.close()
-            except Exception:
-                pass
-
-
-def _write_artifacts(
-    *,
-    base_dir: Path,
-    run_id: str,
-    outcomes: list[TrialOutcome],
-    plan: EvalPlan,
-    summary: EvalSummary,
-    rerun_command: str,
-    out_dir: Path | None = None,
-    run_log_lines: list[str] | None = None,
-    event_rows: list[dict[str, Any]] | None = None,
-    profiling: dict[str, Any] | None = None,
-    experiment_id: str | None = None,
-    event_stream_mode: str = "batch_write",
-    manifest_extra: dict[str, Any] | None = None,
-) -> Path:
-    now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    if out_dir is None:
-        out_dir = _prepare_run_artifacts_dir(base_dir=base_dir, run_id=run_id)
-
-    (out_dir / "plan.json").write_text(
-        json.dumps(
-            {
-                "mode": plan.mode,
-                "task_ids": plan.task_ids,
-                "agent_ids": plan.agent_ids,
-                "variant_ids": plan.variant_ids,
-                "sample_count": plan.sample_count,
-                "trial_count": len(plan.trials),
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-
-    (out_dir / "summary.json").write_text(
-        json.dumps(summary.__dict__, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-    aggregate = aggregate_outcomes(outcomes)
-    (out_dir / "aggregate.json").write_text(
-        json.dumps(
-            {
-                "schema_uri": AGGREGATE_SCHEMA_URI,
-                "schema_version": RESULT_SCHEMA_VERSION,
-                "by_task_agent": aggregate.by_task_agent,
-                "matrix": aggregate.matrix,
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-
-    (out_dir / "outcomes.json").write_text(
-        json.dumps([_to_serializable_outcome(o) for o in outcomes], ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-    # Research-friendly exports
-    trials_jsonl_path = out_dir / "trials.jsonl"
-    with trials_jsonl_path.open("w", encoding="utf-8") as f:
-        for idx, outcome in enumerate(outcomes, start=1):
-            row = _to_serializable_outcome(outcome)
-            row["run_id"] = run_id
-            row["schema_version"] = RESULT_SCHEMA_VERSION
-            row["trial_index"] = idx
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
-
-    if event_rows is not None:
-        events_jsonl_path = out_dir / "events.jsonl"
-        with events_jsonl_path.open("w", encoding="utf-8") as f:
-            for idx, row in enumerate(event_rows or [], start=1):
-                row_dict = dict(row)
-                event_index = int(row_dict.get("event_index") or idx)
-                event_id = str(row_dict.get("event_id") or f"{run_id}:{event_index}")
-                event_row = {
-                    "schema_version": RESULT_SCHEMA_VERSION,
-                    "run_id": run_id,
-                    "event_index": event_index,
-                    "seq": event_index,
-                    "event_id": event_id,
-                    **row_dict,
-                }
-                event_row["run_id"] = run_id
-                event_row["event_index"] = event_index
-                event_row["seq"] = event_index
-                event_row["event_id"] = event_id
-                f.write(json.dumps(event_row, ensure_ascii=False) + "\n")
-
-    metrics_wide_path = out_dir / "metrics_wide.csv"
-    metric_names = sorted(
-        {
-            str(metric_name)
-            for outcome in outcomes
-            for metric_name in (outcome.scores or {}).keys()
-        }
-    )
-    fieldnames = [
-        "schema_version",
-        "run_id",
-        "task_id",
-        "agent_id",
-        "variant_id",
-        "sample_id",
-        "status",
-    ] + metric_names
-    with metrics_wide_path.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for outcome in outcomes:
-            tr = outcome.task_result
-            row: dict[str, Any] = {
-                "schema_version": RESULT_SCHEMA_VERSION,
-                "run_id": run_id,
-                "task_id": tr.task_id,
-                "agent_id": tr.agent_id,
-                "variant_id": str((tr.payload or {}).get("variant_id") or "default"),
-                "sample_id": tr.sample_id,
-                "status": tr.status.value,
-            }
-            for metric_name in metric_names:
-                score = (outcome.scores or {}).get(metric_name)
-                row[metric_name] = (float(score.value) if score is not None else "")
-            writer.writerow(row)
-
-    diagnostics_dir = out_dir / "diagnostics"
-    diagnostics_dir.mkdir(parents=True, exist_ok=True)
-    diagnostics_index: list[dict[str, Any]] = []
-    for idx, outcome in enumerate(outcomes, start=1):
-        sandbox = outcome.trace.get("sandbox") if isinstance(outcome.trace, dict) else None
-        tr = outcome.task_result
-        if not sandbox and tr.status.value not in {"error", "limit_exceeded", "cancelled"}:
-            continue
-        sample = tr.sample_id if tr.sample_id is not None else str(idx)
-        variant_id = str((tr.payload or {}).get("variant_id") or "default")
-        diag_name = f"{tr.task_id}__{tr.agent_id}__{variant_id}__{sample}.json"
-        diag_file = diagnostics_dir / diag_name
-        payload = {
-            "task_id": tr.task_id,
-            "agent_id": tr.agent_id,
-            "variant_id": variant_id,
-            "sample_id": tr.sample_id,
-            "status": tr.status.value,
-            "sandbox": sandbox,
-            "error": tr.error.__dict__ if tr.error else None,
-        }
-        diag_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        diagnostics_index.append(
-            {
-                "task_id": tr.task_id,
-                "agent_id": tr.agent_id,
-                "variant_id": variant_id,
-                "sample_id": tr.sample_id,
-                "status": tr.status.value,
-                "path": f"diagnostics/{diag_name}",
-            }
-        )
-
-    (out_dir / "diagnostics_index.json").write_text(
-        json.dumps(diagnostics_index, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-
-    manifest_payload = {
-        "schema_version": RESULT_SCHEMA_VERSION,
-        "result_schema_uri": RESULT_SCHEMA_URI,
-        "aggregate_schema_uri": AGGREGATE_SCHEMA_URI,
-        "run_id": run_id,
-        "experiment_id": experiment_id,
-        "benchmark": profiling.get("run", {}).get("benchmark") if isinstance(profiling, dict) else None,
-        "created_at_utc": now,
-        "status": "completed",
-        "rerun_command": rerun_command,
-        "diagnostics_count": len(diagnostics_index),
-        "event_stream_mode": event_stream_mode,
-        "runtime_state": "runtime_state.json",
-        "research_exports": {
-            "trials_jsonl": "trials.jsonl",
-            "events_jsonl": "events.jsonl",
-            "metrics_wide_csv": "metrics_wide.csv",
-        },
-    }
-    if manifest_extra:
-        manifest_payload.update(dict(manifest_extra))
-    (out_dir / "manifest.json").write_text(
-        json.dumps(manifest_payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-    # Basic HTML report (summary + comparison + failures).
-    failure_rows = []
-    for item in diagnostics_index:
-        if item["status"] in {"error", "limit_exceeded", "cancelled"}:
-            failure_rows.append(
-                f"<tr><td>{item['task_id']}</td><td>{item['agent_id']}</td><td>{item['sample_id']}</td><td>{item['status']}</td><td><a href='{item['path']}'>diagnostic</a></td></tr>"
-            )
-    matrix_rows = []
-    for task_id in sorted(aggregate.matrix.keys()):
-        agents = aggregate.matrix[task_id]
-        for agent_id in sorted(agents.keys()):
-            metrics = agents[agent_id]
-            metric_text = ", ".join([f"{k}: {v:.3f}" for k, v in sorted(metrics.items())])
-            matrix_rows.append(
-                f"<tr><td>{task_id}</td><td>{agent_id}</td><td>{metric_text}</td></tr>"
-            )
-    html = f"""<!doctype html>\n<html><head><meta charset='utf-8'/><title>Snowl Report</title>\n<style>body{{font-family:Menlo,Consolas,monospace;padding:20px}} table{{border-collapse:collapse;width:100%}} td,th{{border:1px solid #ddd;padding:6px}} .cards{{display:grid;grid-template-columns:repeat(3,minmax(120px,1fr));gap:8px}} .card{{border:1px solid #ccc;padding:8px}}</style>\n</head><body>\n<h1>Snowl Report</h1>\n<div class='cards'>\n<div class='card'>Total: {summary.total}</div>\n<div class='card'>Success: {summary.success}</div>\n<div class='card'>Incorrect: {summary.incorrect}</div>\n<div class='card'>Error: {summary.error}</div>\n<div class='card'>Limit: {summary.limit_exceeded}</div>\n<div class='card'>Cancelled: {summary.cancelled}</div>\n</div>\n<h2>Comparison</h2>\n<table><thead><tr><th>Task</th><th>Agent</th><th>Metrics</th></tr></thead><tbody>{''.join(matrix_rows) or '<tr><td colspan=3>no data</td></tr>'}</tbody></table>\n<h2>Failures</h2>\n<table><thead><tr><th>Task</th><th>Agent</th><th>Sample</th><th>Status</th><th>Diagnostic</th></tr></thead><tbody>{''.join(failure_rows) or '<tr><td colspan=5>no failures</td></tr>'}</tbody></table>\n</body></html>"""
-    (out_dir / "report.html").write_text(html, encoding="utf-8")
-
-    if run_log_lines is not None:
-        (out_dir / "run.log").write_text(
-            "\n".join(run_log_lines or []) + ("\n" if run_log_lines else ""),
-            encoding="utf-8",
-        )
-    (out_dir / "profiling.json").write_text(
-        json.dumps(profiling or {}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-    return out_dir
-
-
 def _build_rerun_command(
     entry_path: Path,
     task_filter: list[str] | None,
@@ -1509,223 +733,6 @@ def _build_rerun_command(
     if experiment_id:
         cmd.extend(["--experiment-id", str(experiment_id)])
     return " ".join(cmd)
-
-
-def _is_docker_like_task(task: Task) -> bool:
-    try:
-        env_type = str(getattr(task.env_spec, "env_type", "") or "").lower()
-    except Exception:
-        env_type = ""
-    if env_type in {"terminal", "gui", "docker"}:
-        return True
-    try:
-        sandbox_spec = getattr(task.env_spec, "sandbox_spec", None)
-        if sandbox_spec is not None:
-            provider = str(getattr(sandbox_spec, "provider", "") or "").lower()
-            if provider in {"docker", "podman"}:
-                return True
-    except Exception:
-        pass
-    metadata = getattr(task, "metadata", {}) or {}
-    if isinstance(metadata, dict):
-        bench = str(metadata.get("benchmark") or metadata.get("benchmark_name") or "").lower()
-        if bench in {"terminalbench", "osworld"}:
-            return True
-    return False
-
-
-def _pick_event_value(event: dict[str, Any], key: str) -> Any:
-    if key in event and event.get(key) is not None:
-        return event.get(key)
-    payload = event.get("payload")
-    if isinstance(payload, dict):
-        if key in payload and payload.get(key) is not None:
-            return payload.get(key)
-        nested = payload.get("payload")
-        if isinstance(nested, dict):
-            return nested.get(key)
-    return None
-
-
-def _enrich_event_row(
-    raw_event: dict[str, Any],
-    *,
-    run_id: str,
-    experiment_id: str,
-    trial: PlanTrial | None,
-    benchmark_hint: str | None,
-) -> dict[str, Any]:
-    row = dict(raw_event)
-    task_id = str(
-        row.get("task_id")
-        or (trial.task_id if trial is not None else "")
-        or _pick_event_value(row, "task_id")
-        or ""
-    ).strip()
-    agent_id = str(
-        row.get("agent_id")
-        or (trial.agent_id if trial is not None else "")
-        or _pick_event_value(row, "agent_id")
-        or ""
-    ).strip()
-    variant_id = str(
-        row.get("variant_id")
-        or (trial.variant_id if trial is not None else "default")
-        or _pick_event_value(row, "variant_id")
-        or "default"
-    ).strip() or "default"
-    sample_id_raw = (
-        row.get("sample_id")
-        or (trial.sample_id if trial is not None else None)
-        or _pick_event_value(row, "sample_id")
-    )
-    sample_id = (str(sample_id_raw).strip() if sample_id_raw is not None else "")
-    model = str(
-        row.get("model")
-        or (trial.model if trial is not None else "")
-        or _pick_event_value(row, "model")
-        or ""
-    ).strip()
-    benchmark = str(
-        row.get("benchmark")
-        or (trial.task.metadata.get("benchmark") if trial is not None and isinstance(trial.task.metadata, dict) else "")
-        or _pick_event_value(row, "benchmark")
-        or benchmark_hint
-        or "custom"
-    ).strip().lower() or "custom"
-    ts_raw = row.get("ts_ms")
-    ts_ms = int(ts_raw) if isinstance(ts_raw, (int, float)) else int(datetime.now(timezone.utc).timestamp() * 1000)
-
-    trial_key = row.get("trial_key")
-    if not isinstance(trial_key, str) or not trial_key.strip():
-        if trial is not None:
-            trial_key = _trial_key(trial)
-        elif task_id and agent_id:
-            sample_token = sample_id or "-"
-            trial_key = f"{task_id}::{agent_id}::{variant_id}::{sample_token}"
-        else:
-            trial_key = ""
-
-    row.update(
-        {
-            "run_id": run_id,
-            "experiment_id": experiment_id,
-            "trial_key": trial_key,
-            "benchmark": benchmark,
-            "task_id": task_id or None,
-            "agent_id": agent_id or None,
-            "variant_id": variant_id,
-            "model": model or None,
-            "sample_id": sample_id or None,
-            "ts_ms": ts_ms,
-        }
-    )
-    return row
-
-
-def _derive_pretask_events(event: dict[str, Any]) -> list[dict[str, Any]]:
-    name = str(event.get("event", "")).strip()
-    if not name or name.startswith("pretask."):
-        return []
-
-    exit_code = _pick_event_value(event, "exit_code")
-    command_text = str(_pick_event_value(event, "command_text") or "")
-    command_text_l = command_text.lower()
-    ready = _pick_event_value(event, "ready")
-    code = str(_pick_event_value(event, "code") or "")
-
-    def _status_from_exit(default_running: str = "running") -> str:
-        if isinstance(exit_code, int):
-            return "success" if exit_code == 0 else "failed"
-        return default_running
-
-    def _mk(stage_event: str, *, status: str, source: str) -> dict[str, Any]:
-        out = {
-            "event": stage_event,
-            "phase": "env",
-            "status": status,
-            "message": status,
-            "source_event": source,
-        }
-        for key in (
-            "task_id",
-            "agent_id",
-            "variant_id",
-            "sample_id",
-            "trial_key",
-            "model",
-            "benchmark",
-            "project",
-            "compose_file",
-            "command_text",
-            "exit_code",
-            "duration_ms",
-            "ts_ms",
-            "run_id",
-            "experiment_id",
-        ):
-            value = _pick_event_value(event, key)
-            if value is not None:
-                out[key] = value
-        return out
-
-    out: list[dict[str, Any]] = []
-
-    if name.startswith("runtime.env.preflight."):
-        status = "failed" if name.endswith(".error") else ("success" if name.endswith(".finish") or name.endswith(".hit") else "running")
-        out.append(_mk("pretask.preflight", status=status, source=name))
-        return out
-
-    if "container.build" in name:
-        out.append(_mk("pretask.build", status=_status_from_exit(), source=name))
-        return out
-
-    if name in {"runtime.env.command.start", "runtime.env.command.finish", "runtime.env.command.timeout"}:
-        is_build = (" compose " in command_text_l and " build" in command_text_l) or command_text_l.startswith("docker compose") and " build" in command_text_l
-        is_start = (
-            (" compose " in command_text_l and " up" in command_text_l)
-            or command_text_l.startswith("docker run")
-            or (" compose " in command_text_l and " exec" in command_text_l and "tmux" in command_text_l)
-        )
-        if is_build:
-            status = "running" if name.endswith(".start") else ("timeout" if name.endswith(".timeout") else _status_from_exit())
-            out.append(_mk("pretask.build", status=status, source=name))
-        if is_start:
-            status = "running" if name.endswith(".start") else ("timeout" if name.endswith(".timeout") else _status_from_exit())
-            out.append(_mk("pretask.start", status=status, source=name))
-        return out
-
-    if "container.starting" in name:
-        out.append(_mk("pretask.start", status="running", source=name))
-        return out
-
-    if "container.started" in name:
-        if isinstance(exit_code, int) and exit_code != 0:
-            status = "failed"
-        elif ready is False:
-            status = "failed"
-        else:
-            status = "success"
-        out.append(_mk("pretask.start", status=status, source=name))
-        return out
-
-    if "visual_probe" in name or name == "gui.container.wait":
-        out.append(_mk("pretask.ready_probe", status="running", source=name))
-        return out
-
-    if "visual_ready" in name or name == "gui.container.ready":
-        out.append(_mk("pretask.ready", status="success", source=name))
-        return out
-
-    if name == "runtime.trial.error" and code == "container_runtime_error":
-        out.append(_mk("pretask.failed", status="failed", source=name))
-        return out
-
-    if "container.retry" in name:
-        out.append(_mk("pretask.start", status="retry", source=name))
-        return out
-
-    return out
 
 
 def _interaction_equivalent_command(
@@ -1843,100 +850,6 @@ def load_project_components(
     )
 
 
-def _available_memory_gb() -> float | None:
-    try:
-        page_size = os.sysconf("SC_PAGE_SIZE")
-        avail_pages = os.sysconf("SC_AVPHYS_PAGES")
-        return float(page_size * avail_pages) / (1024.0**3)
-    except Exception:
-        return None
-
-
-def _auto_container_slots(*, benchmark: str, cpu_count: int | None = None, mem_gb: float | None = None) -> int:
-    cpu = max(1, int(cpu_count or os.cpu_count() or 1))
-    memory = mem_gb if mem_gb is not None else _available_memory_gb()
-    benchmark_key = str(benchmark or "").strip().lower()
-    if benchmark_key in {"", "custom", "strongreject", "toolemu", "agentsafetybench"}:
-        return 0
-    if benchmark_key == "terminalbench":
-        by_cpu = max(1, min(4, cpu // 2))
-        if memory is None:
-            return by_cpu
-        return max(1, min(by_cpu, int(memory // 6) or 1))
-    if benchmark_key == "osworld":
-        by_cpu = max(1, min(2, cpu // 4 or 1))
-        if memory is None:
-            return by_cpu
-        return max(1, min(by_cpu, int(memory // 10) or 1))
-    return max(1, min(2, cpu // 2 or 1))
-
-
-def _resolve_runtime_budgets(
-    *,
-    tasks: list[Task],
-    project_config: ProjectConfig | None,
-    interaction_controller: Any | None,
-    max_running_trials: int | None,
-    max_container_slots: int | None,
-    max_builds: int | None,
-    max_scoring_tasks: int | None,
-    provider_budgets: dict[str, int] | None,
-) -> dict[str, Any]:
-    runtime_cfg = project_config.runtime if project_config is not None else None
-    explicit_running = max_running_trials is not None
-    benchmark_names = sorted({_benchmark_name_for_task(task) for task in tasks})
-    benchmark_hint = benchmark_names[0] if len(benchmark_names) == 1 else "mixed"
-
-    if max_running_trials is None:
-        max_running_trials = runtime_cfg.max_running_trials if runtime_cfg is not None else None
-    if max_builds is None:
-        max_builds = runtime_cfg.max_builds if runtime_cfg is not None else None
-    if max_scoring_tasks is None:
-        max_scoring_tasks = runtime_cfg.max_scoring_tasks if runtime_cfg is not None else None
-    if provider_budgets is None:
-        provider_budgets = dict(runtime_cfg.provider_budgets) if runtime_cfg is not None else {}
-
-    auto_container = False
-    if max_container_slots is None:
-        raw = runtime_cfg.max_container_slots if runtime_cfg is not None else "auto"
-        if isinstance(raw, str) and raw.strip().lower() == "auto":
-            auto_container = True
-            max_container_slots = _auto_container_slots(benchmark=benchmark_hint)
-        elif raw is None:
-            auto_container = True
-            max_container_slots = _auto_container_slots(benchmark=benchmark_hint)
-        else:
-            max_container_slots = int(raw)
-
-    if max_running_trials is None:
-        max_running_trials = min(8, max(1, int(os.cpu_count() or 4)))
-    if max_builds is None:
-        max_builds = 2
-    if max_scoring_tasks is None:
-        max_scoring_tasks = max_running_trials
-
-    if interaction_controller is not None:
-        max_running_trials = 1
-    docker_like = any(_is_docker_like_task(t) for t in tasks)
-    if docker_like and not explicit_running:
-        max_running_trials = 1
-
-    if project_config is not None and project_config.provider.id not in provider_budgets:
-        provider_budgets[project_config.provider.id] = max(max_running_trials, max_scoring_tasks)
-    if not provider_budgets:
-        provider_budgets["default"] = max(max_running_trials, max_scoring_tasks)
-
-    return {
-        "max_running_trials": max_running_trials,
-        "max_container_slots": max_container_slots,
-        "max_builds": max_builds,
-        "max_scoring_tasks": max_scoring_tasks,
-        "provider_budgets": provider_budgets,
-        "auto_container_slots": max_container_slots if auto_container else None,
-        "docker_like": docker_like,
-    }
-
-
 async def run_eval_with_components(
     *,
     entry_path: Path,
@@ -1987,7 +900,7 @@ async def run_eval_with_components(
     if provider_budgets is None and max_model_calls is not None:
         provider_budgets = {"default": max_model_calls}
 
-    budgets = _resolve_runtime_budgets(
+    budget_resolution = RuntimePolicy().resolve(
         tasks=tasks,
         project_config=project_config,
         interaction_controller=interaction_controller,
@@ -1997,14 +910,9 @@ async def run_eval_with_components(
         max_scoring_tasks=max_scoring_tasks,
         provider_budgets=provider_budgets,
     )
+    budgets = budget_resolution.as_dict()
     docker_like = bool(budgets["docker_like"])
-    scheduler = ResourceScheduler(
-        max_running_trials=budgets["max_running_trials"],
-        max_container_slots=budgets["max_container_slots"],
-        max_builds=budgets["max_builds"],
-        max_scoring_tasks=budgets["max_scoring_tasks"],
-        provider_budgets=budgets["provider_budgets"],
-    )
+    scheduler = ResourceScheduler(**budget_resolution.to_scheduler_kwargs())
     set_compose_build_slot_factory(scheduler.build_slot)
     OpenAICompatibleChatClient.set_global_model_call_slot_resolver(
         lambda config: scheduler.provider_slot(getattr(config, "provider_id", "default"))
@@ -2012,6 +920,11 @@ async def run_eval_with_components(
 
     run_started = int(datetime.now(timezone.utc).timestamp() * 1000)
     retry_mode = retry_run_id is not None
+    failed_only_keys: set[str] = set()
+    if rerun_failed_only and not retry_mode:
+        failed_only_keys = _failed_trial_keys_from_latest_run(base_dir)
+        if not failed_only_keys:
+            raise SnowlValidationError("No failed trials found in latest run for rerun-failed-only.")
     recovery_config = project_config.runtime.recovery if project_config is not None else ProjectRecoveryConfig()
     auto_retry_enabled = bool(recovery_config.auto_retry_non_success)
     max_auto_retries_per_trial = max(0, int(recovery_config.max_auto_retries_per_trial))
@@ -2023,14 +936,15 @@ async def run_eval_with_components(
     live_run_log_path = artifacts_dir_live / "run.log"
     live_run_log_path.touch(exist_ok=True)
     live_events_path = artifacts_dir_live / "events.jsonl"
-    event_writer = _LiveEventsWriter(
-        path=live_events_path,
+    plan = PlanBuilder().build(tasks, agents)
+    recovery_manager = RecoveryManager(
+        run_dir=artifacts_dir_live,
         run_id=run_id,
-        initial_event_index=(_count_existing_events(live_events_path) if retry_mode else 0),
+        schema_version=RESULT_SCHEMA_VERSION,
+        schema_uri=RESULT_SCHEMA_URI,
     )
-    plan = _build_plan(tasks, agents)
-    recovery = _bootstrap_recovery_state(run_dir=artifacts_dir_live, run_id=run_id)
-    effective_rows = _effective_recovery_rows(recovery)
+    recovery = recovery_manager.state
+    effective_rows = recovery_manager.effective_rows()
     if renderer:
         bench_name = None
         if tasks:
@@ -2082,26 +996,23 @@ async def run_eval_with_components(
     checkpoint.setdefault("failed_keys", [])
     checkpoint.setdefault("meta", {})
 
-    failed_only_keys: set[str] = set()
-    if rerun_failed_only and not retry_mode:
-        failed_only_keys = _failed_trial_keys_from_latest_run(base_dir)
-        if not failed_only_keys:
-            raise SnowlValidationError("No failed trials found in latest run for rerun-failed-only.")
-
     outcomes: list[TrialOutcome] = []
     effective_outcomes_by_key: dict[str, TrialOutcome] = {}
     run_log_lines: list[str] = []
-    event_rows: list[dict[str, Any]] = []
     task_monitor = TaskMonitor()
-    benchmark_names = sorted({_benchmark_name_for_task(task) for task in tasks})
+    benchmark_names = sorted({benchmark_name_for_task(task) for task in tasks})
     benchmark_hint = benchmark_names[0] if len(benchmark_names) == 1 else "mixed"
-    runtime_state_writer = _LiveRunStateWriter(
-        path=artifacts_dir_live / "runtime_state.json",
+    event_bus = RunEventBus(
+        events_path=live_events_path,
+        runtime_state_path=artifacts_dir_live / "runtime_state.json",
         run_id=run_id,
         experiment_id=str(experiment_id),
         benchmark=benchmark_hint,
         started_ts_ms=run_started,
+        schema_version=RESULT_SCHEMA_VERSION,
+        initial_event_index=(count_existing_events(live_events_path) if retry_mode else 0),
     )
+    artifact_store = RunArtifactStore(base_dir=base_dir, run_id=run_id, out_dir=artifacts_dir_live)
 
     def _log(message: str) -> None:
         ts = datetime.now(timezone.utc).isoformat()
@@ -2114,46 +1025,8 @@ async def run_eval_with_components(
             pass
 
     def _record_event(row: dict[str, Any], *, trial: PlanTrial | None = None) -> dict[str, Any]:
-        enriched = _enrich_event_row(
-            row,
-            run_id=run_id,
-            experiment_id=str(experiment_id),
-            trial=trial,
-            benchmark_hint=benchmark_hint,
-        )
-        persisted = event_writer.append(enriched)
-        event_name = str(persisted.get("event") or "").strip()
-        progress_event_names = {
-            "runtime.trial.start",
-            "runtime.trial.finish",
-            "runtime.trial.error",
-            "runtime.scorer.start",
-            "runtime.scorer.finish",
-            "runtime.model.query.start",
-            "runtime.model.query.finish",
-            "runtime.agent.step",
-        }
-        runtime_state_writer.record_event(
-            ts_ms=int(persisted.get("ts_ms") or int(datetime.now(timezone.utc).timestamp() * 1000)),
-            progress=event_name in progress_event_names,
-        )
-        event_rows.append(dict(persisted))
-        if trial is not None:
-            for synthetic in _derive_pretask_events(persisted):
-                synthetic_enriched = _enrich_event_row(
-                    synthetic,
-                    run_id=run_id,
-                    experiment_id=str(experiment_id),
-                    trial=trial,
-                    benchmark_hint=benchmark_hint,
-                )
-                persisted_synth = event_writer.append(synthetic_enriched)
-                runtime_state_writer.record_event(
-                    ts_ms=int(persisted_synth.get("ts_ms") or int(datetime.now(timezone.utc).timestamp() * 1000)),
-                    progress=False,
-                )
-                event_rows.append(dict(persisted_synth))
-        return persisted
+        persisted_rows = event_bus.append(row, trial=trial)
+        return persisted_rows[0]
 
     container_lifecycle = RuntimeContainerLifecycleManager(
         run_id=run_id,
@@ -2179,13 +1052,7 @@ async def run_eval_with_components(
     completed = checkpoint.get("completed", {})
     if effective_rows:
         for key, raw in effective_rows.items():
-            outcome = _outcome_from_serialized(
-                {
-                    "task_result": raw.get("task_result") or {},
-                    "scores": raw.get("scores") or {},
-                    "trace": raw.get("trace") or {},
-                }
-            )
+            outcome = recovery_manager.outcome_from_attempt_row(raw)
             effective_outcomes_by_key[key] = outcome
             outcomes.append(outcome)
             _seed_task_monitor_from_serialized_outcome(
@@ -2213,7 +1080,7 @@ async def run_eval_with_components(
 
     executable_trials: list[PlanTrial] = []
     for trial in plan.trials:
-        key = _trial_key(trial)
+        key = make_trial_key(trial)
         if retry_mode:
             effective_row = effective_rows.get(key)
             effective_status = str(((effective_row or {}).get("task_result") or {}).get("status") or "").strip().lower()
@@ -2268,9 +1135,8 @@ async def run_eval_with_components(
         "max_auto_retries_per_trial": max_auto_retries_per_trial,
         "backoff_ms": auto_retry_backoff_ms,
     }
-    _write_live_run_metadata(
+    artifact_store.write_live_metadata(
         out_dir=artifacts_dir_live,
-        run_id=run_id,
         experiment_id=str(experiment_id),
         benchmark=benchmark_hint,
         plan=plan,
@@ -2316,19 +1182,19 @@ async def run_eval_with_components(
             "ended_ts_ms": None,
             "status": "running",
             "mode": "manual_retry" if retry_mode else "initial_run",
-            "selected_trial_keys": sorted(_trial_key(trial) for trial in executable_trials),
+            "selected_trial_keys": sorted(make_trial_key(trial) for trial in executable_trials),
         }
         recovery["sessions"].append(recovery_session)
-        _write_recovery_state(run_dir=artifacts_dir_live, recovery=recovery)
+        recovery_manager.write()
     else:
         recovery_session = None
 
     if retry_mode and not executable_trials:
         summary = _summarize(outcomes)
         rerun_cmd = rerun_command or f"snowl retry {run_id}"
-        event_writer.close()
-        runtime_state_writer.mark_completed(ts_ms=run_started)
-        _update_live_manifest_status(
+        event_bus.mark_completed(ts_ms=run_started)
+        event_bus.close()
+        artifact_store.update_manifest_status(
             artifacts_dir_live,
             status="completed",
             ended_ts_ms=run_started,
@@ -2337,7 +1203,7 @@ async def run_eval_with_components(
         if recovery_session is not None:
             recovery_session["ended_ts_ms"] = run_started
             recovery_session["status"] = "noop"
-            _write_recovery_state(run_dir=artifacts_dir_live, recovery=recovery)
+            recovery_manager.write()
         if renderer:
             renderer.render_summary(summary, str(artifacts_dir_live), rerun_cmd)
         return EvalRunResult(
@@ -2393,136 +1259,32 @@ async def run_eval_with_components(
             if renderer and hasattr(renderer, "render_runtime_event"):
                 renderer.render_runtime_event(evt)
 
-    async def _run_one(
-        trial_index: int,
-        trial: PlanTrial,
-        *,
-        retry_source: str = "initial_run",
-    ) -> tuple[int, PlanTrial, TrialOutcome, dict[str, Any]]:
-        nonlocal checkpoint
-        key = _trial_key(trial)
-        if resume and not retry_mode:
-            async with checkpoint_lock:
-                checkpoint["in_progress"][key] = {
-                    "task_id": trial.task_id,
-                    "agent_id": trial.agent_id,
-                    "sample_id": trial.sample_id,
-                    "started_at_ms": int(datetime.now(timezone.utc).timestamp() * 1000),
-                }
-                _save_checkpoint(base_dir, checkpoint_key, checkpoint)
-
-        if renderer:
-            renderer.render_trial_start(trial, trial_index, display_total)
-        _log(
-            f"trial_start idx={trial_index}/{display_total} task={trial.task_id} agent={trial.agent_id} variant={trial.variant_id} sample={trial.sample_id} retry_source={retry_source}"
-        )
-        if retry_source != "initial_run":
-            retry_evt = normalize_ui_event(
-                {
-                    "event": "runtime.trial.retry.start",
-                    "message": f"{retry_source} attempt started",
-                    "retry_source": retry_source,
-                    "task_id": trial.task_id,
-                    "agent_id": trial.agent_id,
-                    "variant_id": trial.variant_id,
-                    "sample_id": trial.sample_id,
-                },
-                run_id=run_id,
-                ts_ms=int(datetime.now(timezone.utc).timestamp() * 1000),
-            ).to_dict()
-            _record_event(retry_evt, trial=trial)
-            if renderer and hasattr(renderer, "render_runtime_event"):
-                renderer.render_runtime_event(retry_evt)
-
-        def _on_runtime_event(event: dict[str, Any]) -> None:
-            raw = dict(event or {})
-            normalized = normalize_ui_event(
-                raw,
-                run_id=run_id,
-                ts_ms=int(datetime.now(timezone.utc).timestamp() * 1000),
-                default_task_id=trial.task_id,
-                default_agent_id=trial.agent_id,
-                default_variant_id=trial.variant_id,
-            )
-            task_monitor.apply_event(normalized)
-            evt = normalized.to_dict()
-            persisted_evt = _record_event(evt, trial=trial)
-            _log(f"event {json.dumps(persisted_evt, ensure_ascii=False)}")
-            if renderer and hasattr(renderer, "render_runtime_event"):
-                renderer.render_runtime_event(evt)
-
-        request = TrialRequest(
-            task=trial.task,
-            agent=trial.agent,
-            scorer=scorer,
-            sample=trial.sample,
-            tools=tool_specs,
-            sandbox_runtime=shared_sandbox_runtime,
-            on_event=_on_runtime_event,
-            container_lifecycle=container_lifecycle,
-            run_id=run_id,
-            trial_id=key,
-        )
-        # The current main eval path admits a whole trial under the running slot.
-        # `execute_agent_phase(request)` will still do prepare work internally, so
-        # prepare is not independently scheduled here yet.
-        async with scheduler.running_trial_slot():
-            prepared = await prepare_trial_phase(request)
-            partial = await execute_agent_phase(prepared)
-        # Scoring is the one phase the main loop currently admits separately.
-        async with scheduler.scoring_slot():
-            outcome = await score_trial_phase(prepared, partial)
-        outcome, _ = await finalize_trial_phase(prepared, outcome)
-
-        async with checkpoint_lock:
-            attempt_row = _record_recovery_attempt(
-                recovery=recovery,
-                effective_rows=effective_rows,
-                key=key,
-                trial=trial,
-                outcome=outcome,
-                retry_source=retry_source,
-                current_effective_outcomes=effective_outcomes_by_key,
-            )
-            outcomes.clear()
-            outcomes.extend(list(effective_outcomes_by_key.values()))
-            _write_recovery_state(run_dir=artifacts_dir_live, recovery=recovery)
-            if resume and not retry_mode:
-                completed[key] = _to_serializable_outcome(effective_outcomes_by_key[key])
-                checkpoint["completed"] = completed
-                checkpoint["in_progress"].pop(key, None)
-                checkpoint["failed_keys"] = sorted(
-                    k
-                    for k, v in completed.items()
-                    if v.get("task_result", {}).get("status")
-                    in {"error", "limit_exceeded", "cancelled", "incorrect"}
-                )
-                _save_checkpoint(base_dir, checkpoint_key, checkpoint)
-
-        if retry_source != "initial_run" and _attempt_is_success(outcome):
-            recovered_evt = normalize_ui_event(
-                {
-                    "event": "runtime.trial.recovered",
-                    "message": f"{retry_source} recovered trial",
-                    "retry_source": retry_source,
-                    "attempt_no": attempt_row.get("attempt_no"),
-                    "task_id": trial.task_id,
-                    "agent_id": trial.agent_id,
-                    "variant_id": trial.variant_id,
-                    "sample_id": trial.sample_id,
-                },
-                run_id=run_id,
-                ts_ms=int(datetime.now(timezone.utc).timestamp() * 1000),
-            ).to_dict()
-            _record_event(recovered_evt, trial=trial)
-            if renderer and hasattr(renderer, "render_runtime_event"):
-                renderer.render_runtime_event(recovered_evt)
-
-        if resume and not retry_mode:
-            async with checkpoint_lock:
-                checkpoint["in_progress"].pop(key, None)
-                _save_checkpoint(base_dir, checkpoint_key, checkpoint)
-        return trial_index, trial, outcome, attempt_row
+    trial_lifecycle = EvalTrialLifecycle(
+        run_id=run_id,
+        base_dir=base_dir,
+        checkpoint_key=checkpoint_key,
+        checkpoint=checkpoint,
+        checkpoint_lock=checkpoint_lock,
+        resume=resume,
+        retry_mode=retry_mode,
+        display_total=display_total,
+        scorer=scorer,
+        tool_specs=tool_specs,
+        shared_sandbox_runtime=shared_sandbox_runtime,
+        container_lifecycle=container_lifecycle,
+        scheduler=scheduler,
+        task_monitor=task_monitor,
+        renderer=renderer,
+        event_bus=event_bus,
+        recovery_manager=recovery_manager,
+        effective_rows=effective_rows,
+        effective_outcomes_by_key=effective_outcomes_by_key,
+        outcomes=outcomes,
+        completed=completed,
+        log=_log,
+        save_checkpoint=_save_checkpoint,
+        serialize_outcome=_to_serializable_outcome,
+    )
 
     async def _bounded_run(
         trial_index: int,
@@ -2547,7 +1309,8 @@ async def run_eval_with_components(
                     event_sink=_record_event,
                 )
                 await asyncio.sleep(0.05)
-        return await _run_one(trial_index, trial, retry_source=retry_source)
+        result = await trial_lifecycle.run(trial_index, trial, retry_source=retry_source)
+        return result.trial_index, result.trial, result.outcome, result.attempt_row
 
     interaction_stop = asyncio.Event()
     runtime_state_stop = asyncio.Event()
@@ -2590,7 +1353,7 @@ async def run_eval_with_components(
 
     async def _runtime_state_loop() -> None:
         while not runtime_state_stop.is_set():
-            runtime_state_writer.heartbeat()
+            event_bus.heartbeat()
             await asyncio.sleep(1.0)
 
     runtime_state_task = asyncio.create_task(_runtime_state_loop())
@@ -2603,23 +1366,13 @@ async def run_eval_with_components(
     recovery_queue: list[dict[str, Any]] = []
     inflight: set[asyncio.Task[tuple[int, PlanTrial, TrialOutcome, dict[str, Any]]]] = set()
 
-    def _auto_retry_count(trial_key: str) -> int:
-        bucket = (((recovery or {}).get("attempts_by_trial") or {}).get(trial_key) or [])
-        if not isinstance(bucket, list):
-            return 0
-        return sum(
-            1
-            for row in bucket
-            if isinstance(row, dict) and str(row.get("retry_source") or "") == "auto_retry"
-        )
-
     def _schedule_auto_retry(*, trial_index: int, trial: PlanTrial, attempt_row: dict[str, Any]) -> None:
         if not auto_retry_enabled:
             return
         if str(recovery_config.retry_timing or "deferred").strip().lower() != "deferred":
             return
-        key = _trial_key(trial)
-        if _auto_retry_count(key) >= max_auto_retries_per_trial:
+        key = make_trial_key(trial)
+        if recovery_manager.auto_retry_count(key) >= max_auto_retries_per_trial:
             return
         recovery_queue.append(
             {
@@ -2694,7 +1447,7 @@ async def run_eval_with_components(
             inflight = set(pending_set)
             for fut in done_set:
                 i, trial, outcome, attempt_row = await fut
-                if _recovery_retry_allowed(outcome):
+                if recovery_retry_allowed(outcome):
                     _schedule_auto_retry(trial_index=i, trial=trial, attempt_row=attempt_row)
                 status = outcome.task_result.status.value
                 done_count = len(outcomes)
@@ -2758,8 +1511,8 @@ async def run_eval_with_components(
         _log(f"container_cleanup {json.dumps(container_cleanup_summary, ensure_ascii=False)}")
         if cancelled_reason is not None:
             ended_ts = int(datetime.now(timezone.utc).timestamp() * 1000)
-            runtime_state_writer.mark_cancelled(reason=cancelled_reason, ts_ms=ended_ts)
-            _update_live_manifest_status(
+            event_bus.mark_cancelled(reason=cancelled_reason, ts_ms=ended_ts)
+            artifact_store.update_manifest_status(
                 artifacts_dir_live,
                 status="cancelled",
                 ended_ts_ms=ended_ts,
@@ -2768,8 +1521,8 @@ async def run_eval_with_components(
             if recovery_session is not None and recovery is not None:
                 recovery_session["ended_ts_ms"] = ended_ts
                 recovery_session["status"] = "cancelled"
-                _write_recovery_state(run_dir=artifacts_dir_live, recovery=recovery)
-        event_writer.close()
+                recovery_manager.write()
+        event_bus.close()
 
     summary = _summarize(outcomes)
     rerun_cmd = rerun_command or _build_rerun_command(
@@ -2838,30 +1591,28 @@ async def run_eval_with_components(
                 controller=interaction_controller,
             ),
         },
-        "task_monitor": _task_monitor_rows(task_monitor, model_by_trial_key=_trial_models(plan)),
+        "task_monitor": _task_monitor_rows(task_monitor, model_by_trial_key=trial_models(plan)),
     }
     _log(f"summary {json.dumps(summary.__dict__, ensure_ascii=False)}")
     if recovery_session is not None and recovery is not None:
         recovery_session["ended_ts_ms"] = run_ended
         recovery_session["status"] = "completed"
-        _write_recovery_state(run_dir=artifacts_dir_live, recovery=recovery)
-    artifacts_dir = _write_artifacts(
-        base_dir=base_dir,
-        run_id=run_id,
+        recovery_manager.write()
+    artifacts_dir = artifact_store.write_final(
         outcomes=outcomes,
         plan=plan,
         summary=summary,
         rerun_command=rerun_cmd,
         out_dir=artifacts_dir_live,
         run_log_lines=(None if retry_mode else run_log_lines),
-        event_rows=(None if retry_mode else event_rows),
+        event_rows=(None if retry_mode else event_bus.event_rows),
         profiling=profiling,
         experiment_id=str(experiment_id),
         event_stream_mode="live_append",
         manifest_extra=manifest_extra,
     )
-    runtime_state_writer.mark_completed(ts_ms=run_ended)
-    _update_live_manifest_status(
+    event_bus.mark_completed(ts_ms=run_ended)
+    artifact_store.update_manifest_status(
         artifacts_dir_live,
         status="completed",
         ended_ts_ms=run_ended,
@@ -2906,10 +1657,28 @@ async def run_eval(
 ) -> EvalRunResult:
     entry_path = Path(path).resolve()
     base_dir, project_config, _code = _resolve_project_entry(entry_path)
+    source_metadata = {
+        "kind": "eval",
+        "project_path": str(entry_path),
+        "project_root": str(base_dir),
+    }
+    eval_spec = (
+        EvalSpec.from_project(
+            entry_path=entry_path,
+            project_config=project_config,
+            source_metadata=source_metadata,
+        )
+        if project_config is not None
+        else EvalSpec.from_legacy(
+            entry_path=entry_path,
+            base_dir=base_dir,
+            source_metadata=source_metadata,
+        )
+    )
     components = load_project_components(entry_path, require_task_file=True)
     return await run_eval_with_components(
         entry_path=entry_path,
-        base_dir=base_dir,
+        base_dir=eval_spec.base_dir,
         tasks=components.tasks,
         agents=components.agents,
         scorer=components.scorers[0],
@@ -2939,14 +1708,10 @@ async def run_eval(
         max_trials=max_trials,
         max_sandboxes=max_sandboxes,
         max_model_calls=max_model_calls,
-        project_config=project_config,
+        project_config=eval_spec.project_config,
         experiment_id=experiment_id,
         on_run_bootstrap=on_run_bootstrap,
-        source_metadata={
-            "kind": "eval",
-            "project_path": str(entry_path),
-            "project_root": str(base_dir),
-        },
+        source_metadata=eval_spec.source_metadata,
     )
 
 
@@ -2996,10 +1761,26 @@ async def retry_run(
             filters=dict(source.get("benchmark_filters") or {}),
         )
         components = load_project_components(project_entry, require_task_file=False)
+        eval_spec = (
+            EvalSpec.from_project(
+                entry_path=project_entry,
+                project_config=project_config,
+                source_kind="bench",
+                source_metadata=source,
+            )
+            if project_config is not None
+            else EvalSpec.from_legacy(
+                entry_path=project_entry,
+                base_dir=base_dir,
+                benchmark=benchmark_name,
+                source_kind="bench",
+                source_metadata=source,
+            )
+        )
         rerun_command = f"snowl retry {run_id}"
         return await run_eval_with_components(
-            entry_path=project_entry,
-            base_dir=base_dir,
+            entry_path=eval_spec.entry_path,
+            base_dir=eval_spec.base_dir,
             tasks=tasks,
             agents=components.agents,
             scorer=components.scorers[0],
@@ -3014,10 +1795,10 @@ async def retry_run(
             provider_budgets=provider_budgets,
             keep_containers=keep_containers,
             keep_failed_containers=keep_failed_containers,
-            project_config=project_config,
+            project_config=eval_spec.project_config,
             experiment_id=experiment_id or str(manifest.get("experiment_id") or run_id),
             on_run_bootstrap=on_run_bootstrap,
-            source_metadata=source,
+            source_metadata=eval_spec.source_metadata,
             retry_run_id=run_id,
             retry_run_dir=run_dir,
         )
@@ -3025,9 +1806,27 @@ async def retry_run(
     project_entry = Path(str(source.get("project_path") or entry_hint)).resolve()
     base_dir, project_config, _ = _resolve_project_entry(project_entry)
     components = load_project_components(project_entry, require_task_file=True)
+    eval_source = source or {
+        "kind": "eval",
+        "project_path": str(project_entry),
+        "project_root": str(base_dir),
+    }
+    eval_spec = (
+        EvalSpec.from_project(
+            entry_path=project_entry,
+            project_config=project_config,
+            source_metadata=eval_source,
+        )
+        if project_config is not None
+        else EvalSpec.from_legacy(
+            entry_path=project_entry,
+            base_dir=base_dir,
+            source_metadata=eval_source,
+        )
+    )
     return await run_eval_with_components(
-        entry_path=project_entry,
-        base_dir=base_dir,
+        entry_path=eval_spec.entry_path,
+        base_dir=eval_spec.base_dir,
         tasks=components.tasks,
         agents=components.agents,
         scorer=components.scorers[0],
@@ -3042,14 +1841,10 @@ async def retry_run(
         provider_budgets=provider_budgets,
         keep_containers=keep_containers,
         keep_failed_containers=keep_failed_containers,
-        project_config=project_config,
+        project_config=eval_spec.project_config,
         experiment_id=experiment_id or str(manifest.get("experiment_id") or run_id),
         on_run_bootstrap=on_run_bootstrap,
-        source_metadata=source or {
-            "kind": "eval",
-            "project_path": str(project_entry),
-            "project_root": str(base_dir),
-        },
+        source_metadata=eval_spec.source_metadata,
         retry_run_id=run_id,
         retry_run_dir=run_dir,
     )

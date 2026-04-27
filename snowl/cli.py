@@ -27,10 +27,11 @@ import time
 import urllib.request
 import webbrowser
 
-from snowl.bench import check_benchmark_conformance, list_benchmarks, run_benchmark
+from snowl.bench import check_benchmark_conformance, list_benchmarks, run_benchmark, scaffold_benchmark
 from snowl.eval import EvalRunBootstrap, retry_run, run_eval
 from snowl.examples_lint import validate_examples_layout
 from snowl.project_config import find_project_file, load_project_config
+from snowl.suite import check_suite_config, run_suite
 from snowl.ui import ConsoleRenderer, InteractionController, LiveConsoleRenderer
 from snowl.web.runtime import WebRuntimeError, current_webui_cache_key, ensure_next_build, ensure_next_runtime
 
@@ -843,6 +844,7 @@ def _cmd_bench_run(
     project: str,
     split: str,
     limit: int | None,
+    adapter: str | None,
     adapter_arg: list[str] | None,
     benchmark_filter: list[str] | None,
     task: str | None,
@@ -923,6 +925,7 @@ def _cmd_bench_run(
                     project_path=project,
                     split=split,
                     limit=limit,
+                    adapter_spec=adapter,
                     benchmark_args=adapter_arg,
                     benchmark_filters=benchmark_filter,
                     task_filter=_split_csv(task),
@@ -952,12 +955,32 @@ def _cmd_bench_run(
     return 0 if result.summary.error == 0 else 1
 
 
-def _cmd_bench_check(benchmark: str, *, adapter_arg: list[str] | None) -> int:
-    report = check_benchmark_conformance(benchmark, benchmark_args=adapter_arg)
+def _cmd_bench_check(benchmark: str, *, adapter: str | None, adapter_arg: list[str] | None) -> int:
+    report = check_benchmark_conformance(benchmark, adapter_spec=adapter, benchmark_args=adapter_arg)
     print(f"ok={report['ok']}")
     for check in report["checks"]:
         print(f"- {check['name']}: {check['ok']}")
     return 0 if report["ok"] else 1
+
+
+def _cmd_bench_scaffold(name: str, *, out: str) -> int:
+    target = scaffold_benchmark(name, out_dir=out)
+    print(f"created={target}")
+    print(f"check=snowl bench check {name} --adapter {target / 'adapter.py'}:adapter --adapter-arg dataset_path={target / 'data.jsonl'}")
+    return 0
+
+
+def _cmd_suite_check(path: str) -> int:
+    report = check_suite_config(path)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0 if report.get("ok") else 1
+
+
+def _cmd_suite_run(path: str) -> int:
+    result = asyncio.run(run_suite(path))
+    print(f"suite_run_id={result.suite_run_id}")
+    print(f"summary={result.summary_path}")
+    return 0 if result.status != "failed" else 1
 
 
 def _cmd_examples_check(path: str) -> int:
@@ -1218,6 +1241,7 @@ def build_parser() -> argparse.ArgumentParser:
     bench_run.add_argument("--project", default="project.yml", help="Path to project.yml.")
     bench_run.add_argument("--split", default="test", help="Benchmark split.")
     bench_run.add_argument("--limit", type=int, default=None, help="Max benchmark samples to load.")
+    bench_run.add_argument("--adapter", default=None, help="External adapter spec in module.py:object format.")
     bench_run.add_argument(
         "--adapter-arg",
         action="append",
@@ -1307,12 +1331,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     bench_check = bench_sub.add_parser("check", help="Run benchmark adapter conformance checks.")
     bench_check.add_argument("benchmark", help="Benchmark adapter name.")
+    bench_check.add_argument("--adapter", default=None, help="External adapter spec in module.py:object format.")
     bench_check.add_argument(
         "--adapter-arg",
         action="append",
         default=None,
         help="Adapter arg key=value (repeatable).",
     )
+
+    bench_scaffold = bench_sub.add_parser("scaffold", help="Create a third-party benchmark adapter template.")
+    bench_scaffold.add_argument("name", help="Benchmark name for the scaffold.")
+    bench_scaffold.add_argument("--out", required=True, help="Output directory for scaffold files.")
+
+    suite_parser = sub.add_parser("suite", help="Multi-benchmark suite commands.")
+    suite_sub = suite_parser.add_subparsers(dest="suite_command", required=True)
+    suite_check = suite_sub.add_parser("check", help="Validate a suite.yml file.")
+    suite_check.add_argument("path", help="Path to suite.yml.")
+    suite_run = suite_sub.add_parser("run", help="Run benchmarks listed in a suite.yml file.")
+    suite_run.add_argument("path", help="Path to suite.yml.")
 
     examples_parser = sub.add_parser("examples", help="Examples validation commands.")
     examples_sub = examples_parser.add_subparsers(dest="examples_command", required=True)
@@ -1382,6 +1418,7 @@ def main(argv: list[str] | None = None) -> int:
                 project=str(Path(args.project)),
                 split=args.split,
                 limit=args.limit,
+                adapter=args.adapter,
                 adapter_arg=args.adapter_arg,
                 benchmark_filter=args.benchmark_filter,
                 task=args.task,
@@ -1411,7 +1448,15 @@ def main(argv: list[str] | None = None) -> int:
                 cli_ui=bool(args.cli_ui),
             )
         if args.bench_command == "check":
-            return _cmd_bench_check(args.benchmark, adapter_arg=args.adapter_arg)
+            return _cmd_bench_check(args.benchmark, adapter=args.adapter, adapter_arg=args.adapter_arg)
+        if args.bench_command == "scaffold":
+            return _cmd_bench_scaffold(args.name, out=args.out)
+
+    if args.command == "suite":
+        if args.suite_command == "check":
+            return _cmd_suite_check(args.path)
+        if args.suite_command == "run":
+            return _cmd_suite_run(args.path)
 
     if args.command == "examples":
         if args.examples_command == "check":

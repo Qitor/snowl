@@ -157,17 +157,29 @@ npm run -s typecheck
 
 ## 7. Important Mental Model
 
-Snowl is moving toward four durable platform layers:
+Snowl is moving toward five durable platform layers:
 
 1. authoring contracts
 2. runtime reliability and scheduling
 3. experiment aggregation and comparison
 4. operator-grade observability
+5. risk-monitor-native dashboard
 
-Operator UX is intentionally split into:
+The data flow for the evaluation dashboard is:
 
-- `/`: running-first operator board
+```
+project.yml → eval.py (plan expansion) → runtime/engine.py (trial execution)
+  → .snowl/runs/<run_id>/ artifacts → aggregator (v2 rollups)
+  → benchmark_summary.json / domain_summary.json / leaderboard_rows.jsonl
+  → RunMonitor (SQLite index) → API endpoints → Evaluation Dashboard
+```
+
+UX is intentionally split into:
+
+- `/`: evaluation dashboard with domain cards, leaderboards, risk indices
+- `/runs`: operator-facing run gallery
 - `/runs/[runId]`: single-run workspace for task triage and live diagnosis
+- `/compare`: cross-run comparison
 
 If a change only helps one benchmark but weakens a shared contract, it is usually the wrong change.
 
@@ -186,6 +198,9 @@ If you change platform behavior, keep these current:
 - `AGENTS.md`
 - `docs/project_map.md`
 - `docs/current_state.md`
+- `docs/risk_monitor_data_model.md`
+- `docs/benchmark_taxonomy.md`
+- `docs/benchmark_onboarding_playbook.md`
 - `docs/architecture/runtime_and_scheduler.md`
 - `README.md`
 - `README.zh-CN.md`

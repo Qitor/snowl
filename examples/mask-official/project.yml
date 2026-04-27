@@ -1,0 +1,40 @@
+project:
+  name: mask-eval
+  root_dir: .
+
+provider:
+  id: openai
+  kind: openai_compatible
+  base_url: https://api.openai.com/v1
+  api_key: ${OPENAI_API_KEY}
+  timeout: 60
+  max_retries: 2
+
+agent_matrix:
+  models:
+    - id: gpt-4o
+      model: gpt-4o
+      metadata:
+        company: OpenAI
+        country: US
+        source_type: closed_source
+        reasoning: medium
+        model_family: GPT-4
+
+eval:
+  benchmark: mask
+  code:
+    base_dir: .
+    task_module: ./task.py
+    agent_module: ./agent.py
+    scorer_module: ./scorer.py
+  split: test
+  limit: 50
+
+runtime:
+  max_running_trials: 8
+  max_container_slots: 0
+  max_builds: 2
+  max_scoring_tasks: 8
+  provider_budgets:
+    openai: 8

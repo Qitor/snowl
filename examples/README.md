@@ -29,6 +29,10 @@ Official benchmark examples in this repo:
 - `examples/toolemu-official`
 - `examples/agentsafetybench-official`
 
+Agent wrapper snippets live under `examples/agents/`. They are intentionally
+small files for adapting your own async agent, OpenAI SDK loop, or LangGraph app
+to Snowl's `agent_id` + async `run(state, context, tools=None)` contract.
+
 Some examples depend on reference repos under `references/`, especially:
 
 - `toolemu-official` -> `references/ToolEmu`

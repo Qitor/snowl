@@ -1,0 +1,63 @@
+project:
+  name: wmdp-cyber-eval
+  root_dir: .
+
+provider:
+  id: siliconflow
+  kind: openai_compatible
+  base_url: https://api.siliconflow.cn/v1
+  api_key: sk-irodedqyvgqjdilarnwmrixfwigoxvaenmcfnjmfvbaxrkxm
+  timeout: 120
+  max_retries: 3
+
+agent_matrix:
+  models:
+    - id: internlm2_5-7b-chat
+      model: internlm/internlm2_5-7b-chat
+      metadata:
+        company: InternLM
+        country: CN
+        source_type: open_source
+        reasoning: low
+        model_family: InternLM
+    - id: qwen2_5-7b-instruct
+      model: Qwen/Qwen2.5-7B-Instruct
+      metadata:
+        company: Alibaba
+        country: CN
+        source_type: open_source
+        reasoning: low
+        model_family: Qwen
+    - id: glm-4-9b
+      model: THUDM/GLM-4-9B-0414
+      metadata:
+        company: ZhipuAI
+        country: CN
+        source_type: open_source
+        reasoning: low
+        model_family: GLM
+    - id: qwen3-8b
+      model: Qwen/Qwen3-8B
+      metadata:
+        company: Alibaba
+        country: CN
+        source_type: open_source
+        reasoning: medium
+        model_family: Qwen
+
+eval:
+  benchmark: wmdp-cyber
+  code:
+    base_dir: .
+    task_module: ./task.py
+    agent_module: ./agent.py
+    scorer_module: ./scorer.py
+  split: test
+
+runtime:
+  max_running_trials: 8
+  max_container_slots: 0
+  max_builds: 1
+  max_scoring_tasks: 8
+  provider_budgets:
+    siliconflow: 4

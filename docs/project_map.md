@@ -51,6 +51,10 @@ This file is the quickest repo navigation map for humans and coding agents. It d
   - `snowl bench` orchestration.
 - `snowl/benchmarks/registry.py`
   - Adapter registration.
+- `snowl/benchmarks/external.py`
+  - Local third-party adapter loading and scaffold generation.
+- `snowl/suite.py`
+  - Sequential multi-benchmark suite check/run orchestration.
 - `snowl/benchmarks/<name>/adapter.py`
   - Benchmark-to-Task mapping.
 - `snowl/benchmarks/<name>/scorer.py`

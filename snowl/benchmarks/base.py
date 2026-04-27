@@ -13,7 +13,7 @@ Change guardrails:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from snowl.core import Task
@@ -24,6 +24,21 @@ from snowl.errors import SnowlValidationError
 class BenchmarkInfo:
     name: str
     description: str
+    display_name: str = ""
+    short_description: str = ""
+    domain: str = "uncategorized"
+    benchmark_type: str = "capability"
+    family: str = ""
+    primary_metric: str = ""
+    higher_is_better: bool = True
+    sample_preview_mode: str = "qa"
+    dashboard_tags: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not self.display_name:
+            object.__setattr__(self, "display_name", self.name)
+        if not self.family:
+            object.__setattr__(self, "family", self.name)
 
 
 class BenchmarkAdapter(Protocol):
@@ -50,3 +65,15 @@ def validate_benchmark_adapter(adapter: BenchmarkAdapter) -> None:
 
     if not callable(getattr(adapter, "load_tasks", None)):
         raise SnowlValidationError("BenchmarkAdapter must implement load_tasks(...).")
+
+    _VALID_BENCHMARK_TYPES = {"capability", "safety"}
+    _VALID_PREVIEW_MODES = {"qa", "dialog", "tool_trace", "gui_trace", "code_trace"}
+
+    if info.benchmark_type not in _VALID_BENCHMARK_TYPES:
+        raise SnowlValidationError(
+            f"BenchmarkInfo.benchmark_type must be one of {_VALID_BENCHMARK_TYPES}, got '{info.benchmark_type}'."
+        )
+    if info.sample_preview_mode not in _VALID_PREVIEW_MODES:
+        raise SnowlValidationError(
+            f"BenchmarkInfo.sample_preview_mode must be one of {_VALID_PREVIEW_MODES}, got '{info.sample_preview_mode}'."
+        )

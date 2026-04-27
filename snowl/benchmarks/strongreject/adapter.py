@@ -86,6 +86,17 @@ class StrongRejectBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
     def _env_spec(self) -> EnvSpec:
         return EnvSpec(env_type="local")
 
+    def sample_card(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": row.get("id", ""),
+            "input_preview": str(row.get("forbidden_prompt", ""))[:200],
+            "category": row.get("category", ""),
+            "source": row.get("source", ""),
+        }
+
+    def trial_metadata(self, task: dict[str, Any]) -> dict[str, Any]:
+        return {"scoring": "strongreject"}
+
     def _task_metadata(self, *, split: str, selected_count: int) -> dict[str, Any]:
         _ = selected_count
         return {

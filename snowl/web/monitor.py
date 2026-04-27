@@ -113,6 +113,54 @@ class RunMonitorStore:
         )
         cur.execute("CREATE INDEX IF NOT EXISTS idx_events_run_event_id ON events(run_id, event_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_events_run_trial ON events(run_id, trial_key)")
+
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS domain_rows (
+                domain TEXT PRIMARY KEY,
+                capability_score REAL,
+                safety_score REAL,
+                risk_index REAL,
+                benchmark_count INTEGER,
+                model_count INTEGER,
+                updated_at_ms INTEGER,
+                overview_json TEXT
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS benchmark_rows (
+                benchmark TEXT,
+                domain TEXT,
+                run_id TEXT,
+                agent_id TEXT,
+                variant_id TEXT,
+                model TEXT,
+                primary_metric REAL,
+                metric_means_json TEXT,
+                sample_count INTEGER,
+                model_metadata_json TEXT,
+                updated_at_ms INTEGER,
+                PRIMARY KEY (benchmark, run_id, agent_id, variant_id)
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS leaderboard_rows (
+                model TEXT,
+                domain TEXT,
+                benchmark_type TEXT,
+                primary_metric_mean REAL,
+                rank INTEGER,
+                benchmarks_evaluated INTEGER,
+                metadata_json TEXT,
+                updated_at_ms INTEGER,
+                PRIMARY KEY (model, domain, benchmark_type)
+            )
+            """
+        )
         self._conn.commit()
 
     def _read_json(self, path: Path) -> dict[str, Any]:
@@ -200,6 +248,157 @@ class RunMonitorStore:
         state.status = "completed" if bool(state.summary) else "running"
         state.updated_at_ms = int(time.time() * 1000)
         self._upsert_run_row(state, manifest=manifest)
+        self._ingest_v2_artifacts(state)
+
+    def _ingest_v2_artifacts(self, state: RunState) -> None:
+        """Read V2 risk-monitor artifacts from the run directory and upsert into domain_rows, benchmark_rows, and leaderboard_rows tables.
+
+        Gracefully handles missing files — if none of the artifact files exist, this is a no-op.
+        """
+        now_ms = int(time.time() * 1000)
+
+        # --- domain_summary.json ---
+        domain_path = state.run_dir / "domain_summary.json"
+        if domain_path.exists():
+            try:
+                data = json.loads(domain_path.read_text(encoding="utf-8"))
+                rows = data.get("rows") if isinstance(data, dict) else None
+                if isinstance(rows, list):
+                    for row in rows:
+                        if not isinstance(row, dict):
+                            continue
+                        domain = str(row.get("domain") or "").strip()
+                        if not domain:
+                            continue
+                        self._conn.execute(
+                            """
+                            INSERT INTO domain_rows(domain, capability_score, safety_score, risk_index,
+                                                    benchmark_count, model_count, updated_at_ms, overview_json)
+                            VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(domain) DO UPDATE SET
+                                capability_score=excluded.capability_score,
+                                safety_score=excluded.safety_score,
+                                risk_index=excluded.risk_index,
+                                benchmark_count=excluded.benchmark_count,
+                                model_count=excluded.model_count,
+                                updated_at_ms=excluded.updated_at_ms,
+                                overview_json=excluded.overview_json
+                            """,
+                            (
+                                domain,
+                                float(row.get("capability_score") or 0.0),
+                                float(row.get("safety_score") or 0.0),
+                                float(row.get("risk_index") or 0.0),
+                                int(row.get("benchmark_count") or 0),
+                                int(row.get("model_count") or 0),
+                                now_ms,
+                                json.dumps(row, ensure_ascii=False),
+                            ),
+                        )
+            except Exception:
+                pass
+
+        # --- benchmark_summary.json ---
+        benchmark_path = state.run_dir / "benchmark_summary.json"
+        if benchmark_path.exists():
+            try:
+                data = json.loads(benchmark_path.read_text(encoding="utf-8"))
+                rows = data.get("rows") if isinstance(data, dict) else None
+                if isinstance(rows, list):
+                    for row in rows:
+                        if not isinstance(row, dict):
+                            continue
+                        benchmark = str(row.get("benchmark") or "").strip()
+                        agent_id = str(row.get("agent_id") or "").strip()
+                        variant_id = str(row.get("variant_id") or "default").strip()
+                        run_id = state.run_id
+                        if not benchmark:
+                            continue
+                        # primary_metric_value may be stored as primary_metric_value
+                        primary_metric_value = row.get("primary_metric_value")
+                        if primary_metric_value is None:
+                            primary_metric_value = row.get("primary_metric", 0.0)
+                        metric_means = row.get("metric_means") or {}
+                        model_metadata = row.get("metadata") or row.get("model_metadata") or {}
+                        self._conn.execute(
+                            """
+                            INSERT INTO benchmark_rows(benchmark, domain, run_id, agent_id, variant_id,
+                                                       model, primary_metric, metric_means_json,
+                                                       sample_count, model_metadata_json, updated_at_ms)
+                            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(benchmark, run_id, agent_id, variant_id) DO UPDATE SET
+                                domain=excluded.domain,
+                                model=excluded.model,
+                                primary_metric=excluded.primary_metric,
+                                metric_means_json=excluded.metric_means_json,
+                                sample_count=excluded.sample_count,
+                                model_metadata_json=excluded.model_metadata_json,
+                                updated_at_ms=excluded.updated_at_ms
+                            """,
+                            (
+                                benchmark,
+                                str(row.get("domain") or ""),
+                                run_id,
+                                agent_id,
+                                variant_id,
+                                str(row.get("model") or ""),
+                                float(primary_metric_value or 0.0),
+                                json.dumps(metric_means, ensure_ascii=False),
+                                int(row.get("sample_count") or 0),
+                                json.dumps(model_metadata, ensure_ascii=False),
+                                now_ms,
+                            ),
+                        )
+            except Exception:
+                pass
+
+        # --- leaderboard_rows.jsonl ---
+        leaderboard_path = state.run_dir / "leaderboard_rows.jsonl"
+        if leaderboard_path.exists():
+            try:
+                with leaderboard_path.open("r", encoding="utf-8") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            row = json.loads(line)
+                        except Exception:
+                            continue
+                        if not isinstance(row, dict):
+                            continue
+                        model = str(row.get("model") or "").strip()
+                        domain = str(row.get("domain") or "").strip()
+                        benchmark_type = str(row.get("benchmark_type") or "").strip()
+                        if not model or not domain or not benchmark_type:
+                            continue
+                        metadata = row.get("metadata") or {}
+                        self._conn.execute(
+                            """
+                            INSERT INTO leaderboard_rows(model, domain, benchmark_type,
+                                                         primary_metric_mean, rank,
+                                                         benchmarks_evaluated, metadata_json, updated_at_ms)
+                            VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(model, domain, benchmark_type) DO UPDATE SET
+                                primary_metric_mean=excluded.primary_metric_mean,
+                                rank=excluded.rank,
+                                benchmarks_evaluated=excluded.benchmarks_evaluated,
+                                metadata_json=excluded.metadata_json,
+                                updated_at_ms=excluded.updated_at_ms
+                            """,
+                            (
+                                model,
+                                domain,
+                                benchmark_type,
+                                float(row.get("primary_metric_mean") or 0.0),
+                                int(row.get("rank") or 0),
+                                int(row.get("benchmarks_evaluated") or 0),
+                                json.dumps(metadata, ensure_ascii=False),
+                                now_ms,
+                            ),
+                        )
+            except Exception:
+                pass
 
     def _notify_subscribers(self, run_id: str, event: dict[str, Any]) -> None:
         subscribers = list(self._subscribers.get(run_id, []))
@@ -547,3 +746,216 @@ class RunMonitorStore:
                 "matrix": {k: dict(v) for k, v in matrix.items()},
                 "runs": run_rows,
             }
+
+    # -----------------------------------------------------------------------
+    # V2 risk-monitor public API
+    # -----------------------------------------------------------------------
+
+    def list_domains(self) -> list[dict[str, Any]]:
+        """Return all domain rows ordered by risk_index descending."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT domain, capability_score, safety_score, risk_index, "
+                "benchmark_count, model_count, updated_at_ms, overview_json "
+                "FROM domain_rows ORDER BY risk_index DESC"
+            ).fetchall()
+            out: list[dict[str, Any]] = []
+            for row in rows:
+                entry = {
+                    "domain": row["domain"],
+                    "capability_score": row["capability_score"],
+                    "safety_score": row["safety_score"],
+                    "risk_index": row["risk_index"],
+                    "benchmark_count": row["benchmark_count"],
+                    "model_count": row["model_count"],
+                    "updated_at_ms": row["updated_at_ms"],
+                }
+                overview_json = row["overview_json"]
+                if overview_json:
+                    try:
+                        entry["overview"] = json.loads(overview_json)
+                    except Exception:
+                        pass
+                out.append(entry)
+            return out
+
+    def domain_overview(self, domain: str) -> dict[str, Any] | None:
+        """Return a single domain overview including related benchmark rows."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT domain, capability_score, safety_score, risk_index, "
+                "benchmark_count, model_count, updated_at_ms, overview_json "
+                "FROM domain_rows WHERE domain=?",
+                (domain,),
+            ).fetchone()
+            if row is None:
+                return None
+            result: dict[str, Any] = {
+                "domain": row["domain"],
+                "capability_score": row["capability_score"],
+                "safety_score": row["safety_score"],
+                "risk_index": row["risk_index"],
+                "benchmark_count": row["benchmark_count"],
+                "model_count": row["model_count"],
+                "updated_at_ms": row["updated_at_ms"],
+            }
+            overview_json = row["overview_json"]
+            if overview_json:
+                try:
+                    result["overview"] = json.loads(overview_json)
+                except Exception:
+                    pass
+            # Fetch related benchmark rows
+            bench_rows = self._conn.execute(
+                "SELECT benchmark, domain, run_id, agent_id, variant_id, model, "
+                "primary_metric, metric_means_json, sample_count, model_metadata_json, updated_at_ms "
+                "FROM benchmark_rows WHERE domain=?",
+                (domain,),
+            ).fetchall()
+            benchmarks: list[dict[str, Any]] = []
+            for br in bench_rows:
+                entry = {
+                    "benchmark": br["benchmark"],
+                    "domain": br["domain"],
+                    "run_id": br["run_id"],
+                    "agent_id": br["agent_id"],
+                    "variant_id": br["variant_id"],
+                    "model": br["model"],
+                    "primary_metric": br["primary_metric"],
+                    "sample_count": br["sample_count"],
+                    "updated_at_ms": br["updated_at_ms"],
+                }
+                metric_means_json = br["metric_means_json"]
+                if metric_means_json:
+                    try:
+                        entry["metric_means"] = json.loads(metric_means_json)
+                    except Exception:
+                        pass
+                model_metadata_json = br["model_metadata_json"]
+                if model_metadata_json:
+                    try:
+                        entry["model_metadata"] = json.loads(model_metadata_json)
+                    except Exception:
+                        pass
+                benchmarks.append(entry)
+            result["benchmarks"] = benchmarks
+            return result
+
+    def domain_leaderboard(self, domain: str, benchmark_type: str | None = None) -> list[dict[str, Any]]:
+        """Return leaderboard rows filtered by domain and optionally benchmark_type, ordered by rank."""
+        with self._lock:
+            if benchmark_type is not None:
+                rows = self._conn.execute(
+                    "SELECT model, domain, benchmark_type, primary_metric_mean, rank, "
+                    "benchmarks_evaluated, metadata_json, updated_at_ms "
+                    "FROM leaderboard_rows WHERE domain=? AND benchmark_type=? "
+                    "ORDER BY rank ASC",
+                    (domain, benchmark_type),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT model, domain, benchmark_type, primary_metric_mean, rank, "
+                    "benchmarks_evaluated, metadata_json, updated_at_ms "
+                    "FROM leaderboard_rows WHERE domain=? "
+                    "ORDER BY benchmark_type ASC, rank ASC",
+                    (domain,),
+                ).fetchall()
+            out: list[dict[str, Any]] = []
+            for row in rows:
+                entry = {
+                    "model": row["model"],
+                    "domain": row["domain"],
+                    "benchmark_type": row["benchmark_type"],
+                    "primary_metric_mean": row["primary_metric_mean"],
+                    "rank": row["rank"],
+                    "benchmarks_evaluated": row["benchmarks_evaluated"],
+                    "updated_at_ms": row["updated_at_ms"],
+                }
+                metadata_json = row["metadata_json"]
+                if metadata_json:
+                    try:
+                        entry["metadata"] = json.loads(metadata_json)
+                    except Exception:
+                        pass
+                out.append(entry)
+            return out
+
+    def list_benchmarks_with_metadata(self) -> list[dict[str, Any]]:
+        """Return unique benchmarks from benchmark_rows with aggregated metadata."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT benchmark, domain, MAX(updated_at_ms) AS updated_at_ms, "
+                "SUM(sample_count) AS total_samples, COUNT(*) AS row_count "
+                "FROM benchmark_rows GROUP BY benchmark ORDER BY benchmark ASC"
+            ).fetchall()
+            out: list[dict[str, Any]] = []
+            for row in rows:
+                out.append({
+                    "benchmark": row["benchmark"],
+                    "domain": row["domain"],
+                    "total_samples": row["total_samples"],
+                    "row_count": row["row_count"],
+                    "updated_at_ms": row["updated_at_ms"],
+                })
+            return out
+
+    def benchmark_detail(self, benchmark_name: str) -> dict[str, Any] | None:
+        """Return detail for a single benchmark including all its rows from benchmark_rows."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT benchmark, domain, run_id, agent_id, variant_id, model, "
+                "primary_metric, metric_means_json, sample_count, model_metadata_json, updated_at_ms "
+                "FROM benchmark_rows WHERE benchmark=?",
+                (benchmark_name,),
+            ).fetchall()
+            if not rows:
+                return None
+            entries: list[dict[str, Any]] = []
+            for row in rows:
+                entry = {
+                    "benchmark": row["benchmark"],
+                    "domain": row["domain"],
+                    "run_id": row["run_id"],
+                    "agent_id": row["agent_id"],
+                    "variant_id": row["variant_id"],
+                    "model": row["model"],
+                    "primary_metric": row["primary_metric"],
+                    "sample_count": row["sample_count"],
+                    "updated_at_ms": row["updated_at_ms"],
+                }
+                metric_means_json = row["metric_means_json"]
+                if metric_means_json:
+                    try:
+                        entry["metric_means"] = json.loads(metric_means_json)
+                    except Exception:
+                        pass
+                model_metadata_json = row["model_metadata_json"]
+                if model_metadata_json:
+                    try:
+                        entry["model_metadata"] = json.loads(model_metadata_json)
+                    except Exception:
+                        pass
+                entries.append(entry)
+            return {
+                "benchmark": benchmark_name,
+                "domain": rows[0]["domain"],
+                "rows": entries,
+            }
+
+    def benchmark_samples(self, benchmark_name: str) -> list[dict[str, Any]]:
+        """Return sample cards for a benchmark by looking up its adapter from the registry."""
+        try:
+            from snowl.benchmarks.registry import get_default_benchmark_registry
+
+            registry = get_default_benchmark_registry()
+            adapter = registry.create(benchmark_name)
+            samples: list[dict[str, Any]] = []
+            if hasattr(adapter, "_iter_rows"):
+                for row_index, row in enumerate(adapter._iter_rows(), start=1):
+                    card = adapter.sample_card(row) if hasattr(adapter, "sample_card") else {"id": row_index}
+                    if isinstance(card, dict):
+                        card.setdefault("_row_index", row_index)
+                    samples.append(card)
+            return samples
+        except Exception:
+            return []

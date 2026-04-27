@@ -1,3 +1,3 @@
 "use client";
 
-export { RunGalleryPage as Dashboard } from "@/components/run-gallery-page";
+export { RiskMonitorPage as Dashboard } from "@/components/risk-monitor-page";

@@ -40,6 +40,8 @@ class ProjectModelEntry:
     id: str
     model: str
     config: OpenAICompatibleConfig
+    metadata: dict[str, str] | None = None
+    provider_override: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -181,18 +183,41 @@ def load_project_config(path: str | Path) -> ProjectConfig:
             raise SnowlValidationError(f"Duplicate agent_matrix model '{model_name}' in {config_path}")
         seen_ids.add(model_id)
         seen_models.add(model_name)
+
+        # Parse optional model metadata for dashboard filtering
+        model_metadata = _parse_model_metadata(row.get("metadata"), path=config_path)
+
+        # Allow per-model provider override (base_url, api_key)
+        provider_override_raw = row.get("provider")
+        provider_override: dict[str, str] | None = None
+        if provider_override_raw is not None and isinstance(provider_override_raw, dict):
+            provider_override = {
+                k: str(v).strip()
+                for k, v in provider_override_raw.items()
+                if k in ("base_url", "api_key") and str(v).strip()
+            }
+
+        # Use per-model provider override if provided, otherwise use global provider
+        model_base_url = provider.base_url
+        model_api_key = provider.api_key
+        if provider_override:
+            model_base_url = provider_override.get("base_url", provider.base_url)
+            model_api_key = provider_override.get("api_key", provider.api_key)
+
         models.append(
             ProjectModelEntry(
                 id=model_id,
                 model=model_name,
                 config=OpenAICompatibleConfig(
                     provider_id=provider.id,
-                    base_url=provider.base_url,
-                    api_key=provider.api_key,
+                    base_url=model_base_url,
+                    api_key=model_api_key,
                     model=model_name,
                     timeout=provider.timeout,
                     max_retries=provider.max_retries,
                 ),
+                metadata=model_metadata,
+                provider_override=provider_override if provider_override else None,
             )
         )
 
@@ -327,6 +352,47 @@ def _coerce_optional_int(value: Any, *, label: str, path: Path) -> int | None:
     if value is None or str(value).strip() == "":
         return None
     return _coerce_positive_int(value, label=label, path=path)
+
+
+_VALID_SOURCE_TYPES = {"open_source", "closed_source"}
+_VALID_REASONING_LEVELS = {"none", "low", "medium", "high", "unknown"}
+
+
+def _parse_model_metadata(raw: Any, *, path: Path) -> dict[str, str] | None:
+    """Parse and validate optional model metadata dict from YAML."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise SnowlValidationError(f"model metadata must be a mapping in {path}")
+
+    result: dict[str, str] = {}
+    for key, value in raw.items():
+        str_key = str(key).strip()
+        if not str_key:
+            continue
+        str_value = str(value).strip()
+        result[str_key] = str_value
+
+    # Validate enum fields if present
+    source_type = result.get("source_type")
+    if source_type is not None and source_type not in _VALID_SOURCE_TYPES:
+        raise SnowlValidationError(
+            f"model metadata source_type must be one of {_VALID_SOURCE_TYPES}, got '{source_type}' in {path}"
+        )
+
+    reasoning = result.get("reasoning")
+    if reasoning is not None and reasoning not in _VALID_REASONING_LEVELS:
+        raise SnowlValidationError(
+            f"model metadata reasoning must be one of {_VALID_REASONING_LEVELS}, got '{reasoning}' in {path}"
+        )
+
+    # Normalize string fields
+    for key in ("company", "country", "model_family"):
+        val = result.get(key)
+        if val is not None:
+            result[key] = val.strip()
+
+    return result if result else None
 
 
 def _coerce_non_negative_int(value: Any, *, label: str, path: Path, default: int | None = None) -> int:

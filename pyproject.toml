@@ -68,3 +68,17 @@ include = ["snowl", "snowl.*"]
 [tool.setuptools.package-data]
 "snowl" = ["_webui/**", "_webui/**/*"]
 "snowl.ui" = ["panel_configs/*.yml", "panel_configs/*.yaml", "panel_configs/README.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = [
+  ".git",
+  ".snowl",
+  ".pytest_cache",
+  "__pycache__",
+  "build",
+  "dist",
+  "references",
+  "webui/.next",
+  "snowl/_webui/.next",
+]

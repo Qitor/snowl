@@ -1,10 +1,10 @@
-import { RunGalleryPage } from "@/components/run-gallery-page";
+import { RiskMonitorPage } from "@/components/risk-monitor-page";
 import { QueryProvider } from "@/components/providers/query-provider";
 
 export default function HomePage() {
   return (
     <QueryProvider>
-      <RunGalleryPage />
+      <RiskMonitorPage />
     </QueryProvider>
   );
 }
