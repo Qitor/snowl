@@ -111,7 +111,26 @@ def _write_osworld_dataset(root: Path) -> None:
     )
 
 
-def test_p1_matrix_smoke_three_benchmarks(tmp_path: Path) -> None:
+def test_p1_matrix_smoke_three_benchmarks(tmp_path: Path, monkeypatch) -> None:
+    from snowl.runtime.container_providers import ContainerSession, OSWorldProvider
+
+    async def _fake_prepare(self, context):  # type: ignore[no-untyped-def]
+        context.emit_event({"event": "osworld.container.started", "phase": "env", "ready": True})
+        return ContainerSession(
+            kind="gui_container",
+            env=object(),
+            benchmark="osworld",
+            metadata={"spec_hash": context.container_spec.spec_hash, "fake": True},
+        )
+
+    async def _fake_close(self, context, session):  # type: ignore[no-untyped-def]
+        _ = session
+        context.emit_event({"event": "osworld.container.stopped", "phase": "env", "exit_code": 0})
+        return {"exit_code": 0}
+
+    monkeypatch.setattr(OSWorldProvider, "prepare", _fake_prepare)
+    monkeypatch.setattr(OSWorldProvider, "close", _fake_close)
+
     project = tmp_path / "project"
     project.mkdir(parents=True, exist_ok=True)
     _write_project(project)

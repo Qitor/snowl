@@ -4,7 +4,14 @@ import asyncio
 import json
 from pathlib import Path
 
-from snowl.aggregator import AGGREGATE_SCHEMA_URI, RESULT_SCHEMA_URI, RESULT_SCHEMA_VERSION
+from snowl.aggregator import (
+    AGGREGATE_SCHEMA_URI,
+    BENCHMARK_SUMMARY_SCHEMA_URI,
+    DOMAIN_SUMMARY_SCHEMA_URI,
+    RESULT_SCHEMA_URI,
+    RESULT_SCHEMA_VERSION,
+    RESULT_SCHEMA_VERSION_V2,
+)
 from snowl.eval import run_eval
 
 
@@ -59,12 +66,29 @@ scorer = S()
     assert manifest["schema_version"] == RESULT_SCHEMA_VERSION
     assert manifest["result_schema_uri"] == RESULT_SCHEMA_URI
     assert manifest["aggregate_schema_uri"] == AGGREGATE_SCHEMA_URI
+    assert manifest["event_stream_mode"] == "live_append"
+    assert manifest["runtime_state"] == "runtime_state.json"
+    assert manifest["source"]["kind"] == "eval"
+    assert manifest["recovery"]["ledger"] == "recovery.json"
 
     aggregate = json.loads((out_dir / "aggregate.json").read_text(encoding="utf-8"))
     assert aggregate["schema_uri"] == AGGREGATE_SCHEMA_URI
     assert aggregate["schema_version"] == RESULT_SCHEMA_VERSION
+    assert "by_task_agent" in aggregate
+    assert "matrix" in aggregate
+
+    benchmark_summary = json.loads((out_dir / "benchmark_summary.json").read_text(encoding="utf-8"))
+    assert benchmark_summary["schema_uri"] == BENCHMARK_SUMMARY_SCHEMA_URI
+    assert benchmark_summary["schema_version"] == RESULT_SCHEMA_VERSION_V2
+    assert isinstance(benchmark_summary["rows"], list)
+
+    domain_summary = json.loads((out_dir / "domain_summary.json").read_text(encoding="utf-8"))
+    assert domain_summary["schema_uri"] == DOMAIN_SUMMARY_SCHEMA_URI
+    assert domain_summary["schema_version"] == RESULT_SCHEMA_VERSION_V2
+    assert isinstance(domain_summary["rows"], list)
 
     outcomes = json.loads((out_dir / "outcomes.json").read_text(encoding="utf-8"))
+    assert len(outcomes) == 1
     assert outcomes[0]["schema_version"] == RESULT_SCHEMA_VERSION
     assert outcomes[0]["schema_uri"] == RESULT_SCHEMA_URI
     assert outcomes[0]["task_result"]["final_output"]["traj"] == [
@@ -91,4 +115,46 @@ scorer = S()
     assert (out_dir / "trials.jsonl").exists()
     assert (out_dir / "events.jsonl").exists()
     assert (out_dir / "metrics_wide.csv").exists()
+    assert (out_dir / "leaderboard_rows.jsonl").exists()
     assert manifest["research_exports"]["trials_jsonl"] == "trials.jsonl"
+
+    trial_rows = [
+        json.loads(line)
+        for line in (out_dir / "trials.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(trial_rows) == 1
+    assert trial_rows[0]["run_id"] == manifest["run_id"]
+    assert trial_rows[0]["trial_index"] == 1
+    assert trial_rows[0]["task_result"]["payload"]["variant_id"] == "default"
+
+    events = [
+        json.loads(line)
+        for line in (out_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert events
+    assert [int(row["event_index"]) for row in events] == list(range(1, len(events) + 1))
+    assert [int(row["seq"]) for row in events] == list(range(1, len(events) + 1))
+    assert all(str(row["event_id"]).startswith(manifest["run_id"] + ":") for row in events)
+    assert {row["experiment_id"] for row in events} == {manifest["experiment_id"]}
+    assert any(row.get("trial_key") == "t1::a1::default::s1" for row in events)
+
+    runtime_state = json.loads((out_dir / "runtime_state.json").read_text(encoding="utf-8"))
+    assert runtime_state["status"] == "completed"
+    assert runtime_state["run_id"] == manifest["run_id"]
+    assert runtime_state["heartbeat_ts_ms"] >= runtime_state["started_ts_ms"]
+    assert runtime_state["ended_ts_ms"] >= runtime_state["started_ts_ms"]
+
+    recovery = json.loads((out_dir / "recovery.json").read_text(encoding="utf-8"))
+    attempt_key = "t1::a1::default::s1"
+    assert recovery["effective_attempts"][attempt_key].endswith("attempt-0001")
+    assert recovery["attempts_by_trial"][attempt_key][0]["effective"] is True
+    assert recovery["attempts_by_trial"][attempt_key][0]["retry_source"] == "initial_run"
+    attempts_jsonl = [
+        json.loads(line)
+        for line in (out_dir / "attempts.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(attempts_jsonl) == 1
+    assert attempts_jsonl[0]["trial_key"] == attempt_key

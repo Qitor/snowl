@@ -47,17 +47,21 @@ def build_model_variants(
             setattr(agent, "model", entry.model)
         except Exception:
             pass
+        params = {
+            "model": entry.model,
+            "timeout": entry.config.timeout,
+            "max_retries": entry.config.max_retries,
+        }
+        if entry.metadata:
+            params["model_metadata"] = entry.metadata
+
         variants.append(
             make_agent_variant(
                 agent=agent,
                 agent_id=agent_id,
                 variant_id=entry.id,
                 model=entry.model,
-                params={
-                    "model": entry.model,
-                    "timeout": entry.config.timeout,
-                    "max_retries": entry.config.max_retries,
-                },
+                params=params,
                 provenance={
                     "source": str(source_path),
                     "provider": matrix.provider.kind,

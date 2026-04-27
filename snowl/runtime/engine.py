@@ -199,6 +199,21 @@ def _error_partial(
 ) -> PartialTrialResult:
     ended = int(time.time() * 1000)
     error = ErrorInfo(code=code, message=message, retryable=False)
+    error_payload: dict[str, Any] = {
+        "stop_reason": StopReason.ERROR.value,
+        "phase": phase,
+        "variant_id": variant_id,
+        "model": variant_model,
+    }
+    # Propagate task metadata keys into error payload for aggregation
+    task_meta = request.task.metadata if isinstance(request.task.metadata, dict) else {}
+    for _mk in ("benchmark", "domain", "benchmark_type", "family", "primary_metric"):
+        if _mk in task_meta and _mk not in error_payload:
+            error_payload[_mk] = task_meta[_mk]
+    # Propagate model metadata from variant params
+    variant_params = getattr(request.agent, "params", None)
+    if isinstance(variant_params, dict) and "model_metadata" in variant_params:
+        error_payload["model_metadata"] = variant_params["model_metadata"]
     task_result = TaskResult(
         task_id=request.task.task_id,
         agent_id=getattr(request.agent, "agent_id"),
@@ -209,12 +224,7 @@ def _error_partial(
         timing=Timing(started_at_ms=started_ms, ended_at_ms=ended, duration_ms=max(0, ended - started_ms)),
         usage=Usage(),
         error=error,
-        payload={
-            "stop_reason": StopReason.ERROR.value,
-            "phase": phase,
-            "variant_id": variant_id,
-            "model": variant_model,
-        },
+        payload=error_payload,
     )
     trace = {
         "trace_events": [{"event": trace_event, "message": message}],
@@ -561,12 +571,18 @@ async def execute_agent_phase(prepared: PreparedTrial | TrialRequest) -> Partial
         "variant_id": prepared.variant_id,
         "model": prepared.variant_model,
         "sample_input": _extract_sample_input(request.sample),
-        **(
-            {"osworld_score": output.get("osworld_score")}
-            if output.get("osworld_score") is not None
-            else {}
-        ),
     }
+    # Propagate task metadata keys into payload for aggregation
+    task_meta = request.task.metadata if isinstance(request.task.metadata, dict) else {}
+    for _mk in ("benchmark", "domain", "benchmark_type", "family", "primary_metric"):
+        if _mk in task_meta and _mk not in payload:
+            payload[_mk] = task_meta[_mk]
+    # Propagate model metadata from variant params
+    variant_params = getattr(request.agent, "params", None)
+    if isinstance(variant_params, dict) and "model_metadata" in variant_params:
+        payload["model_metadata"] = variant_params["model_metadata"]
+    if output.get("osworld_score") is not None:
+        payload["osworld_score"] = output["osworld_score"]
     if prepared.prepared_sandbox is not None:
         payload["sandbox"] = {
             "sandbox_id": prepared.prepared_sandbox.sandbox_id,
@@ -643,6 +659,9 @@ async def score_trial_phase(prepared: PreparedTrial | TrialRequest, partial: Par
     score_context = partial.score_context
     variant_id = str(getattr(request.agent, "variant_id", "default"))
     emit = _emit_factory(request)
+
+    if isinstance(prepared, PreparedTrial) and prepared.failed_partial is partial:
+        return TrialOutcome(task_result=task_result, scores={}, trace=trace)
 
     try:
         emit(

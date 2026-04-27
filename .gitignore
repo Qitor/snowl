@@ -79,3 +79,4 @@ model.yaml
 # Local reference corpora
 # -----------------------------
 references/
+api_info.md

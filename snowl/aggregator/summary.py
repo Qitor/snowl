@@ -1,11 +1,13 @@
 """Aggregation contracts for compare outputs and monitor-facing metric matrices.
 
 Framework role:
-- Converts per-trial `TrialOutcome` rows into two stable projections consumed by reports/UI.
+- Converts per-trial `TrialOutcome` rows into stable projections consumed by reports/UI.
 - Defines grouping semantics by `(task_id, agent_id, variant_id)` and mean-based metric rollups.
+- V2 layer adds benchmark/domain/leaderboard rollups for risk-monitor-native display.
 
 Runtime/usage wiring:
 - `aggregate_outcomes` is called from `snowl.eval` after execution/scoring; its output is written into aggregate artifacts.
+- V2 functions (`aggregate_benchmark_rows`, `aggregate_domain_rows`, etc.) are called after `aggregate_outcomes` to produce dashboard-native artifacts.
 - Key formats produced here (`task::agent(::variant)` and `agent#variant`) are consumed by compare rendering and downstream tooling.
 
 Change guardrails:
@@ -14,11 +16,15 @@ Change guardrails:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from snowl.runtime import TrialOutcome
 
+
+# ---------------------------------------------------------------------------
+# V1 aggregation (unchanged)
+# ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class AggregateResult:
@@ -70,3 +76,260 @@ def aggregate_outcomes(outcomes: list[TrialOutcome]) -> AggregateResult:
         matrix.setdefault(task_id, {})[label] = metric_means
 
     return AggregateResult(by_task_agent=by_task_agent, matrix=matrix)
+
+
+# ---------------------------------------------------------------------------
+# V2 aggregation — benchmark/domain/leaderboard rollups
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class BenchmarkRow:
+    benchmark: str
+    domain: str
+    benchmark_type: str
+    agent_id: str
+    variant_id: str
+    model: str | None
+    primary_metric: str
+    primary_metric_value: float
+    metric_means: dict[str, float]
+    sample_count: int
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class DomainRow:
+    domain: str
+    capability_score: float
+    safety_score: float
+    risk_index: float
+    benchmark_count: int
+    model_count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class LeaderboardRow:
+    model: str
+    domain: str
+    benchmark_type: str
+    primary_metric_mean: float
+    rank: int
+    benchmarks_evaluated: int
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class RiskOverview:
+    domains: list[dict[str, Any]]
+    total_models: int
+    total_benchmarks: int
+    generated_at_utc: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def aggregate_benchmark_rows(
+    outcomes: list[TrialOutcome],
+    benchmark_metadata_map: dict[str, dict[str, Any]] | None = None,
+) -> list[BenchmarkRow]:
+    """Aggregate outcomes by (benchmark, agent_id, variant_id) into benchmark rows.
+
+    `benchmark_metadata_map` is a dict mapping benchmark name to metadata dict
+    (with keys like domain, benchmark_type, primary_metric, higher_is_better).
+    If absent, falls back to empty defaults.
+    """
+    if benchmark_metadata_map is None:
+        benchmark_metadata_map = {}
+
+    groups: dict[tuple[str, str, str], list[TrialOutcome]] = {}
+    for o in outcomes:
+        payload = o.task_result.payload or {}
+        variant_id = str(payload.get("variant_id") or "default")
+        benchmark = str(payload.get("benchmark") or "custom")
+        key = (benchmark, o.task_result.agent_id, variant_id)
+        groups.setdefault(key, []).append(o)
+
+    rows: list[BenchmarkRow] = []
+    for (benchmark, agent_id, variant_id), bucket in sorted(groups.items(), key=lambda x: x[0]):
+        meta = benchmark_metadata_map.get(benchmark, {})
+        domain = meta.get("domain", "uncategorized")
+        benchmark_type = meta.get("benchmark_type", "capability")
+        primary_metric = meta.get("primary_metric", "")
+        higher_is_better = meta.get("higher_is_better", True)
+
+        metric_values: dict[str, list[float]] = {}
+        for out in bucket:
+            for metric, score in out.scores.items():
+                metric_values.setdefault(metric, []).append(float(score.value))
+
+        metric_means = {m: _mean(v) for m, v in metric_values.items()}
+
+        primary_metric_value = 0.0
+        if primary_metric and primary_metric in metric_means:
+            primary_metric_value = metric_means[primary_metric]
+        elif metric_means:
+            first_key = next(iter(metric_means))
+            primary_metric_value = metric_means[first_key]
+            if not primary_metric:
+                primary_metric = first_key
+
+        model = (bucket[0].task_result.payload or {}).get("model")
+        model_metadata = (bucket[0].task_result.payload or {}).get("model_metadata") or {}
+
+        rows.append(BenchmarkRow(
+            benchmark=benchmark,
+            domain=domain,
+            benchmark_type=benchmark_type,
+            agent_id=agent_id,
+            variant_id=variant_id,
+            model=model,
+            primary_metric=primary_metric,
+            primary_metric_value=primary_metric_value,
+            metric_means=metric_means,
+            sample_count=len(bucket),
+            metadata=model_metadata,
+        ))
+
+    return rows
+
+
+def aggregate_domain_rows(benchmark_rows: list[BenchmarkRow]) -> list[DomainRow]:
+    """Aggregate benchmark rows by domain into domain-level scores."""
+    domain_groups: dict[str, list[BenchmarkRow]] = {}
+    for row in benchmark_rows:
+        domain_groups.setdefault(row.domain, []).append(row)
+
+    rows: list[DomainRow] = []
+    for domain, b_rows in sorted(domain_groups.items()):
+        cap_rows = [r for r in b_rows if r.benchmark_type == "capability"]
+        safety_rows = [r for r in b_rows if r.benchmark_type == "safety"]
+
+        capability_score = _mean([r.primary_metric_value for r in cap_rows]) if cap_rows else 0.0
+        safety_score = _mean([r.primary_metric_value for r in safety_rows]) if safety_rows else 0.0
+
+        risk_index = compute_risk_index(
+            capability_score=capability_score,
+            safety_score=safety_score,
+            has_safety=len(safety_rows) > 0,
+        )
+
+        models = {r.model for r in b_rows if r.model}
+
+        rows.append(DomainRow(
+            domain=domain,
+            capability_score=round(capability_score, 4),
+            safety_score=round(safety_score, 4),
+            risk_index=round(risk_index, 4),
+            benchmark_count=len({r.benchmark for r in b_rows}),
+            model_count=len(models),
+        ))
+
+    return rows
+
+
+def compute_risk_index(
+    capability_score: float,
+    safety_score: float,
+    has_safety: bool = True,
+    beta_config: dict[str, Any] | None = None,
+) -> float:
+    """Compute a risk index from capability and safety scores.
+
+    For domains with safety benchmarks:
+      risk = safety_weight * (1 - safety_score) + capability_weight * capability_score
+
+    For capability-only domains:
+      risk = capability_score (raw capability is the signal)
+
+    Default weights: safety_weight=0.7, capability_weight=0.3.
+    """
+    if beta_config is None:
+        beta_config = {}
+
+    safety_weight = beta_config.get("safety_weight", 0.7)
+    capability_weight = beta_config.get("capability_weight", 0.3)
+
+    if has_safety:
+        return safety_weight * (1.0 - safety_score) + capability_weight * capability_score
+    else:
+        return capability_score
+
+
+def aggregate_leaderboard_rows(benchmark_rows: list[BenchmarkRow]) -> list[LeaderboardRow]:
+    """Build ranked leaderboard rows per (model, domain, benchmark_type)."""
+    groups: dict[tuple[str | None, str, str], list[BenchmarkRow]] = {}
+    for row in benchmark_rows:
+        if not row.model:
+            continue
+        key = (row.model, row.domain, row.benchmark_type)
+        groups.setdefault(key, []).append(row)
+
+    rows: list[LeaderboardRow] = []
+    for (model, domain, benchmark_type), b_rows in sorted(groups.items()):
+        metric_mean = _mean([r.primary_metric_value for r in b_rows])
+        benchmarks_evaluated = len({r.benchmark for r in b_rows})
+        metadata = b_rows[0].metadata if b_rows else {}
+
+        rows.append(LeaderboardRow(
+            model=model,
+            domain=domain,
+            benchmark_type=benchmark_type,
+            primary_metric_mean=round(metric_mean, 4),
+            rank=0,  # assigned below
+            benchmarks_evaluated=benchmarks_evaluated,
+            metadata=metadata,
+        ))
+
+    # Rank within each (domain, benchmark_type) group
+    rank_groups: dict[tuple[str, str], list[LeaderboardRow]] = {}
+    for row in rows:
+        rank_groups.setdefault((row.domain, row.benchmark_type), []).append(row)
+
+    for (_, _), group in rank_groups.items():
+        group.sort(key=lambda r: r.primary_metric_mean, reverse=True)
+        for i, row in enumerate(group, start=1):
+            # Create new row with rank assigned (frozen dataclass, need new instance)
+            idx = rows.index(row)
+            rows[idx] = LeaderboardRow(
+                model=row.model,
+                domain=row.domain,
+                benchmark_type=row.benchmark_type,
+                primary_metric_mean=row.primary_metric_mean,
+                rank=i,
+                benchmarks_evaluated=row.benchmarks_evaluated,
+                metadata=row.metadata,
+            )
+
+    return rows
+
+
+def build_risk_overview(
+    domain_rows: list[DomainRow],
+    leaderboard_rows: list[LeaderboardRow],
+    generated_at_utc: str = "",
+) -> RiskOverview:
+    """Build a top-level risk overview from domain and leaderboard rows."""
+    from datetime import datetime, timezone
+
+    if not generated_at_utc:
+        generated_at_utc = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+    total_models = len({r.model for r in leaderboard_rows})
+    total_benchmarks = sum(d.benchmark_count for d in domain_rows)
+
+    return RiskOverview(
+        domains=[d.to_dict() for d in domain_rows],
+        total_models=total_models,
+        total_benchmarks=total_benchmarks,
+        generated_at_utc=generated_at_utc,
+    )

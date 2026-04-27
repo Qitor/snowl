@@ -24,6 +24,7 @@ class ExamplesLintReport:
 
 
 REQUIRED_FILES = ("task.py", "agent.py", "scorer.py")
+EXAMPLE_CATEGORY_DIRS = {"agents"}
 
 
 def validate_examples_layout(root: str | Path) -> ExamplesLintReport:
@@ -45,7 +46,10 @@ def validate_examples_layout(root: str | Path) -> ExamplesLintReport:
     example_dirs = [
         d
         for d in sorted(root_path.iterdir())
-        if d.is_dir() and not d.name.startswith(".") and d.name != "__pycache__"
+        if d.is_dir()
+        and not d.name.startswith(".")
+        and d.name != "__pycache__"
+        and d.name not in EXAMPLE_CATEGORY_DIRS
     ]
     checks.append(
         {
@@ -74,4 +78,3 @@ def validate_examples_layout(root: str | Path) -> ExamplesLintReport:
 
     ok = all(bool(c.get("ok")) for c in checks)
     return ExamplesLintReport(ok=ok, checks=checks)
-

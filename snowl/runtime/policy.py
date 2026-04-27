@@ -1,0 +1,175 @@
+"""Runtime budget policy and heuristics for eval runs."""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from typing import Any
+
+from snowl.core import Task
+from snowl.project_config import ProjectConfig
+
+
+@dataclass(frozen=True)
+class RuntimeBudgetResolution:
+    max_running_trials: int
+    max_container_slots: int | None
+    max_builds: int
+    max_scoring_tasks: int
+    provider_budgets: dict[str, int]
+    auto_container_slots: int | None
+    docker_like: bool
+
+    def to_scheduler_kwargs(self) -> dict[str, Any]:
+        return {
+            "max_running_trials": self.max_running_trials,
+            "max_container_slots": self.max_container_slots,
+            "max_builds": self.max_builds,
+            "max_scoring_tasks": self.max_scoring_tasks,
+            "provider_budgets": dict(self.provider_budgets),
+        }
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "max_running_trials": self.max_running_trials,
+            "max_container_slots": self.max_container_slots,
+            "max_builds": self.max_builds,
+            "max_scoring_tasks": self.max_scoring_tasks,
+            "provider_budgets": dict(self.provider_budgets),
+            "auto_container_slots": self.auto_container_slots,
+            "docker_like": self.docker_like,
+        }
+
+
+def available_memory_gb() -> float | None:
+    try:
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        avail_pages = os.sysconf("SC_AVPHYS_PAGES")
+        return float(page_size * avail_pages) / (1024.0**3)
+    except Exception:
+        return None
+
+
+def auto_container_slots(*, benchmark: str, cpu_count: int | None = None, mem_gb: float | None = None) -> int:
+    cpu = max(1, int(cpu_count or os.cpu_count() or 1))
+    memory = mem_gb if mem_gb is not None else available_memory_gb()
+    benchmark_key = str(benchmark or "").strip().lower()
+    if benchmark_key in {"", "custom", "strongreject", "toolemu", "agentsafetybench"}:
+        return 0
+    if benchmark_key == "terminalbench":
+        by_cpu = max(1, min(4, cpu // 2))
+        if memory is None:
+            return by_cpu
+        return max(1, min(by_cpu, int(memory // 6) or 1))
+    if benchmark_key == "osworld":
+        by_cpu = max(1, min(2, cpu // 4 or 1))
+        if memory is None:
+            return by_cpu
+        return max(1, min(by_cpu, int(memory // 10) or 1))
+    return max(1, min(2, cpu // 2 or 1))
+
+
+def benchmark_name_for_task(task: Task) -> str:
+    metadata = getattr(task, "metadata", {}) or {}
+    if not isinstance(metadata, dict):
+        return "custom"
+    value = str(metadata.get("benchmark") or metadata.get("benchmark_name") or "").strip().lower()
+    return value or "custom"
+
+
+def is_docker_like_task(task: Task) -> bool:
+    try:
+        env_type = str(getattr(task.env_spec, "env_type", "") or "").lower()
+    except Exception:
+        env_type = ""
+    if env_type in {"terminal", "gui", "docker"}:
+        return True
+    try:
+        sandbox_spec = getattr(task.env_spec, "sandbox_spec", None)
+        if sandbox_spec is not None:
+            provider = str(getattr(sandbox_spec, "provider", "") or "").lower()
+            if provider in {"docker", "podman"}:
+                return True
+    except Exception:
+        pass
+    metadata = getattr(task, "metadata", {}) or {}
+    if isinstance(metadata, dict):
+        bench = str(metadata.get("benchmark") or metadata.get("benchmark_name") or "").lower()
+        if bench in {"terminalbench", "osworld"}:
+            return True
+    return False
+
+
+class RuntimePolicy:
+    """Resolve eval runtime controls from config, overrides, and heuristics.
+
+    This policy owns budget defaults such as docker-like serial execution. It
+    does not create schedulers, dispatch trials, or interpret retry behavior.
+    """
+
+    def resolve(
+        self,
+        *,
+        tasks: list[Task],
+        project_config: ProjectConfig | None,
+        interaction_controller: Any | None,
+        max_running_trials: int | None,
+        max_container_slots: int | None,
+        max_builds: int | None,
+        max_scoring_tasks: int | None,
+        provider_budgets: dict[str, int] | None,
+    ) -> RuntimeBudgetResolution:
+        runtime_cfg = project_config.runtime if project_config is not None else None
+        explicit_running = max_running_trials is not None
+        benchmark_names = sorted({benchmark_name_for_task(task) for task in tasks})
+        benchmark_hint = benchmark_names[0] if len(benchmark_names) == 1 else "mixed"
+
+        if max_running_trials is None:
+            max_running_trials = runtime_cfg.max_running_trials if runtime_cfg is not None else None
+        if max_builds is None:
+            max_builds = runtime_cfg.max_builds if runtime_cfg is not None else None
+        if max_scoring_tasks is None:
+            max_scoring_tasks = runtime_cfg.max_scoring_tasks if runtime_cfg is not None else None
+        if provider_budgets is None:
+            provider_budgets = dict(runtime_cfg.provider_budgets) if runtime_cfg is not None else {}
+
+        auto_container = False
+        if max_container_slots is None:
+            raw = runtime_cfg.max_container_slots if runtime_cfg is not None else "auto"
+            if isinstance(raw, str) and raw.strip().lower() == "auto":
+                auto_container = True
+                max_container_slots = auto_container_slots(benchmark=benchmark_hint)
+            elif raw is None:
+                auto_container = True
+                max_container_slots = auto_container_slots(benchmark=benchmark_hint)
+            else:
+                max_container_slots = int(raw)
+
+        if max_running_trials is None:
+            max_running_trials = min(8, max(1, int(os.cpu_count() or 4)))
+        if max_builds is None:
+            max_builds = 2
+        if max_scoring_tasks is None:
+            max_scoring_tasks = max_running_trials
+
+        if interaction_controller is not None:
+            max_running_trials = 1
+        docker_like = any(is_docker_like_task(t) for t in tasks)
+        if docker_like and not explicit_running:
+            max_running_trials = 1
+
+        provider_budget_map = dict(provider_budgets or {})
+        if project_config is not None and project_config.provider.id not in provider_budget_map:
+            provider_budget_map[project_config.provider.id] = max(max_running_trials, max_scoring_tasks)
+        if not provider_budget_map:
+            provider_budget_map["default"] = max(max_running_trials, max_scoring_tasks)
+
+        return RuntimeBudgetResolution(
+            max_running_trials=max_running_trials,
+            max_container_slots=max_container_slots,
+            max_builds=max_builds,
+            max_scoring_tasks=max_scoring_tasks,
+            provider_budgets=provider_budget_map,
+            auto_container_slots=max_container_slots if auto_container else None,
+            docker_like=docker_like,
+        )

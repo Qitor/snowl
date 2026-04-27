@@ -165,8 +165,9 @@ Use this planning heuristic when assigning work to Codex:
 
 If choosing what to work on next, prefer this order:
 
-1. contract and artifact clarity
-2. experiment aggregation and comparison
-3. runtime/container reliability
-4. extension ergonomics
-5. deeper UX polish
+1. core infrastructure for running more benchmark and agent combinations
+2. third-party benchmark adapter coverage and onboarding ergonomics
+3. agent/framework integration paths for OpenAI SDK, LangGraph, and custom stacks
+4. runtime/container reliability for larger suites
+5. contract and artifact clarity needed by external adapters
+6. web UI polish only after the infrastructure and adapter surface are working well

@@ -35,7 +35,27 @@ class BaseBenchmarkAdapter(ABC, Generic[RowT]):
 
     @property
     def info(self) -> BenchmarkInfo:
+        return self.benchmark_info()
+
+    def benchmark_info(self) -> BenchmarkInfo:
+        """Return benchmark metadata. By default, looks up the registry for this adapter's name.
+
+        Subclasses can override this to provide metadata directly, which takes
+        precedence over the registry lookup.
+        """
+        from snowl.benchmarks.registry import get_default_benchmark_registry
+
+        registry = get_default_benchmark_registry()
+        for entry in registry.list():
+            if entry.info.name == self.name:
+                return entry.info
         return BenchmarkInfo(name=self.name, description=self.description)
+
+    def sample_card(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {"id": row.get("id"), "input": row.get("input", "")[:200]}
+
+    def trial_metadata(self, task: dict[str, Any]) -> dict[str, Any]:
+        return {}
 
     def list_splits(self) -> list[str]:
         splits: set[str] = set()
@@ -144,6 +164,14 @@ class BaseBenchmarkAdapter(ABC, Generic[RowT]):
         dataset_path = self._dataset_path_str()
         if dataset_path:
             metadata["dataset_path"] = dataset_path
+        info = self.benchmark_info()
+        metadata["domain"] = info.domain
+        metadata["benchmark_type"] = info.benchmark_type
+        metadata["family"] = info.family
+        metadata["primary_metric"] = info.primary_metric
+        extra = self.trial_metadata(metadata)
+        if extra:
+            metadata.update(extra)
         return metadata
 
     def _no_samples_error(self, split: str) -> str:

@@ -5,7 +5,11 @@ This document explains the runtime architecture as implemented today. For future
 ## Key Files
 
 - `snowl/eval.py`
-  - Project loading, plan expansion, runtime budget resolution, main dispatch loop, recovery, artifact writing.
+  - Project loading, service construction, queue orchestration, retry queue handling, and run shutdown.
+- `snowl/eval_spec.py`, `snowl/planning.py`, `snowl/eval_loop.py`
+  - Internal normalized eval spec, plan/trial identity, and one-trial lifecycle side effects.
+- `snowl/artifacts.py`, `snowl/observability/events.py`, `snowl/runtime/recovery.py`, `snowl/runtime/policy.py`
+  - Internal artifact persistence, live events/runtime state, recovery ledger, and runtime budget policy boundaries.
 - `snowl/runtime/engine.py`
   - Trial phases: prepare, execute, score, finalize.
 - `snowl/runtime/resource_scheduler.py`
@@ -86,6 +90,7 @@ What this does not mean yet:
 That function:
 
 - loads or reuses `ProjectConfig`
+- normalizes entrypoint facts into internal `EvalSpec`
 - loads `task.py`, `agent.py`, `scorer.py`, optional `tool.py`
 - expands agents into `AgentVariant`s when author code uses `build_model_variants(...)`
 - builds an `EvalPlan` made of `PlanTrial`s
@@ -126,6 +131,7 @@ The main eval loop in `snowl/eval.py` is the real runtime behavior for repo-leve
 3. Maintain a separate `recovery_queue` for deferred auto retries.
 4. Dispatch up to `max_running_trials + max_scoring_tasks` in-flight trial coroutines.
 5. For each trial:
+   - delegate one-trial side effects to internal `EvalTrialLifecycle`
    - construct `TrialRequest`
    - call `prepare_trial_phase(request)` under `scheduler.running_trial_slot()`
    - call `execute_agent_phase(prepared)` under the same running-trial admission

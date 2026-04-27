@@ -15,3 +15,9 @@ from __future__ import annotations
 RESULT_SCHEMA_VERSION = "v1"
 RESULT_SCHEMA_URI = "snowl://schemas/results/v1"
 AGGREGATE_SCHEMA_URI = "snowl://schemas/aggregate/v1"
+
+RESULT_SCHEMA_VERSION_V2 = "v2"
+BENCHMARK_SUMMARY_SCHEMA_URI = "snowl://schemas/benchmark_summary/v2"
+DOMAIN_SUMMARY_SCHEMA_URI = "snowl://schemas/domain_summary/v2"
+LEADERBOARD_ROW_SCHEMA_URI = "snowl://schemas/leaderboard_row/v2"
+AGGREGATE_SCHEMA_URI_V2 = "snowl://schemas/aggregate/v2"
