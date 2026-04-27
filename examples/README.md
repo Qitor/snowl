@@ -28,6 +28,7 @@ Official benchmark examples in this repo:
 - `examples/osworld-official`
 - `examples/toolemu-official`
 - `examples/agentsafetybench-official`
+- `examples/safety-benchmark-smoke`
 
 Agent wrapper snippets live under `examples/agents/`. They are intentionally
 small files for adapting your own async agent, OpenAI SDK loop, or LangGraph app
@@ -58,4 +59,12 @@ Benchmark adapter mode:
 
 ```bash
 snowl bench run terminalbench --project examples/terminalbench-official/project.yml --split test --variant qwen25_7b
+```
+
+Remote safety benchmark smoke testing:
+
+```bash
+export SNOWL_SMOKE_API_KEY=...
+snowl bench run coconot --project examples/safety-benchmark-smoke --split test --limit 1
+snowl bench run xstest --project examples/safety-benchmark-smoke --split test --limit 1 --adapter-arg subset=unsafe
 ```

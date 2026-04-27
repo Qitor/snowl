@@ -43,7 +43,8 @@ change.
 - YAML-first project entrypoint with `project.yml`
 - Multi-model sweeps through `agent_matrix.models`
 - Built-in adapters for `strongreject`, `terminalbench`, `osworld`, `toolemu`,
-  `agentsafetybench`, `mask`, `wmdp`, plus generic JSONL/CSV style workflows
+  `agentsafetybench`, `xstest`, `coconot`, `fortress`, `agentharm`, `mask`,
+  `wmdp`, plus generic JSONL/CSV style workflows
 - Local runtime orchestration for terminal and GUI-style benchmark tasks
 - Provider-aware concurrency controls for OpenAI-compatible model clients
 - Automatic live artifacts: `manifest.json`, `plan.json`, `events.jsonl`,

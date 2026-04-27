@@ -19,7 +19,10 @@ from typing import Any, Callable
 
 from snowl.benchmarks.base import BenchmarkAdapter, BenchmarkInfo
 from snowl.benchmarks.agentsafetybench import AgentSafetyBenchBenchmarkAdapter
+from snowl.benchmarks.agentharm import AgentHarmBenchmarkAdapter
+from snowl.benchmarks.coconot import CoconotBenchmarkAdapter
 from snowl.benchmarks.csv_adapter import CsvBenchmarkAdapter
+from snowl.benchmarks.fortress import FortressBenchmarkAdapter
 from snowl.benchmarks.jsonl_adapter import JsonlBenchmarkAdapter
 from snowl.benchmarks.mask import MASKBenchmarkAdapter
 from snowl.benchmarks.osworld import OSWorldBenchmarkAdapter
@@ -27,6 +30,7 @@ from snowl.benchmarks.strongreject import StrongRejectBenchmarkAdapter
 from snowl.benchmarks.terminalbench import TerminalBenchBenchmarkAdapter
 from snowl.benchmarks.toolemu import ToolEmuBenchmarkAdapter
 from snowl.benchmarks.wmdp import WMDPBenchmarkAdapter
+from snowl.benchmarks.xstest import XSTestBenchmarkAdapter
 from snowl.errors import SnowlValidationError
 
 
@@ -69,6 +73,36 @@ def get_default_benchmark_registry() -> BenchmarkRegistry:
 def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> BenchmarkRegistry:
     registry = registry or get_default_benchmark_registry()
     registry.register(
+        name="agentharm",
+        info=BenchmarkInfo(
+            name="agentharm",
+            description="AgentHarm benchmark adapter.",
+            domain="agentic_safety",
+            benchmark_type="safety",
+            family="agentharm",
+            primary_metric="agentharm_safety",
+            higher_is_better=True,
+            sample_preview_mode="tool_trace",
+            dashboard_tags=["agent_safety", "tool_use", "refusal"],
+        ),
+        factory=lambda **kwargs: AgentHarmBenchmarkAdapter(**kwargs),
+    )
+    registry.register(
+        name="agentharm_benign",
+        info=BenchmarkInfo(
+            name="agentharm_benign",
+            description="AgentHarm benign benchmark adapter.",
+            domain="agentic_safety",
+            benchmark_type="safety",
+            family="agentharm",
+            primary_metric="agentharm_safety",
+            higher_is_better=True,
+            sample_preview_mode="tool_trace",
+            dashboard_tags=["agent_safety", "tool_use", "refusal"],
+        ),
+        factory=lambda **kwargs: AgentHarmBenchmarkAdapter(mode="benign", **kwargs),
+    )
+    registry.register(
         name="agentsafetybench",
         info=BenchmarkInfo(
             name="agentsafetybench",
@@ -82,6 +116,21 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             dashboard_tags=["agent_safety"],
         ),
         factory=lambda **kwargs: AgentSafetyBenchBenchmarkAdapter(**kwargs),
+    )
+    registry.register(
+        name="coconot",
+        info=BenchmarkInfo(
+            name="coconot",
+            description="Coconot benchmark adapter.",
+            domain="agentic_safety",
+            benchmark_type="safety",
+            family="coconot",
+            primary_metric="noncompliance_score",
+            higher_is_better=True,
+            sample_preview_mode="dialog",
+            dashboard_tags=["noncompliance", "refusal"],
+        ),
+        factory=lambda **kwargs: CoconotBenchmarkAdapter(**kwargs),
     )
     registry.register(
         name="jsonl",
@@ -98,6 +147,36 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             description="Generic CSV benchmark adapter.",
         ),
         factory=lambda **kwargs: CsvBenchmarkAdapter(**kwargs),
+    )
+    registry.register(
+        name="fortress_adversarial",
+        info=BenchmarkInfo(
+            name="fortress_adversarial",
+            description="FORTRESS adversarial benchmark adapter.",
+            domain="agentic_safety",
+            benchmark_type="safety",
+            family="fortress",
+            primary_metric="ARS",
+            higher_is_better=True,
+            sample_preview_mode="dialog",
+            dashboard_tags=["safeguards", "refusal"],
+        ),
+        factory=lambda **kwargs: FortressBenchmarkAdapter(mode="adversarial", **kwargs),
+    )
+    registry.register(
+        name="fortress_benign",
+        info=BenchmarkInfo(
+            name="fortress_benign",
+            description="FORTRESS benign benchmark adapter.",
+            domain="agentic_safety",
+            benchmark_type="safety",
+            family="fortress",
+            primary_metric="ORS",
+            higher_is_better=True,
+            sample_preview_mode="dialog",
+            dashboard_tags=["safeguards", "refusal"],
+        ),
+        factory=lambda **kwargs: FortressBenchmarkAdapter(mode="benign", **kwargs),
     )
     registry.register(
         name="strongreject",
@@ -192,6 +271,21 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             dashboard_tags=["mcq", "chemistry"],
         ),
         factory=lambda **kwargs: WMDPBenchmarkAdapter(variant="wmdp-chem", **kwargs),
+    )
+    registry.register(
+        name="xstest",
+        info=BenchmarkInfo(
+            name="xstest",
+            description="XSTest benchmark adapter.",
+            domain="agentic_safety",
+            benchmark_type="safety",
+            family="xstest",
+            primary_metric="xstest_safety",
+            higher_is_better=True,
+            sample_preview_mode="dialog",
+            dashboard_tags=["refusal", "overrefusal"],
+        ),
+        factory=lambda **kwargs: XSTestBenchmarkAdapter(**kwargs),
     )
     registry.register(
         name="mask",

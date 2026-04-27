@@ -128,6 +128,37 @@ def _extract_sample_input(sample: Mapping[str, Any]) -> dict[str, Any]:
     return {"sample": _json_safe(sample)}
 
 
+def _sample_declared_tool_names(sample: Mapping[str, Any]) -> list[str]:
+    metadata = sample.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return []
+    raw = metadata.get("tool_names")
+    if raw is None:
+        raw = metadata.get("target_functions")
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        names = [raw]
+    elif isinstance(raw, Sequence) and not isinstance(raw, (str, bytes, bytearray)):
+        names = [str(item) for item in raw]
+    else:
+        return []
+    return [name.strip() for name in names if name.strip()]
+
+
+def _select_sample_tools(
+    specs: Sequence[ToolSpec],
+    sample: Mapping[str, Any],
+) -> tuple[list[ToolSpec], list[str]]:
+    requested_names = _sample_declared_tool_names(sample)
+    if not requested_names:
+        return list(specs), []
+    by_name = {spec.name: spec for spec in specs}
+    missing = [name for name in requested_names if name not in by_name]
+    selected = [by_name[name] for name in requested_names if name in by_name]
+    return selected, missing
+
+
 def _sample_preview_text(sample: Mapping[str, Any], *, max_chars: int = 240) -> str:
     text = ""
     if "input" in sample:
@@ -348,6 +379,36 @@ async def prepare_trial_phase(request: TrialRequest) -> PreparedTrial:
     resolved_tool_specs: list[ToolSpec] = []
     if request.tools:
         resolved_tool_specs = [resolve_tool_spec(t) for t in request.tools]
+    resolved_tool_specs, missing_sample_tools = _select_sample_tools(
+        resolved_tool_specs,
+        request.sample,
+    )
+    if missing_sample_tools:
+        return PreparedTrial(
+            request=request,
+            started_ms=started,
+            sample_id=sample_id,
+            variant_id=variant_id,
+            variant_model=variant_model,
+            state=state,
+            context=context,
+            resolved_tool_specs=resolved_tool_specs,
+            sandbox_runtime=request.sandbox_runtime or _DEFAULT_SANDBOX_RUNTIME,
+            container_runtime=container_runtime,
+            container_prepare=container_prepare,
+            failed_partial=_error_partial(
+                request,
+                started_ms=started,
+                sample_id=sample_id,
+                variant_id=variant_id,
+                variant_model=variant_model,
+                code="sample_tool_missing",
+                message="Sample requested unavailable tools: " + ", ".join(missing_sample_tools),
+                phase="prepare",
+                trace_event="runtime.tool.error",
+            ),
+        )
+    context.metadata["available_tool_names"] = [spec.name for spec in resolved_tool_specs]
 
     required_ops = {op for spec in resolved_tool_specs for op in spec.required_ops}
     provided_ops = set(request.task.env_spec.provided_ops)

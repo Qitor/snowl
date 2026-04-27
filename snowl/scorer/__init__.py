@@ -18,6 +18,8 @@ from snowl.scorer.base import (
     normalize_text,
 )
 from snowl.scorer.composition import ChainedScorer, WeightedCompositeScorer, chain, weighted
+from snowl.scorer.choice import ChoiceAnswerScorer, choice_answer, extract_choice_answer, normalize_choice_targets
+from snowl.scorer.grade_judge import MultiJudgeReducer, RegexGradeJudgeScorer, regex_grade_judge
 from snowl.scorer.model_judge import ModelAsJudgeJSONScorer, model_as_judge_json
 from snowl.scorer.test_results import (
     UnitTestResultScorer,
@@ -38,22 +40,29 @@ __all__ = [
     "IncludesScorer",
     "MatchScorer",
     "ChainedScorer",
+    "ChoiceAnswerScorer",
     "ModelAsJudgeJSONScorer",
+    "MultiJudgeReducer",
     "OutputExtractor",
     "PatternScorer",
+    "RegexGradeJudgeScorer",
     "WeightedCompositeScorer",
     "UnitTestResultScorer",
     "UnitTestStatus",
     "TargetExtractor",
     "default_output_extractor",
     "default_target_extractor",
+    "choice_answer",
     "includes",
     "match",
     "model_as_judge_json",
     "normalize_text",
+    "extract_choice_answer",
+    "normalize_choice_targets",
     "parse_pytest_summary",
     "pattern",
     "chain",
+    "regex_grade_judge",
     "weighted",
     "unit_test_results",
 ]

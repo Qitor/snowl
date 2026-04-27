@@ -13,10 +13,11 @@ Snowl currently supports:
 - One provider block per project, with only `provider.kind: openai_compatible` supported in `snowl/project_config.py`.
 - Multi-model sweeps through `agent_matrix.models`, expanded into `AgentVariant`s.
 - One active scorer per trial.
-- Built-in benchmark adapters for `strongreject`, `terminalbench`, `osworld`, `toolemu`, `agentsafetybench`, plus generic `jsonl` and `csv`.
+- Built-in benchmark adapters for `strongreject`, `terminalbench`, `osworld`, `toolemu`, `agentsafetybench`, `xstest`, `coconot`, `fortress_adversarial`, `fortress_benign`, `agentharm`, `agentharm_benign`, plus generic `jsonl` and `csv`.
 - Third-party/local benchmark adapters can be loaded with `--adapter module.py:object`; `snowl bench scaffold` creates a JSONL-oriented adapter template.
 - `snowl suite check` and `snowl suite run` execute a simple sequential multi-benchmark suite and write `.snowl/suites/<suite_run_id>/suite_summary.json`.
 - Built-in baseline agents in `snowl/agents/chat_agent.py` and `snowl/agents/react_agent.py`.
+- Remote benchmark asset helpers can load pinned Hugging Face datasets, Hugging Face snapshot files, and checksum-verified direct URLs into `.snowl/cache/benchmarks` or `SNOWL_BENCHMARK_CACHE`. These remote dataset paths require the optional `safety_assets` dependencies.
 - Run artifacts under `.snowl/runs/<run_id>/`.
 - Plain CLI eval flow plus an auto-started web monitor sidecar.
 - Recovery via `snowl retry <run_id>` and deferred in-run auto-retry for non-success trials.
@@ -39,6 +40,7 @@ What works well today:
 - Provider budgets are enforced for OpenAI-compatible model calls through `OpenAICompatibleChatClient` and `scheduler.provider_slot(...)`.
 - TerminalBench and OSWorld now use a task-declared `runtime_container` contract that runtime resolves before agent execution.
 - Runtime-owned benchmark container resources are registered, leased, released, and summarized by a shared lifecycle manager.
+- Samples can restrict available tools with `metadata.tool_names` or `metadata.target_functions`; missing requested tools fail in prepare with a non-retryable validation error.
 - Repo-level `run_eval()` now performs trial finalize and a run-end cleanup barrier before closing live event output.
 - Deferred auto-retry and manual `snowl retry` both reuse a recovery ledger instead of inventing a separate retry system.
 - Live observability artifacts are written early enough for the monitor to show running runs before completion.

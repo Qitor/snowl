@@ -65,6 +65,12 @@ This file is the quickest repo navigation map for humans and coding agents. It d
   - `osworld`
   - `toolemu`
   - `agentsafetybench`
+  - `xstest`
+  - `coconot`
+  - `fortress_adversarial`
+  - `fortress_benign`
+  - `agentharm`
+  - `agentharm_benign`
   - `jsonl`
   - `csv`
 

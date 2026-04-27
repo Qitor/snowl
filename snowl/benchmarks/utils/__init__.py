@@ -22,11 +22,22 @@ from snowl.benchmarks.utils.io import (
 from snowl.benchmarks.utils.paths import default_reference_path
 from snowl.benchmarks.utils.split import normalize_split
 from snowl.benchmarks.utils.task_builder import build_benchmark_task
+from snowl.benchmarks.assets import (
+    DirectURLAsset,
+    HFDatasetAsset,
+    HFSnapshotFileAsset,
+    benchmark_cache_root,
+    stable_benchmark_id,
+)
 
 __all__ = [
     "build_benchmark_task",
+    "benchmark_cache_root",
     "default_reference_path",
+    "DirectURLAsset",
     "ensure_path_exists",
+    "HFDatasetAsset",
+    "HFSnapshotFileAsset",
     "matches_filters",
     "normalize_split",
     "read_csv_rows",
@@ -34,4 +45,5 @@ __all__ = [
     "read_json_object",
     "read_jsonl_rows",
     "read_yaml_mapping",
+    "stable_benchmark_id",
 ]
