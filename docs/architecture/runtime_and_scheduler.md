@@ -72,14 +72,16 @@ Current implementation details:
 
 - Contract normalization lives in `snowl/runtime/container_contract.py`.
 - Runtime registration and cleanup ownership live in `snowl/runtime/container_lifecycle.py`.
+- Runtime-owned per-trial workspace materialization and snapshots live in `snowl/runtime/workspace.py`.
 - `prepare_trial_phase()` injects both `__snowl_container_session` and `__snowl_runtime_container_spec` into agent context.
+- When a sample declares workspace inputs, runtime injects `__snowl_workspace`, `workspace_dir`, and before/after snapshot metadata for scorers.
 - TerminalBench and OSWorld example agents now treat a missing runtime-managed session as a runtime contract violation.
 
 What this does not mean yet:
 
 - runtime-owned containers are not warm-pooled by default
 - `spec_hash` does not yet drive dispatch priority or reuse
-- `max_container_slots` is still not a universal admission gate across every benchmark container path
+- `max_container_slots` gates runtime-managed container prepare through `begin_prepare()`
 
 ## Planner / Eval / Runtime Relationship
 
@@ -133,10 +135,10 @@ The main eval loop in `snowl/eval.py` is the real runtime behavior for repo-leve
 5. For each trial:
    - delegate one-trial side effects to internal `EvalTrialLifecycle`
    - construct `TrialRequest`
-   - call `prepare_trial_phase(request)` under `scheduler.running_trial_slot()`
-   - call `execute_agent_phase(prepared)` under the same running-trial admission
-   - call `score_trial_phase(prepared, partial)` under `scheduler.scoring_slot()`
-   - call `finalize_trial_phase(prepared, outcome)` after scoring
+   - call `prepare_trial_phase(request)` under `scheduler.begin_prepare(...)`
+   - call `execute_agent_phase(prepared)` under `scheduler.begin_execute(...)`
+   - call `score_trial_phase(prepared, partial)` under `scheduler.begin_score(...)`
+   - call `finalize_trial_phase(prepared, outcome)` under `scheduler.begin_finalize(...)`
    - record the recovery attempt
    - schedule deferred auto retry if the outcome is retry-eligible
 6. In the run `finally` path:
@@ -157,18 +159,18 @@ The main eval loop and `execute_trial()` are now aligned on phase order:
 - score
 - finalize
 
-The remaining mismatch is not phase omission; it is phase admission depth. Prepare still happens while the trial is already holding `running_trial_slot()`, and finalize is still a helper call rather than a separately scheduled phase.
+The remaining mismatch is dispatch depth, not phase admission. The outer eval loop still schedules whole trial coroutines, while the lifecycle admits prepare, execute, score, and finalize separately inside each coroutine.
 
 ## Known Contract Mismatches
 
 These are confirmed mismatches between exposed runtime surfaces and the main eval-loop behavior.
 
-- `prepare_trial_phase()` is a real helper, but the main eval loop still admits it under `scheduler.running_trial_slot()` semantics. Future scheduler work must not describe prepare as independently admitted today.
+- `prepare_trial_phase()` is admitted through `scheduler.begin_prepare(...)`, but the outer dispatch loop is still not a dedicated prepare worker pool.
 - Provider budgets are enforced most strongly at model-call time through `OpenAICompatibleChatClient.set_global_model_call_slot_resolver(...)` and `_acquire_model_slot()`. The dispatch loop does not currently choose the next trial based on provider headroom.
-- Runtime-owned container cleanup is centralized for runtime-managed resources, but `max_container_slots` still does not serve as a universal dispatcher gate for every benchmark container prepare path.
+- Runtime-owned container cleanup is centralized for runtime-managed resources, and `max_container_slots` gates `runtime_container.requires_container` provider prepare paths.
 - `spec_hash` is computed from the normalized container contract and carried into trial payload/trace, but it does not drive dispatch priority, batching, locality-aware reuse, or warm-pool preference.
-- `TaskExecutionPlan` and `TrialDescriptor` exist on `TrialRequest`, but `run_eval_with_components()` does not populate them for repo-level runs. Their presence is not proof of plan-aware scheduling.
-- `begin_prepare()` and `begin_finalize()` exist on `ResourceScheduler`, but the main eval loop uses only `running_trial_slot()` and `scoring_slot()` directly.
+- `TaskExecutionPlan` and `TrialDescriptor` are populated on `TrialRequest` for phase admission, but their presence is not proof of plan-aware dispatch ordering.
+- `begin_prepare()`, `begin_execute()`, `begin_score()`, and `begin_finalize()` are used by `EvalTrialLifecycle`.
 - Benchmark/sample metadata may still carry raw provider startup fields such as compose paths or OSWorld settings for benchmark compatibility, but runtime ownership decisions must come from the normalized `runtime_container` contract, not from agent-side interpretation of those raw fields.
 
 ## Resource Budgets

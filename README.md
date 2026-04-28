@@ -1,5 +1,11 @@
 # Snowl
 
+[![CI](https://github.com/Qitor/snowl/actions/workflows/ci.yml/badge.svg)](https://github.com/Qitor/snowl/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
+![Docker Sandbox](https://img.shields.io/badge/docker--sandbox-ready-2496ED)
+![Benchmarks](https://img.shields.io/badge/benchmarks-20%2B-success)
+![License](https://img.shields.io/badge/license-see%20repo-lightgrey)
+
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
 Snowl is an open-source safety evaluation framework for AI agents.
@@ -49,7 +55,11 @@ change.
 - Built-in agent evaluator primitives for answer matching, function-call
   matching, tool trace policy, canary leakage, workspace/state checks, command
   checks, checkpoint scoring, rubric judging, and grouped metrics
-- Local runtime orchestration for terminal and GUI-style benchmark tasks
+- Phase-aware local runtime orchestration for terminal, GUI, sandbox, and
+  container-backed benchmark tasks
+- Runtime-owned isolated workspaces with before/after snapshots, diff metadata,
+  and artifact collection hooks
+- Runtime-owned container cleanup for compose and Docker container providers
 - Provider-aware concurrency controls for OpenAI-compatible model clients
 - Automatic live artifacts: `manifest.json`, `plan.json`, `events.jsonl`,
   `runtime_state.json`, `outcomes.json`, `aggregate.json`, CSV exports, and

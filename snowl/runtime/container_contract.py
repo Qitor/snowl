@@ -53,6 +53,15 @@ class RuntimeContainerSpec:
     cleanup_policy: str = "destroy_on_release"
     debug_preserve_default: bool = False
     startup: dict[str, Any] = field(default_factory=dict)
+    workspace: dict[str, Any] = field(default_factory=dict)
+    init_command: str | None = None
+    start_command: str | None = None
+    check_command: str | None = None
+    network: str | None = None
+    env: dict[str, str] = field(default_factory=dict)
+    mounts: list[dict[str, Any]] = field(default_factory=list)
+    artifacts: list[str] = field(default_factory=list)
+    resource_limits: dict[str, Any] = field(default_factory=dict)
     spec_hash_basis: dict[str, Any] = field(default_factory=dict)
     task_config: dict[str, Any] = field(default_factory=dict)
     sample_config: dict[str, Any] = field(default_factory=dict)
@@ -78,6 +87,15 @@ class RuntimeContainerSpec:
             "cleanup_policy": self.cleanup_policy,
             "debug_preserve_default": self.debug_preserve_default,
             "startup": _canonicalize(self.startup),
+            "workspace": _canonicalize(self.workspace),
+            "init_command": self.init_command,
+            "start_command": self.start_command,
+            "check_command": self.check_command,
+            "network": self.network,
+            "env": _canonicalize(self.env),
+            "mounts": _canonicalize(self.mounts),
+            "artifacts": list(self.artifacts),
+            "resource_limits": _canonicalize(self.resource_limits),
             "spec_hash_basis": _canonicalize(self.spec_hash_basis),
             "spec_hash": self.spec_hash,
         }
@@ -126,6 +144,49 @@ def resolve_runtime_container_spec(
     task_startup = _as_mapping(task_contract.get("startup"))
     sample_startup = _as_mapping(sample_contract.get("startup"))
     startup = _deep_merge(task_startup, sample_startup)
+    workspace = _deep_merge(
+        _as_mapping(task_contract.get("workspace")),
+        _as_mapping(sample_contract.get("workspace")),
+    )
+    init_command = (
+        sample_contract.get("init_command")
+        or task_contract.get("init_command")
+        or startup.get("init_command")
+    )
+    start_command = (
+        sample_contract.get("start_command")
+        or task_contract.get("start_command")
+        or startup.get("start_command")
+    )
+    check_command = (
+        sample_contract.get("check_command")
+        or task_contract.get("check_command")
+        or startup.get("check_command")
+        or startup.get("verification_command")
+    )
+    network = (
+        sample_contract.get("network")
+        or task_contract.get("network")
+        or startup.get("network")
+    )
+    env = _deep_merge(
+        _as_mapping(task_contract.get("env")),
+        _as_mapping(sample_contract.get("env")),
+    )
+    env = _deep_merge(env, _as_mapping(startup.get("env")))
+    mounts_raw = sample_contract.get("mounts", task_contract.get("mounts", startup.get("mounts", [])))
+    mounts = [dict(item) for item in mounts_raw] if isinstance(mounts_raw, list) else []
+    artifacts_raw = sample_contract.get("artifacts", task_contract.get("artifacts", startup.get("artifacts", [])))
+    if isinstance(artifacts_raw, str):
+        artifacts = [artifacts_raw]
+    elif isinstance(artifacts_raw, list):
+        artifacts = [str(item) for item in artifacts_raw if str(item).strip()]
+    else:
+        artifacts = []
+    resource_limits = _deep_merge(
+        _as_mapping(task_contract.get("resource_limits")),
+        _as_mapping(sample_contract.get("resource_limits")),
+    )
 
     task_basis = _as_mapping(task_contract.get("spec_hash_basis"))
     sample_basis = _as_mapping(sample_contract.get("spec_hash_basis"))
@@ -144,6 +205,15 @@ def resolve_runtime_container_spec(
         cleanup_policy=cleanup_policy,
         debug_preserve_default=debug_preserve_default,
         startup=startup,
+        workspace=workspace,
+        init_command=(str(init_command) if init_command else None),
+        start_command=(str(start_command) if start_command else None),
+        check_command=(str(check_command) if check_command else None),
+        network=(str(network).strip().lower() if network else None),
+        env={str(k): str(v) for k, v in env.items()},
+        mounts=mounts,
+        artifacts=artifacts,
+        resource_limits=resource_limits,
         spec_hash_basis=spec_hash_basis,
         task_config=task_contract,
         sample_config=sample_contract,

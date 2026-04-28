@@ -40,10 +40,12 @@ What works well today:
 - Provider budgets are enforced for OpenAI-compatible model calls through `OpenAICompatibleChatClient` and `scheduler.provider_slot(...)`.
 - TerminalBench and OSWorld now use a task-declared `runtime_container` contract that runtime resolves before agent execution.
 - Runtime-owned benchmark container resources are registered, leased, released, and summarized by a shared lifecycle manager.
+- `runtime_container` now supports provider-name-first v2 fields for workspace, init/start/check commands, network, env, mounts, artifacts, and resource limits while retaining legacy startup fields.
+- Runtime-owned per-trial workspaces can materialize source files, inject `workspace_dir`, snapshot before/after files, and expose workspace diff metadata to scorers.
 - Samples can restrict available tools with `metadata.tool_names` or `metadata.target_functions`; missing requested tools fail in prepare with a non-retryable validation error.
 - Samples can also declare dynamic OpenAI-style tool schemas in `metadata.tool_schemas`; runtime converts them into `ToolSpec`s, merges them with project tools, and fails prepare on schema conflicts.
 - Agent-oriented scorer primitives now cover normalized trace extraction, answer matching, function-call matching, trace policy, command checks, workspace diffs, canary leakage, state transitions, checkpoint aggregation, rubric judges, and grouped metrics.
-- `compose_terminal` is available as a generic runtime container provider and can be selected through `runtime_container.provider_name`.
+- `compose_terminal` and `docker_container` are available as generic runtime container providers and can be selected through `runtime_container.provider_name`.
 - The `toolemu` built-in scorer is Snowl-native and no longer imports or executes an external evaluator runtime.
 - Repo-level `run_eval()` now performs trial finalize and a run-end cleanup barrier before closing live event output.
 - Deferred auto-retry and manual `snowl retry` both reuse a recovery ledger instead of inventing a separate retry system.
@@ -55,11 +57,11 @@ What works well today:
 | Topic | Implemented now | Partially implemented / inconsistent | Planned / not yet real |
 | --- | --- | --- | --- |
 | Provider budgets | `provider_budgets` are real controls and model calls acquire `scheduler.provider_slot(...)` through `OpenAICompatibleChatClient`. | Dispatch does not prioritize by provider headroom, so trials can be admitted and then wait later on model-call slots. | Scheduler-visible provider-aware dispatch and richer provider backpressure policies. |
-| Prepare phase | `prepare_trial_phase()` exists, resolves task-declared container contracts, and performs container/sandbox setup. | In main eval flow, prepare still runs while holding `running_trial_slot()` rather than through an independently admitted prepare queue. | Independently admitted prepare scheduling. |
-| Score decoupling | Score is admitted separately under `scoring_slot()` and no longer uses the same slot as execution. | The split is still coarse; prepare and finalize are not independently scheduled in the main loop. | Fully phase-aware scheduling across prepare, execute, score, and finalize. |
-| Finalize behavior | `finalize_trial_phase()` is now used in both `execute_trial()` and the repo-level eval loop. | Finalize is still a helper call, not a first-class scheduler-managed phase with its own admission policy. | Finalize as a normal, explicitly scheduled phase in repo-level evals. |
-| Runtime-owned container lifecycle | TerminalBench and OSWorld runtime-created containers are registered with run/trial ownership, released at trial end, and covered by a run-end cleanup barrier. | The shared lifecycle model is currently implemented only for these benchmark provider paths; historical or future container-backed paths still need explicit adoption. | Broader generalized container ownership across every container-backed benchmark path. |
-| Container slot enforcement | `max_container_slots` exists and is tracked in scheduler/profiling data. Sandbox runtimes can be wrapped with it. | It is not a universal admission gate across every benchmark container prepare path in the main eval loop. | One control plane that gates container-backed work consistently. |
+| Prepare phase | `prepare_trial_phase()` resolves workspaces, task-declared container contracts, and sandbox setup under `begin_prepare()`. | The outer dispatch loop is still coroutine-based rather than a fully materialized prepare worker pool. | Queue-level prepare batching and locality-aware reuse. |
+| Score decoupling | Score is admitted separately under `begin_score()` and no longer uses the same slot as execution. | The outer dispatch loop still bounds total in-flight coroutines coarsely. | Richer score queue prioritization. |
+| Finalize behavior | `finalize_trial_phase()` is admitted through `begin_finalize()` and releases runtime-owned containers. | Finalize has phase stats but not a dedicated concurrency limit. | Dedicated finalize policies if teardown becomes a bottleneck. |
+| Runtime-owned container lifecycle | TerminalBench, OSWorld, compose_terminal, and docker_container sessions are registered with run/trial ownership, released at trial end, and covered by a run-end cleanup barrier. | Warm reuse is intentionally absent by default. | Warm-pool reuse and broader provider-specific diagnostics. |
+| Container slot enforcement | `max_container_slots` gates runtime-managed container prepare through `begin_prepare()` and sandbox runtimes through the scheduled sandbox wrapper. | Local non-container workspace prepare is not gated by container slots. | More detailed prepare resource classes. |
 | `spec_hash` locality | Container providers compute `spec_hash` and trial payloads/traces can carry it. | Queue dispatch does not use it for batching, warm-locality, or reuse preference. | Locality-aware dispatch and stronger prepare reuse. |
 | Phase-aware retry | Provider HTTP retry and deferred whole-trial auto retry are real. | Retry is still mostly whole-trial; prepare/score/finalize are not retried as distinct scheduled phases. | Phase-specific retry and recovery policies. |
 
@@ -85,11 +87,11 @@ The web monitor currently indexes runs from `.snowl/runs/` and uses:
 
 These areas are real, but still coarse or inconsistent:
 
-- `TaskExecutionPlan` and `TrialDescriptor` exist in `snowl/runtime/resource_scheduler.py`, but `run_eval_with_components()` does not yet populate or use them for smarter dispatch.
-- The scheduler exposes prepare/execute/score/finalize APIs, but the main eval loop only uses execute and score admission directly.
-- `TrialRequest.execution_plan` and `TrialRequest.trial_descriptor` exist, but repo-level eval code does not populate them.
+- `TaskExecutionPlan` and `TrialDescriptor` are populated for repo-level trial lifecycle admission, but not yet used for smarter dispatch ordering.
+- The eval trial lifecycle uses scheduler prepare/execute/score/finalize APIs; the outer loop still handles dispatch and retry queues.
+- `TrialRequest.execution_plan` and `TrialRequest.trial_descriptor` are populated by `EvalTrialLifecycle`.
 - `spec_hash` is computed from normalized container contracts, but the runtime does not yet use it for locality-aware dispatch, warm-pool reuse, or batching.
-- `max_container_slots` is wired into sandbox wrapping and scheduler APIs, but not all container-provider prepare paths are centrally admitted through that budget yet.
+- `max_container_slots` gates runtime-managed container-provider prepare paths selected by `runtime_container.requires_container`.
 - The main dispatch loop is still close to FIFO: it drains `fresh_queue` in plan order, then consumes deferred retries when ready.
 - Provider capacity is enforced at model-call admission time, not by a scheduler that prioritizes work based on provider headroom.
 - Task/sample rows may still carry raw benchmark startup fields such as compose paths or OSWorld settings, but runtime ownership decisions should come from the normalized `runtime_container` contract.
@@ -131,7 +133,7 @@ The following show up in docs and scaffolding, but are not current runtime behav
 
 - Scheduler-driven phase planning with explicit `TrialDescriptor` / `TaskExecutionPlan` inputs.
 - Locality-aware dispatch using `spec_hash`.
-- Broad prepare/finalize admission through `begin_prepare()` and `begin_finalize()`.
+- Dedicated queue workers for prepare/finalize beyond the current per-trial phase admission.
 - Benchmark container warm reuse or pooling by default.
 - More sophisticated blocked-group/canary-first scheduling.
 - Distributed or multi-machine execution.
@@ -140,8 +142,7 @@ The following show up in docs and scaffolding, but are not current runtime behav
 
 - Treat `docs/runtime_scheduling*.md` as design notes, not source-of-truth behavior docs.
 - Treat `run_eval()` as the runtime path that matters for end-to-end repo behavior.
-- Do not assume `prepare_trial_phase()` or `finalize_trial_phase()` are independently scheduled just because helpers exist.
 - Do not assume task/sample raw benchmark fields are the ownership contract; runtime now resolves `runtime_container` and agents must not use raw compose/OSWorld fields to decide whether to start containers.
-- Do not assume `max_container_slots` fully governs every container-backed path yet.
-- Do not assume `TaskExecutionPlan`, `TrialDescriptor`, or `spec_hash` are wired into dispatch just because the types exist.
+- Do not assume `max_container_slots` applies to non-container local workspace materialization.
+- Do not assume `TaskExecutionPlan`, `TrialDescriptor`, or `spec_hash` drive dispatch order yet.
 - Do not assume multiple providers, distributed execution, or cross-run pooling exist just because the scheduler types look extensible.

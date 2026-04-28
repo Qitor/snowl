@@ -25,6 +25,7 @@ from typing import Any, Callable, Mapping, Protocol
 from snowl.benchmarks.osworld.container import OSWorldContainerLauncher
 from snowl.core import EnvSpec
 from snowl.envs import GuiEnv, TerminalEnv
+from snowl.envs.substrate import CommandRunner, ContainerBackend
 from snowl.runtime.container_contract import RuntimeContainerSpec
 
 
@@ -355,6 +356,11 @@ class ComposeTerminalProvider:
         workdir = Path(str(startup.get("workdir") or startup.get("task_root") or Path.cwd())).resolve()
         compose_file = str(startup.get("compose_file") or "").strip()
         use_compose = bool(compose_file and Path(compose_file).exists())
+        workspace_dir = str(startup.get("workspace_dir") or context.container_spec.workspace.get("workspace_dir") or "").strip()
+        compose_env = {str(k): str(v) for k, v in dict(startup.get("compose_env") or {}).items()}
+        compose_env.update({str(k): str(v) for k, v in context.container_spec.env.items()})
+        if workspace_dir:
+            compose_env.setdefault("SNOWL_WORKSPACE", workspace_dir)
         env = TerminalEnv(
             env_spec=EnvSpec(
                 env_type="terminal",
@@ -372,7 +378,7 @@ class ComposeTerminalProvider:
             compose_build=bool(startup.get("compose_build", True)),
             compose_project=project,
             compose_service=str(startup.get("compose_service") or "client"),
-            compose_env={str(k): str(v) for k, v in dict(startup.get("compose_env") or {}).items()},
+            compose_env=compose_env,
         )
         if use_compose:
             docker_path = context.ensure_docker_available(benchmark=context.container_spec.benchmark or self.name)
@@ -408,6 +414,8 @@ class ComposeTerminalProvider:
                     "compose_terminal docker compose up failed: "
                     + str((up_out.get("stderr") or up_out.get("stdout") or "").strip())
                 )
+            await self._run_lifecycle_command(context, env, "init", context.container_spec.init_command)
+            await self._run_lifecycle_command(context, env, "start", context.container_spec.start_command)
         else:
             context.emit_event(
                 {
@@ -417,6 +425,8 @@ class ComposeTerminalProvider:
                     "compose_file": compose_file,
                 }
             )
+            await self._run_lifecycle_command(context, env, "init", context.container_spec.init_command)
+            await self._run_lifecycle_command(context, env, "start", context.container_spec.start_command)
         return ContainerSession(
             kind="terminal_compose",
             env=env,
@@ -425,14 +435,46 @@ class ComposeTerminalProvider:
                 "project": env.compose_project,
                 "compose_file": env.compose_file,
                 "compose_service": env.compose_service,
+                "workspace_dir": workspace_dir or None,
                 "spec_hash": self.describe_requirements(context).get("spec_hash"),
             },
         )
 
+    async def _run_lifecycle_command(
+        self,
+        context: ContainerProviderContext,
+        env: TerminalEnv,
+        label: str,
+        command: str | None,
+    ) -> dict[str, Any] | None:
+        if not command:
+            return None
+        context.emit_event({"event": f"compose_terminal.container.{label}.start", "phase": "env", "command_text": command})
+        out = await asyncio.to_thread(
+            env.exec,
+            command,
+            timeout_seconds=float(context.container_spec.resource_limits.get(f"{label}_timeout_seconds", 120.0)),
+        )
+        context.emit_event(
+            {
+                "event": f"compose_terminal.container.{label}.finish",
+                "phase": "env",
+                "command_text": command,
+                "exit_code": out.get("exit_code"),
+                "duration_ms": out.get("duration_ms"),
+                "stdout_tail": str(out.get("stdout", ""))[-240:],
+                "stderr_tail": str(out.get("stderr", ""))[-240:],
+            }
+        )
+        if out.get("exit_code", 1) != 0:
+            raise RuntimeError(f"compose_terminal {label}_command failed: {out.get('stderr') or out.get('stdout') or ''}")
+        return out
+
     async def close(self, context: ContainerProviderContext, session: ContainerSession) -> dict[str, Any] | None:
         env = session.env
+        check_out = await self._run_lifecycle_command(context, env, "check", context.container_spec.check_command)
         if not getattr(env, "use_docker_compose", False):
-            return None
+            return check_out
         project = getattr(env, "compose_project", None)
         context.emit_event({"event": "compose_terminal.container.stopping", "phase": "env", "project": project})
         down_out = await asyncio.to_thread(
@@ -451,7 +493,162 @@ class ComposeTerminalProvider:
                 "exit_code": down_out.get("exit_code"),
             }
         )
+        if check_out is not None:
+            down_out["check"] = check_out
         return down_out
+
+
+class DockerContainerProvider:
+    name = "docker_container"
+
+    def describe_requirements(self, context: ContainerProviderContext) -> dict[str, Any]:
+        startup = dict(context.container_spec.startup)
+        return {
+            "benchmark": context.container_spec.benchmark,
+            "provider_name": self.name,
+            "requires_container": bool(context.container_spec.requires_container),
+            "requires_build": False,
+            "spec_hash": context.container_spec.spec_hash,
+            "prepare_provider_ids": (),
+            "estimated_prepare_cost": "medium",
+            "startup": startup,
+        }
+
+    async def prepare(self, context: ContainerProviderContext) -> ContainerSession:
+        startup = dict(context.container_spec.startup)
+        image = str(startup.get("image") or startup.get("docker_image") or "").strip()
+        if not image:
+            raise RuntimeError("docker_container provider requires startup.image.")
+        docker_path = context.ensure_docker_available(benchmark=context.container_spec.benchmark or self.name)
+        safe_task = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(context.task_id or "task")).strip("-") or "task"
+        safe_sample = re.sub(r"[^a-zA-Z0-9._-]+", "-", str((context.sample or {}).get("id") or "sample")).strip("-") or "sample"
+        safe_variant = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(context.variant_id or "default")).strip("-") or "default"
+        container_name = str(startup.get("container_name") or f"snowl-dc-{safe_task}-{safe_sample[:12]}-{safe_variant[:12]}")
+        workspace_dir = str(startup.get("workspace_dir") or context.container_spec.workspace.get("workspace_dir") or "").strip()
+        volumes = {str(workspace_dir): str(startup.get("workspace_mount") or "/workspace")} if workspace_dir else {}
+        volumes.update({str(k): str(v) for k, v in dict(startup.get("volumes") or {}).items()})
+        env_vars = {**context.container_spec.env, **{str(k): str(v) for k, v in dict(startup.get("env") or {}).items()}}
+        if workspace_dir:
+            env_vars.setdefault("SNOWL_WORKSPACE", str(startup.get("workspace_mount") or "/workspace"))
+        runner = CommandRunner(cwd=workspace_dir or None)
+        backend = ContainerBackend(command_runner=runner)
+        context.emit_event(
+            {
+                "event": "docker_container.container.starting",
+                "phase": "env",
+                "image": image,
+                "container_name": container_name,
+                "docker_path": docker_path,
+                "network": context.container_spec.network,
+                "workspace_dir": workspace_dir or None,
+            }
+        )
+        out = await asyncio.to_thread(
+            backend.run,
+            image=image,
+            name=container_name,
+            command=str(startup.get("command") or "sleep infinity"),
+            workdir=str(startup.get("workdir") or (startup.get("workspace_mount") or "/workspace")),
+            network=context.container_spec.network,
+            env=env_vars,
+            volumes=volumes,
+            detach=True,
+            timeout_seconds=float(context.container_spec.resource_limits.get("start_timeout_seconds", 120.0)),
+            on_event=context.emit_env_stream,
+        )
+        container_id = str(out.get("stdout") or "").strip().splitlines()[-1] if str(out.get("stdout") or "").strip() else container_name
+        context.emit_event(
+            {
+                "event": "docker_container.container.started",
+                "phase": "env",
+                "container_id": container_id,
+                "container_name": container_name,
+                "exit_code": out.get("exit_code"),
+                "duration_ms": out.get("duration_ms"),
+            }
+        )
+        if out.get("exit_code", 1) != 0:
+            raise RuntimeError("docker_container docker run failed: " + str((out.get("stderr") or out.get("stdout") or "").strip()))
+        await self._run_docker_lifecycle_command(context, backend, container_id, "init", context.container_spec.init_command)
+        await self._run_docker_lifecycle_command(context, backend, container_id, "start", context.container_spec.start_command)
+        return ContainerSession(
+            kind="docker_container",
+            env={
+                "container_id": container_id,
+                "container_name": container_name,
+                "workspace_dir": workspace_dir or None,
+                "backend": backend,
+            },
+            benchmark=context.container_spec.benchmark or self.name,
+            metadata={
+                "container_id": container_id,
+                "container_name": container_name,
+                "workspace_dir": workspace_dir or None,
+                "image": image,
+                "spec_hash": self.describe_requirements(context).get("spec_hash"),
+            },
+        )
+
+    async def _run_docker_lifecycle_command(
+        self,
+        context: ContainerProviderContext,
+        backend: ContainerBackend,
+        container_id: str,
+        label: str,
+        command: str | None,
+    ) -> dict[str, Any] | None:
+        if not command:
+            return None
+        mount = str(context.container_spec.startup.get("workspace_mount") or "/workspace")
+        context.emit_event({"event": f"docker_container.container.{label}.start", "phase": "env", "command_text": command})
+        out = await asyncio.to_thread(
+            backend.exec,
+            container_id,
+            command,
+            workdir=mount,
+            env=context.container_spec.env,
+            timeout_seconds=float(context.container_spec.resource_limits.get(f"{label}_timeout_seconds", 120.0)),
+            on_event=context.emit_env_stream,
+        )
+        context.emit_event(
+            {
+                "event": f"docker_container.container.{label}.finish",
+                "phase": "env",
+                "command_text": command,
+                "exit_code": out.get("exit_code"),
+                "duration_ms": out.get("duration_ms"),
+                "stdout_tail": str(out.get("stdout", ""))[-240:],
+                "stderr_tail": str(out.get("stderr", ""))[-240:],
+            }
+        )
+        if out.get("exit_code", 1) != 0:
+            raise RuntimeError(f"docker_container {label}_command failed: {out.get('stderr') or out.get('stdout') or ''}")
+        return out
+
+    async def close(self, context: ContainerProviderContext, session: ContainerSession) -> dict[str, Any] | None:
+        env = dict(session.env or {})
+        backend: ContainerBackend = env["backend"]
+        container_id = str(env.get("container_id") or env.get("container_name") or "")
+        check_out = await self._run_docker_lifecycle_command(context, backend, container_id, "check", context.container_spec.check_command)
+        context.emit_event({"event": "docker_container.container.stopping", "phase": "env", "container_id": container_id})
+        out = await asyncio.to_thread(
+            backend.rm,
+            container_id,
+            force=True,
+            timeout_seconds=float(context.container_spec.resource_limits.get("stop_timeout_seconds", 60.0)),
+            on_event=context.emit_env_stream,
+        )
+        context.emit_event(
+            {
+                "event": "docker_container.container.stopped",
+                "phase": "env",
+                "container_id": container_id,
+                "exit_code": out.get("exit_code"),
+            }
+        )
+        if check_out is not None:
+            out["check"] = check_out
+        return out
 
 
 class OSWorldProvider:
@@ -517,5 +714,6 @@ def default_container_provider_registry() -> ContainerProviderRegistry:
         registry.register("terminalbench", TerminalBenchProvider())
         registry.register("osworld", OSWorldProvider())
         registry.register("compose_terminal", ComposeTerminalProvider())
+        registry.register("docker_container", DockerContainerProvider())
         _DEFAULT_PROVIDER_REGISTRY = registry
     return _DEFAULT_PROVIDER_REGISTRY

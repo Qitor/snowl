@@ -300,7 +300,7 @@ class ResourceScheduler:
         async with _AsyncSemaphoreContext(
             sem=None,
             wait_phase="finalize",
-            active_key=None,
+            active_key="finalizing",
             phase_name="finalize",
             scheduler=self,
         ):

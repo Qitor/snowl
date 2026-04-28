@@ -83,6 +83,20 @@ class IPICodingAgentBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
         if issue_text:
             prompt += "\n\nIssue context:\n" + issue_text
         repo_files = dict(row.get("repo_files") or {})
+        compose_file = str(row.get("compose_file") or "").strip()
+        docker_image = str(row.get("docker_image") or row.get("image") or "").strip()
+        provider_name = "docker_container" if docker_image else "compose_terminal"
+        requires_container = bool(compose_file or docker_image)
+        check_command = row.get("check_command") or row.get("verification_command")
+        runtime_startup: dict[str, Any] = {
+            "network": "disabled",
+            "repo_files": repo_files,
+            "verification_command": check_command,
+        }
+        if compose_file:
+            runtime_startup["compose_file"] = compose_file
+        if docker_image:
+            runtime_startup["image"] = docker_image
         metadata = {
             "split": row_split,
             "task_description": task_description,
@@ -96,18 +110,27 @@ class IPICodingAgentBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
             "is_benign": bool(row.get("is_benign")),
             "repo_files": repo_files,
             "workspace_before": repo_files,
-            "verification_command": row.get("verification_command"),
+            "verification_command": check_command,
+            "check_command": check_command,
             "expected_fix": row.get("expected_fix"),
             "forbidden_paths": list(row.get("persistence_targets") or []),
+            "workspace": {
+                "enabled": True,
+                "repo_files": repo_files,
+                "artifacts": list(row.get("artifacts") or []),
+            },
             "runtime_container": {
                 "benchmark": self.name,
-                "provider_name": "compose_terminal",
-                "requires_container": False,
-                "startup": {
-                    "network": "disabled",
+                "provider_name": provider_name,
+                "requires_container": requires_container,
+                "network": "disabled",
+                "check_command": str(check_command) if check_command else None,
+                "workspace": {
+                    "enabled": True,
                     "repo_files": repo_files,
-                    "verification_command": row.get("verification_command"),
+                    "artifacts": list(row.get("artifacts") or []),
                 },
+                "startup": runtime_startup,
             },
         }
         return {"id": sample_id, "input": prompt, "metadata": metadata}

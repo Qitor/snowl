@@ -31,8 +31,16 @@ from snowl.core.tool import ToolSpec, resolve_tool_spec
 from snowl.envs.sandbox_runtime import SandboxRuntime, WarmPoolSandboxRuntime
 from snowl.errors import SnowlValidationError
 from snowl.runtime.container_lifecycle import RuntimeContainerLifecycleManager
+from snowl.runtime.container_contract import resolve_runtime_container_spec
 from snowl.runtime.container_runtime import ContainerPrepareResult, ContainerRuntime
 from snowl.runtime.resource_scheduler import TaskExecutionPlan, TrialDescriptor
+from snowl.runtime.workspace import (
+    RuntimeWorkspaceManager,
+    RuntimeWorkspaceSession,
+    diff_workspace,
+    resolve_workspace_spec,
+    snapshot_workspace,
+)
 from snowl.ui.contracts import build_score_explanations
 
 _DEFAULT_SANDBOX_RUNTIME = WarmPoolSandboxRuntime()
@@ -90,6 +98,7 @@ class PreparedTrial:
     sandbox_runtime: SandboxRuntime
     container_runtime: ContainerRuntime
     container_prepare: ContainerPrepareResult
+    workspace_session: RuntimeWorkspaceSession | None = None
     prepared_sandbox: Any | None = None
     original_max_steps: int | None = None
     failed_partial: PartialTrialResult | None = None
@@ -282,6 +291,27 @@ def _build_score_context(request: TrialRequest, *, sample_id: str | None) -> Sco
     )
 
 
+def _score_context_for_prepared(
+    prepared: PreparedTrial,
+    *,
+    extra_sample_metadata: Mapping[str, Any] | None = None,
+) -> ScoreContext:
+    sample_meta = dict(prepared.request.sample.get("metadata", {}) or {})
+    context_sample = prepared.context.metadata.get("sample")
+    if isinstance(context_sample, Mapping):
+        context_meta = context_sample.get("metadata")
+        if isinstance(context_meta, Mapping):
+            sample_meta.update(dict(context_meta))
+    sample_meta.update(dict(extra_sample_metadata or {}))
+    return ScoreContext(
+        task_id=prepared.request.task.task_id,
+        agent_id=getattr(prepared.request.agent, "agent_id"),
+        sample_id=prepared.sample_id,
+        task_metadata=prepared.request.task.metadata,
+        sample_metadata=sample_meta,
+    )
+
+
 def _emit_factory(request: TrialRequest) -> Callable[[dict[str, Any]], None]:
     def _emit(event: dict[str, Any]) -> None:
         if request.on_event is None:
@@ -373,6 +403,7 @@ async def prepare_trial_phase(request: TrialRequest) -> PreparedTrial:
     variant_id = str(getattr(request.agent, "variant_id", "default"))
     variant_model = getattr(request.agent, "model", None)
     emit = _emit_factory(request)
+    sample_for_runtime = dict(request.sample)
 
     emit(
         {
@@ -394,13 +425,109 @@ async def prepare_trial_phase(request: TrialRequest) -> PreparedTrial:
         task_id=request.task.task_id,
         sample_id=sample_id,
         metadata={
-            "sample": dict(request.sample),
+            "sample": sample_for_runtime,
             "task_metadata": request.task.metadata,
             "variant_id": variant_id,
             "model": variant_model,
             "__snowl_emit_event": emit,
         },
     )
+
+    workspace_session: RuntimeWorkspaceSession | None = None
+    try:
+        pre_container_spec = resolve_runtime_container_spec(
+            task_metadata=request.task.metadata,
+            sample=request.sample,
+        )
+        workspace_spec = resolve_workspace_spec(
+            task_metadata=request.task.metadata,
+            sample=request.sample,
+            container_startup=pre_container_spec.startup,
+            container_workspace=pre_container_spec.workspace,
+        )
+        workspace_session = RuntimeWorkspaceManager(
+            run_id=request.run_id,
+            trial_id=request.trial_id,
+            task_id=request.task.task_id,
+            sample_id=sample_id,
+            spec=workspace_spec,
+        ).prepare()
+        if workspace_session is not None:
+            sample_meta = dict(sample_for_runtime.get("metadata", {}) or {})
+            runtime_container = dict(sample_meta.get("runtime_container", {}) or {})
+            startup = dict(runtime_container.get("startup", {}) or {})
+            workspace_contract = dict(runtime_container.get("workspace", {}) or {})
+            startup["workspace_dir"] = workspace_session.workspace_dir
+            workspace_contract["workspace_dir"] = workspace_session.workspace_dir
+            runtime_container["startup"] = startup
+            runtime_container["workspace"] = workspace_contract
+            sample_meta.update(
+                {
+                    "runtime_container": runtime_container,
+                    "workspace_dir": workspace_session.workspace_dir,
+                    "workspace_before": dict(workspace_session.before),
+                    "workspace_spec": workspace_session.spec.to_metadata(),
+                }
+            )
+            sample_for_runtime["metadata"] = sample_meta
+            context.metadata["sample"] = sample_for_runtime
+            context.metadata["__snowl_workspace"] = {
+                "workspace_dir": workspace_session.workspace_dir,
+                "before": dict(workspace_session.before),
+            }
+            emit(
+                {
+                    "event": "runtime.workspace.prepared",
+                    "phase": "prepare",
+                    "workspace_dir": workspace_session.workspace_dir,
+                    "file_count": len(workspace_session.before),
+                }
+            )
+    except Exception as exc:
+        container_runtime = ContainerRuntime(
+            run_id=request.run_id,
+            trial_id=request.trial_id,
+            task_id=request.task.task_id,
+            agent_id=getattr(request.agent, "agent_id"),
+            variant_id=variant_id,
+            task_env_type=request.task.env_spec.env_type,
+            task_metadata=request.task.metadata,
+            sample=sample_for_runtime,
+            emit=emit,
+            lifecycle_manager=request.container_lifecycle,
+        )
+        return PreparedTrial(
+            request=request,
+            started_ms=started,
+            sample_id=sample_id,
+            variant_id=variant_id,
+            variant_model=variant_model,
+            state=state,
+            context=context,
+            resolved_tool_specs=[],
+            sandbox_runtime=request.sandbox_runtime or _DEFAULT_SANDBOX_RUNTIME,
+            container_runtime=container_runtime,
+            container_prepare=ContainerPrepareResult(
+                session=None,
+                requires_container=False,
+                requires_build=False,
+                spec_hash=None,
+                prepare_provider_ids=(),
+                metadata={},
+            ),
+            workspace_session=workspace_session,
+            failed_partial=_error_partial(
+                request,
+                started_ms=started,
+                sample_id=sample_id,
+                variant_id=variant_id,
+                variant_model=variant_model,
+                code="workspace_prepare_error",
+                message=str(exc),
+                phase="prepare",
+                trace_event="runtime.workspace.error",
+            ),
+        )
 
     container_runtime = ContainerRuntime(
         run_id=request.run_id,
@@ -410,7 +537,7 @@ async def prepare_trial_phase(request: TrialRequest) -> PreparedTrial:
         variant_id=variant_id,
         task_env_type=request.task.env_spec.env_type,
         task_metadata=request.task.metadata,
-        sample=request.sample,
+        sample=sample_for_runtime,
         emit=emit,
         lifecycle_manager=request.container_lifecycle,
     )
@@ -441,6 +568,7 @@ async def prepare_trial_phase(request: TrialRequest) -> PreparedTrial:
             sandbox_runtime=request.sandbox_runtime or _DEFAULT_SANDBOX_RUNTIME,
             container_runtime=container_runtime,
             container_prepare=container_prepare,
+            workspace_session=None,
             failed_partial=_error_partial(
                 request,
                 started_ms=started,
@@ -475,6 +603,7 @@ async def prepare_trial_phase(request: TrialRequest) -> PreparedTrial:
             sandbox_runtime=request.sandbox_runtime or _DEFAULT_SANDBOX_RUNTIME,
             container_runtime=container_runtime,
             container_prepare=container_prepare,
+            workspace_session=workspace_session,
             failed_partial=_error_partial(
                 request,
                 started_ms=started,
@@ -505,6 +634,7 @@ async def prepare_trial_phase(request: TrialRequest) -> PreparedTrial:
             sandbox_runtime=request.sandbox_runtime or _DEFAULT_SANDBOX_RUNTIME,
             container_runtime=container_runtime,
             container_prepare=container_prepare,
+            workspace_session=workspace_session,
             failed_partial=_error_partial(
                 request,
                 started_ms=started,
@@ -535,6 +665,7 @@ async def prepare_trial_phase(request: TrialRequest) -> PreparedTrial:
             sandbox_runtime=request.sandbox_runtime or _DEFAULT_SANDBOX_RUNTIME,
             container_runtime=container_runtime,
             container_prepare=container_prepare,
+            workspace_session=workspace_session,
             failed_partial=_error_partial(
                 request,
                 started_ms=started,
@@ -587,6 +718,7 @@ async def prepare_trial_phase(request: TrialRequest) -> PreparedTrial:
             sandbox_runtime=sandbox_runtime,
             container_runtime=container_runtime,
             container_prepare=container_prepare,
+            workspace_session=workspace_session,
             original_max_steps=original_max_steps,
             failed_partial=_error_partial(
                 request,
@@ -613,6 +745,7 @@ async def prepare_trial_phase(request: TrialRequest) -> PreparedTrial:
         sandbox_runtime=sandbox_runtime,
         container_runtime=container_runtime,
         container_prepare=container_prepare,
+        workspace_session=workspace_session,
         prepared_sandbox=prepared_sandbox,
         original_max_steps=original_max_steps,
         failed_partial=None,
@@ -814,10 +947,42 @@ async def execute_agent_phase(prepared: PreparedTrial | TrialRequest) -> Partial
             **dict(prepared.container_prepare.metadata),
         }
 
+    workspace_score_metadata: dict[str, Any] = {}
+    if prepared.workspace_session is not None:
+        after = snapshot_workspace(prepared.workspace_session.workspace_dir)
+        diff = diff_workspace(prepared.workspace_session.before, after)
+        workspace_score_metadata = {
+            "workspace_dir": prepared.workspace_session.workspace_dir,
+            "workspace_before": dict(prepared.workspace_session.before),
+            "workspace_after": after,
+            "workspace_diff": diff,
+        }
+        payload["workspace"] = {
+            "workspace_dir": prepared.workspace_session.workspace_dir,
+            "before_file_count": len(prepared.workspace_session.before),
+            "after_file_count": len(after),
+            "diff": diff,
+        }
+        trace["workspace"] = payload["workspace"]
+        emit(
+            {
+                "event": "runtime.workspace.snapshot",
+                "phase": "execute",
+                "workspace_dir": prepared.workspace_session.workspace_dir,
+                "before_file_count": len(prepared.workspace_session.before),
+                "after_file_count": len(after),
+                "changed": list(diff.get("changed") or []),
+                "deleted": list(diff.get("deleted") or []),
+            }
+        )
+
     return PartialTrialResult(
         task_result=task_result,
         trace=trace,
-        score_context=_build_score_context(request, sample_id=prepared.sample_id),
+        score_context=_score_context_for_prepared(
+            prepared,
+            extra_sample_metadata=workspace_score_metadata,
+        ),
     )
 
 
@@ -1033,6 +1198,16 @@ async def finalize_trial_phase(
     if container_close is not None:
         payload["container_finalize"] = dict(container_close)
         trace["container_finalize"] = dict(container_close)
+    if prepared.workspace_session is not None:
+        after = snapshot_workspace(prepared.workspace_session.workspace_dir)
+        diff = diff_workspace(prepared.workspace_session.before, after)
+        payload["workspace"] = {
+            "workspace_dir": prepared.workspace_session.workspace_dir,
+            "before_file_count": len(prepared.workspace_session.before),
+            "after_file_count": len(after),
+            "diff": diff,
+        }
+        trace["workspace"] = payload["workspace"]
 
     if finalize_error is not None:
         task_result = TaskResult(
