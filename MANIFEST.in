@@ -1,1 +1,5 @@
 recursive-include snowl/_webui *
+prune snowl/_webui/node_modules
+prune snowl/_webui/.snowl
+prune snowl/_webui/.next/cache
+global-exclude *.tsbuildinfo
