@@ -69,6 +69,7 @@ class ReActAgent:
     default_generation_kwargs: dict[str, Any] = field(default_factory=dict)
     system_prompt_template: str = SYSTEM_PROMPT_TEMPLATE
     enable_json_fallback: bool = True
+    native_tool_call_policy: str = "single"
 
     async def run(
         self,
@@ -380,34 +381,33 @@ class ReActAgent:
                 }
                 return state
 
-            # ReAct rule: execute only one tool call per step.
-            tool_call = tool_calls[0]
-            fn = (tool_call.get("function") or {}).get("name", "")
-            raw_args = (tool_call.get("function") or {}).get("arguments", "{}")
-            action_payload = {
-                "tool_name": fn,
-                "tool_call_id": tool_call.get("id"),
-                "arguments": raw_args,
-            }
-            state.actions.append(Action(action_type="tool_call", payload=action_payload))
-
-            result = await self._execute_tool_call(fn, raw_args, tool_map, allowed_tool_names)
-            state.observations.append(
-                Observation(
-                    observation_type="tool_result",
-                    payload={"tool_name": fn, "result": result},
-                )
-            )
-
-            # Keep assistant tool_call message then feed tool observation back.
+            calls_to_execute = tool_calls if self.native_tool_call_policy == "all" else tool_calls[:1]
             messages.append(message)
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call.get("id", ""),
-                    "content": str(result),
+            for tool_call in calls_to_execute:
+                fn = (tool_call.get("function") or {}).get("name", "")
+                raw_args = (tool_call.get("function") or {}).get("arguments", "{}")
+                action_payload = {
+                    "tool_name": fn,
+                    "tool_call_id": tool_call.get("id"),
+                    "arguments": raw_args,
                 }
-            )
+                state.actions.append(Action(action_type="tool_call", payload=action_payload))
+
+                result = await self._execute_tool_call(fn, raw_args, tool_map, allowed_tool_names)
+                state.observations.append(
+                    Observation(
+                        observation_type="tool_result",
+                        payload={"tool_name": fn, "result": result},
+                    )
+                )
+
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.get("id", ""),
+                        "content": str(result),
+                    }
+                )
 
         state.stop_reason = StopReason.MAX_STEPS
         state.messages = messages

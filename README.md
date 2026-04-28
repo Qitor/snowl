@@ -43,7 +43,12 @@ change.
 - YAML-first project entrypoint with `project.yml`
 - Multi-model sweeps through `agent_matrix.models`
 - Built-in adapters for `strongreject`, `terminalbench`, `osworld`, `toolemu`,
-  `agentsafetybench`, `mask`, `wmdp`, plus generic JSONL/CSV style workflows
+  `agentsafetybench`, `xstest`, `coconot`, `fortress`, `agentharm`,
+  `agent_bench_os`, `agentdojo`, `bfcl`, `ipi_coding_agent`, `mask`, `wmdp`,
+  `cybermetric`, `sec_qa`, `sevenllm`, plus generic JSONL/CSV style workflows
+- Built-in agent evaluator primitives for answer matching, function-call
+  matching, tool trace policy, canary leakage, workspace/state checks, command
+  checks, checkpoint scoring, rubric judging, and grouped metrics
 - Local runtime orchestration for terminal and GUI-style benchmark tasks
 - Provider-aware concurrency controls for OpenAI-compatible model clients
 - Automatic live artifacts: `manifest.json`, `plan.json`, `events.jsonl`,
@@ -339,13 +344,25 @@ Snowl already includes adapters and contracts for several benchmark families:
 
 | Benchmark | Focus | Notes |
 | --- | --- | --- |
-| StrongReject | refusal and safety behavior | lightweight and quick to run |
-| TerminalBench | terminal task execution | container-aware |
-| OSWorld | GUI desktop tasks | runtime-managed GUI container path |
-| ToolEmu | tool-use safety | scorer and adapter integration |
-| Agent-SafetyBench | agent safety | safety benchmark integration |
-| MASK | safety and jailbreak risk | risk monitor compatible |
-| WMDP | bio, cyber, chemical risk | risk monitor compatible |
+| StrongReject | refusal and safety behavior | `strongreject`; lightweight and quick to run |
+| XSTest | over-refusal and unsafe-compliance checks | `xstest`; pinned remote asset cache |
+| Coconot | compliance/noncompliance safety behavior | `coconot`; category-aware metrics |
+| FORTRESS | benign and adversarial safeguard behavior | `fortress_adversarial`, `fortress_benign` |
+| AgentHarm | harmful and benign agent tool-use prompts | `agentharm`, `agentharm_benign`; per-sample tool selection |
+| AgentBench OS | OS and terminal-style agent tasks | `agent_bench_os`; Snowl-native answer/check scoring |
+| AgentDojo | stateful tool-use prompt injection | `agentdojo`; banking/travel first-wave subset |
+| BFCL | function-calling accuracy | `bfcl`; dynamic per-sample tools and call matching |
+| IPI Coding Agent | coding-agent prompt injection | `ipi_coding_agent`; canary, trace, workspace, and checkpoint scoring |
+| TerminalBench | terminal task execution | `terminalbench`; container-aware |
+| OSWorld | GUI desktop tasks | `osworld`; runtime-managed GUI container path |
+| ToolEmu | tool-use safety | `toolemu`; Snowl-native trace-policy scorer |
+| Agent-SafetyBench | agent safety | `agentsafetybench`; safety benchmark integration |
+| MASK | safety and jailbreak risk | `mask`; risk monitor compatible |
+| WMDP | bio, cyber, chemical risk | `wmdp-cyber`, `wmdp-chem`; risk monitor compatible |
+| CyberMetric | cybersecurity MCQ | `cybermetric_80`, `cybermetric_500`, `cybermetric_2000`, `cybermetric_10000` |
+| SecQA | cybersecurity MCQ | `sec_qa_v1`, `sec_qa_v2`; pinned Hugging Face dataset cache |
+| SEVENLLM MCQ | multilingual cybersecurity MCQ | `sevenllm_mcq_en`, `sevenllm_mcq_zh` |
+| Generic files | custom local datasets | `jsonl`, `csv`; fast adapter authoring path |
 
 Some official benchmark datasets require external reference repositories or
 large assets. Snowl keeps those references outside package code so normal unit

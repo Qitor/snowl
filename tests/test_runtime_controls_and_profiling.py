@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import textwrap
 import time
 from pathlib import Path
 
@@ -69,6 +70,46 @@ scorer = S()
     )
 
 
+def _write_terminalbench_fixture(root: Path) -> None:
+    task_dir = root / "references" / "terminal-bench" / "original-tasks" / "hello-world"
+    task_dir.mkdir(parents=True, exist_ok=True)
+    (task_dir / "task.yaml").write_text(
+        textwrap.dedent(
+            """\
+            instruction: |-
+              Create hello.txt
+            difficulty: easy
+            category: file-ops
+            parser_name: pytest
+            split: test
+            """
+        ),
+        encoding="utf-8",
+    )
+    (task_dir / "run-tests.sh").write_text("#!/bin/bash\necho ok\n", encoding="utf-8")
+    (task_dir / "docker-compose.yaml").write_text("services: {}\n", encoding="utf-8")
+    (task_dir / "tests").mkdir(parents=True, exist_ok=True)
+
+
+def _write_osworld_fixture(root: Path) -> None:
+    dataset = root / "references" / "OSWorld" / "evaluation_examples"
+    example_dir = dataset / "examples" / "desktop"
+    example_dir.mkdir(parents=True, exist_ok=True)
+    (dataset / "test_all.json").write_text(json.dumps({"desktop": ["demo-task"]}), encoding="utf-8")
+    (example_dir / "demo-task.json").write_text(
+        json.dumps(
+            {
+                "id": "demo-task",
+                "instruction": "Open the demo app.",
+                "split": "test",
+                "snapshot": "ubuntu",
+                "related_apps": ["demo"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_runtime_controls_written_to_checkpoint_and_profiling(tmp_path: Path) -> None:
     _write_project(tmp_path, sample_count=2)
     result = asyncio.run(
@@ -127,8 +168,10 @@ def test_decoupled_scoring_improves_wallclock_vs_serial_baseline(tmp_path: Path)
     assert overlapped < serial_baseline * 0.9
 
 
-def test_throughput_baseline_report_shape() -> None:
-    root = Path(__file__).resolve().parents[1]
+def test_throughput_baseline_report_shape(tmp_path: Path) -> None:
+    _write_terminalbench_fixture(tmp_path)
+    _write_osworld_fixture(tmp_path)
+    root = tmp_path
     report = run_baseline(root=root, split="test", limit=1)
     assert "terminalbench" in report
     assert "osworld" in report

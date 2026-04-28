@@ -324,6 +324,136 @@ class TerminalBenchProvider:
         return down_out
 
 
+class ComposeTerminalProvider:
+    name = "compose_terminal"
+
+    def describe_requirements(self, context: ContainerProviderContext) -> dict[str, Any]:
+        startup = dict(context.container_spec.startup)
+        compose_path = str(startup.get("compose_file") or "").strip()
+        compose_build = bool(startup.get("compose_build", True))
+        return {
+            "benchmark": context.container_spec.benchmark,
+            "provider_name": self.name,
+            "requires_container": bool(context.container_spec.requires_container),
+            "requires_build": compose_build and bool(compose_path and Path(compose_path).exists()),
+            "spec_hash": context.container_spec.spec_hash,
+            "prepare_provider_ids": (),
+            "estimated_prepare_cost": "medium" if context.container_spec.requires_container else "none",
+            "startup": startup,
+        }
+
+    async def prepare(self, context: ContainerProviderContext) -> ContainerSession:
+        startup = dict(context.container_spec.startup)
+        safe_task = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(context.task_id or "task")).strip("-") or "task"
+        safe_sample = re.sub(
+            r"[^a-zA-Z0-9._-]+",
+            "-",
+            str((context.sample or {}).get("id") or "sample"),
+        ).strip("-") or "sample"
+        safe_variant = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(context.variant_id or "default")).strip("-") or "default"
+        project = str(startup.get("compose_project") or f"snowl-ct-{safe_task}-{safe_sample[:12]}-{safe_variant[:12]}")
+        workdir = Path(str(startup.get("workdir") or startup.get("task_root") or Path.cwd())).resolve()
+        compose_file = str(startup.get("compose_file") or "").strip()
+        use_compose = bool(compose_file and Path(compose_file).exists())
+        env = TerminalEnv(
+            env_spec=EnvSpec(
+                env_type="terminal",
+                provided_ops=(
+                    "process.run",
+                    "terminal.exec",
+                    "terminal.send_keys",
+                    "terminal.capture",
+                    "terminal.wait",
+                ),
+            ),
+            workdir=str(workdir),
+            compose_file=(compose_file if compose_file else None),
+            use_docker_compose=use_compose,
+            compose_build=bool(startup.get("compose_build", True)),
+            compose_project=project,
+            compose_service=str(startup.get("compose_service") or "client"),
+            compose_env={str(k): str(v) for k, v in dict(startup.get("compose_env") or {}).items()},
+        )
+        if use_compose:
+            docker_path = context.ensure_docker_available(benchmark=context.container_spec.benchmark or self.name)
+            context.emit_event(
+                {
+                    "event": "compose_terminal.container.starting",
+                    "phase": "env",
+                    "compose_file": env.compose_file,
+                    "project": env.compose_project,
+                    "service": env.compose_service,
+                    "docker_path": docker_path,
+                }
+            )
+            up_out = await asyncio.to_thread(
+                env.compose_up,
+                on_event=lambda evt: context.emit_env_stream(
+                    evt,
+                    project=env.compose_project,
+                    compose_file=env.compose_file,
+                ),
+            )
+            context.emit_event(
+                {
+                    "event": "compose_terminal.container.started",
+                    "phase": "env",
+                    "project": env.compose_project,
+                    "exit_code": up_out.get("exit_code"),
+                    "duration_ms": up_out.get("duration_ms"),
+                }
+            )
+            if up_out.get("exit_code", 1) != 0:
+                raise RuntimeError(
+                    "compose_terminal docker compose up failed: "
+                    + str((up_out.get("stderr") or up_out.get("stdout") or "").strip())
+                )
+        else:
+            context.emit_event(
+                {
+                    "event": "compose_terminal.container.disabled",
+                    "phase": "env",
+                    "reason": "compose_file_not_found",
+                    "compose_file": compose_file,
+                }
+            )
+        return ContainerSession(
+            kind="terminal_compose",
+            env=env,
+            benchmark=context.container_spec.benchmark or self.name,
+            metadata={
+                "project": env.compose_project,
+                "compose_file": env.compose_file,
+                "compose_service": env.compose_service,
+                "spec_hash": self.describe_requirements(context).get("spec_hash"),
+            },
+        )
+
+    async def close(self, context: ContainerProviderContext, session: ContainerSession) -> dict[str, Any] | None:
+        env = session.env
+        if not getattr(env, "use_docker_compose", False):
+            return None
+        project = getattr(env, "compose_project", None)
+        context.emit_event({"event": "compose_terminal.container.stopping", "phase": "env", "project": project})
+        down_out = await asyncio.to_thread(
+            env.compose_down,
+            on_event=lambda evt: context.emit_env_stream(
+                evt,
+                project=project,
+                compose_file=getattr(env, "compose_file", None),
+            ),
+        )
+        context.emit_event(
+            {
+                "event": "compose_terminal.container.stopped",
+                "phase": "env",
+                "project": project,
+                "exit_code": down_out.get("exit_code"),
+            }
+        )
+        return down_out
+
+
 class OSWorldProvider:
     name = "osworld"
 
@@ -386,5 +516,6 @@ def default_container_provider_registry() -> ContainerProviderRegistry:
         registry = ContainerProviderRegistry()
         registry.register("terminalbench", TerminalBenchProvider())
         registry.register("osworld", OSWorldProvider())
+        registry.register("compose_terminal", ComposeTerminalProvider())
         _DEFAULT_PROVIDER_REGISTRY = registry
     return _DEFAULT_PROVIDER_REGISTRY

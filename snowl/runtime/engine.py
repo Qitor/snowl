@@ -17,6 +17,7 @@ Change guardrails:
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
@@ -126,6 +127,114 @@ def _extract_sample_input(sample: Mapping[str, Any]) -> dict[str, Any]:
     if "input" in sample:
         return {"input": _json_safe(sample["input"])}
     return {"sample": _json_safe(sample)}
+
+
+def _sample_declared_tool_names(sample: Mapping[str, Any]) -> list[str]:
+    metadata = sample.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return []
+    raw = metadata.get("tool_names")
+    if raw is None:
+        raw = metadata.get("target_functions")
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        names = [raw]
+    elif isinstance(raw, Sequence) and not isinstance(raw, (str, bytes, bytearray)):
+        names = [str(item) for item in raw]
+    else:
+        return []
+    return [name.strip() for name in names if name.strip()]
+
+
+def _sample_declared_tool_schemas(sample: Mapping[str, Any]) -> list[dict[str, Any]]:
+    metadata = sample.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return []
+    raw = metadata.get("tool_schemas")
+    if raw is None:
+        raw = metadata.get("tools")
+    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes, bytearray)):
+        return []
+    schemas: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            continue
+        schema = dict(item)
+        if schema.get("type") == "function" and isinstance(schema.get("function"), Mapping):
+            fn = dict(schema["function"])
+        else:
+            fn = schema
+        name = str(fn.get("name") or "").strip()
+        if not name:
+            continue
+        parameters = fn.get("parameters")
+        if not isinstance(parameters, Mapping):
+            parameters = {"type": "object", "properties": {}, "additionalProperties": False}
+        schemas.append(
+            {
+                "name": name,
+                "description": str(fn.get("description") or f"Tool '{name}'."),
+                "parameters": dict(parameters),
+                "required_ops": tuple(str(op) for op in (fn.get("required_ops") or ()) if str(op).strip()),
+                "result": fn.get("result"),
+            }
+        )
+    return schemas
+
+
+def _build_dynamic_tool_specs(sample: Mapping[str, Any]) -> list[ToolSpec]:
+    specs: list[ToolSpec] = []
+    for schema in _sample_declared_tool_schemas(sample):
+        name = str(schema["name"])
+        result_value = schema.get("result")
+
+        def _recording_tool(_result: Any = result_value, _name: str = name, **kwargs: Any) -> Any:
+            if _result is not None:
+                return _result
+            return {"ok": True, "tool": _name, "arguments": kwargs}
+
+        specs.append(
+            ToolSpec(
+                name=name,
+                description=str(schema.get("description") or f"Tool '{name}'."),
+                parameters=dict(schema.get("parameters") or {"type": "object", "properties": {}, "additionalProperties": False}),
+                callable=_recording_tool,
+                required_ops=tuple(schema.get("required_ops") or ()),
+            )
+        )
+    return specs
+
+
+def _merge_project_and_dynamic_tools(
+    project_specs: Sequence[ToolSpec],
+    dynamic_specs: Sequence[ToolSpec],
+) -> tuple[list[ToolSpec], list[str]]:
+    merged: dict[str, ToolSpec] = {spec.name: spec for spec in project_specs}
+    conflicts: list[str] = []
+    for spec in dynamic_specs:
+        existing = merged.get(spec.name)
+        if existing is not None:
+            existing_schema = json.dumps(existing.parameters, sort_keys=True, ensure_ascii=True)
+            new_schema = json.dumps(spec.parameters, sort_keys=True, ensure_ascii=True)
+            if existing_schema != new_schema:
+                conflicts.append(spec.name)
+            continue
+        merged[spec.name] = spec
+    return list(merged.values()), conflicts
+
+
+def _select_sample_tools(
+    specs: Sequence[ToolSpec],
+    sample: Mapping[str, Any],
+) -> tuple[list[ToolSpec], list[str]]:
+    requested_names = _sample_declared_tool_names(sample)
+    if not requested_names:
+        return list(specs), []
+    by_name = {spec.name: spec for spec in specs}
+    missing = [name for name in requested_names if name not in by_name]
+    selected = [by_name[name] for name in requested_names if name in by_name]
+    return selected, missing
 
 
 def _sample_preview_text(sample: Mapping[str, Any], *, max_chars: int = 240) -> str:
@@ -348,6 +457,67 @@ async def prepare_trial_phase(request: TrialRequest) -> PreparedTrial:
     resolved_tool_specs: list[ToolSpec] = []
     if request.tools:
         resolved_tool_specs = [resolve_tool_spec(t) for t in request.tools]
+    dynamic_tool_specs = _build_dynamic_tool_specs(request.sample)
+    resolved_tool_specs, dynamic_tool_conflicts = _merge_project_and_dynamic_tools(
+        resolved_tool_specs,
+        dynamic_tool_specs,
+    )
+    if dynamic_tool_conflicts:
+        return PreparedTrial(
+            request=request,
+            started_ms=started,
+            sample_id=sample_id,
+            variant_id=variant_id,
+            variant_model=variant_model,
+            state=state,
+            context=context,
+            resolved_tool_specs=resolved_tool_specs,
+            sandbox_runtime=request.sandbox_runtime or _DEFAULT_SANDBOX_RUNTIME,
+            container_runtime=container_runtime,
+            container_prepare=container_prepare,
+            failed_partial=_error_partial(
+                request,
+                started_ms=started,
+                sample_id=sample_id,
+                variant_id=variant_id,
+                variant_model=variant_model,
+                code="sample_tool_schema_conflict",
+                message="Sample dynamic tool schemas conflict with project tools: "
+                + ", ".join(dynamic_tool_conflicts),
+                phase="prepare",
+                trace_event="runtime.tool.error",
+            ),
+        )
+    resolved_tool_specs, missing_sample_tools = _select_sample_tools(
+        resolved_tool_specs,
+        request.sample,
+    )
+    if missing_sample_tools:
+        return PreparedTrial(
+            request=request,
+            started_ms=started,
+            sample_id=sample_id,
+            variant_id=variant_id,
+            variant_model=variant_model,
+            state=state,
+            context=context,
+            resolved_tool_specs=resolved_tool_specs,
+            sandbox_runtime=request.sandbox_runtime or _DEFAULT_SANDBOX_RUNTIME,
+            container_runtime=container_runtime,
+            container_prepare=container_prepare,
+            failed_partial=_error_partial(
+                request,
+                started_ms=started,
+                sample_id=sample_id,
+                variant_id=variant_id,
+                variant_model=variant_model,
+                code="sample_tool_missing",
+                message="Sample requested unavailable tools: " + ", ".join(missing_sample_tools),
+                phase="prepare",
+                trace_event="runtime.tool.error",
+            ),
+        )
+    context.metadata["available_tool_names"] = [spec.name for spec in resolved_tool_specs]
 
     required_ops = {op for spec in resolved_tool_specs for op in spec.required_ops}
     provided_ops = set(request.task.env_spec.provided_ops)

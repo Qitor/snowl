@@ -65,6 +65,24 @@ This file is the quickest repo navigation map for humans and coding agents. It d
   - `osworld`
   - `toolemu`
   - `agentsafetybench`
+  - `xstest`
+  - `coconot`
+  - `fortress_adversarial`
+  - `fortress_benign`
+  - `agentharm`
+  - `agentharm_benign`
+  - `agent_bench_os`
+  - `agentdojo`
+  - `bfcl`
+  - `cybermetric_80`
+  - `cybermetric_500`
+  - `cybermetric_2000`
+  - `cybermetric_10000`
+  - `ipi_coding_agent`
+  - `sec_qa_v1`
+  - `sec_qa_v2`
+  - `sevenllm_mcq_en`
+  - `sevenllm_mcq_zh`
   - `jsonl`
   - `csv`
 
@@ -84,7 +102,7 @@ This file is the quickest repo navigation map for humans and coding agents. It d
 ### Scoring and Aggregation
 
 - `snowl/scorer/`
-  - Shared scorer helpers and model-as-judge utilities.
+  - Shared scorer helpers, model-as-judge utilities, and agent evaluator primitives for answer matching, function-call matching, trace policy, workspace/canary/state checks, command checks, checkpoint aggregation, and grouped metrics.
 - `snowl/aggregator/summary.py`
   - Run-level aggregation into matrix summaries.
 
