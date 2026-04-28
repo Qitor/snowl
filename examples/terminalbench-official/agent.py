@@ -40,6 +40,33 @@ TIMEOUT_PROMPT_PATH = (
     / "timeout.txt"
 )
 
+DEFAULT_TERMINUS_PROMPT = """You are solving a terminal benchmark task.
+
+Task:
+{instruction}
+
+Current terminal state:
+{terminal_state}
+
+Respond with JSON that matches this schema:
+{response_schema}
+"""
+
+DEFAULT_TIMEOUT_PROMPT = """The previous terminal command timed out after {timeout_sec} seconds.
+
+Command:
+{command}
+
+Current terminal state:
+{terminal_state}
+"""
+
+
+def _read_prompt_template(path: Path, fallback: str) -> str:
+    if path.exists():
+        return path.read_text(encoding="utf-8")
+    return fallback
+
 
 def _extract_json_object(text: str) -> dict[str, Any] | None:
     raw = text.strip()
@@ -131,8 +158,14 @@ class TerminusOfficialAgent:
             ensure_ascii=False,
             indent=2,
         )
-        self._prompt_template = TERMINUS_PROMPT_PATH.read_text(encoding="utf-8")
-        self._timeout_template = TIMEOUT_PROMPT_PATH.read_text(encoding="utf-8")
+        self._prompt_template = _read_prompt_template(
+            TERMINUS_PROMPT_PATH,
+            DEFAULT_TERMINUS_PROMPT,
+        )
+        self._timeout_template = _read_prompt_template(
+            TIMEOUT_PROMPT_PATH,
+            DEFAULT_TIMEOUT_PROMPT,
+        )
 
     def _ensure_client(self) -> OpenAICompatibleChatClient:
         if self._client is not None:

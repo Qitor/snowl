@@ -13,6 +13,18 @@ import pytest
 from snowl.eval import _derive_pretask_events, run_eval
 
 
+def _node_supports_strip_types() -> bool:
+    node = shutil.which("node")
+    if node is None:
+        return False
+    completed = subprocess.run(
+        [node, "--experimental-strip-types", "--input-type=module", "-e", "console.log('ok')"],
+        capture_output=True,
+        text=True,
+    )
+    return completed.returncode == 0
+
+
 def _write_project(tmp_path: Path) -> None:
     (tmp_path / "task.py").write_text(
         """
@@ -275,8 +287,8 @@ scorer = S()
 
 
 def test_web_monitor_classifies_cancelled_zombie_and_observer_stale(tmp_path: Path) -> None:
-    if shutil.which("node") is None:
-        pytest.skip("node is required for Next monitor status classification test")
+    if not _node_supports_strip_types():
+        pytest.skip("node with --experimental-strip-types is required for this monitor test")
     repo_root = Path(__file__).resolve().parents[1]
 
     now_ms = int(time.time() * 1000)
@@ -364,8 +376,8 @@ try {{
 
 
 def test_web_monitor_prefers_runtime_running_over_stale_summary(tmp_path: Path) -> None:
-    if shutil.which("node") is None:
-        pytest.skip("node is required for Next monitor status classification test")
+    if not _node_supports_strip_types():
+        pytest.skip("node with --experimental-strip-types is required for this monitor test")
     repo_root = Path(__file__).resolve().parents[1]
 
     now_ms = int(time.time() * 1000)
