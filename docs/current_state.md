@@ -13,7 +13,7 @@ Snowl currently supports:
 - One provider block per project, with only `provider.kind: openai_compatible` supported in `snowl/project_config.py`.
 - Multi-model sweeps through `agent_matrix.models`, expanded into `AgentVariant`s.
 - One active scorer per trial.
-- Built-in benchmark adapters for `strongreject`, `terminalbench`, `osworld`, `toolemu`, `agentsafetybench`, `xstest`, `coconot`, `fortress_adversarial`, `fortress_benign`, `agentharm`, `agentharm_benign`, plus generic `jsonl` and `csv`.
+- Built-in benchmark adapters for `strongreject`, `terminalbench`, `osworld`, `toolemu`, `agentsafetybench`, `xstest`, `coconot`, `fortress_adversarial`, `fortress_benign`, `agentharm`, `agentharm_benign`, `agent_bench_os`, `agentdojo`, `bfcl`, `ipi_coding_agent`, `cybermetric_80`, `cybermetric_500`, `cybermetric_2000`, `cybermetric_10000`, `sec_qa_v1`, `sec_qa_v2`, `sevenllm_mcq_en`, `sevenllm_mcq_zh`, plus generic `jsonl` and `csv`.
 - Third-party/local benchmark adapters can be loaded with `--adapter module.py:object`; `snowl bench scaffold` creates a JSONL-oriented adapter template.
 - `snowl suite check` and `snowl suite run` execute a simple sequential multi-benchmark suite and write `.snowl/suites/<suite_run_id>/suite_summary.json`.
 - Built-in baseline agents in `snowl/agents/chat_agent.py` and `snowl/agents/react_agent.py`.
@@ -41,6 +41,10 @@ What works well today:
 - TerminalBench and OSWorld now use a task-declared `runtime_container` contract that runtime resolves before agent execution.
 - Runtime-owned benchmark container resources are registered, leased, released, and summarized by a shared lifecycle manager.
 - Samples can restrict available tools with `metadata.tool_names` or `metadata.target_functions`; missing requested tools fail in prepare with a non-retryable validation error.
+- Samples can also declare dynamic OpenAI-style tool schemas in `metadata.tool_schemas`; runtime converts them into `ToolSpec`s, merges them with project tools, and fails prepare on schema conflicts.
+- Agent-oriented scorer primitives now cover normalized trace extraction, answer matching, function-call matching, trace policy, command checks, workspace diffs, canary leakage, state transitions, checkpoint aggregation, rubric judges, and grouped metrics.
+- `compose_terminal` is available as a generic runtime container provider and can be selected through `runtime_container.provider_name`.
+- The `toolemu` built-in scorer is Snowl-native and no longer imports or executes an external evaluator runtime.
 - Repo-level `run_eval()` now performs trial finalize and a run-end cleanup barrier before closing live event output.
 - Deferred auto-retry and manual `snowl retry` both reuse a recovery ledger instead of inventing a separate retry system.
 - Live observability artifacts are written early enough for the monitor to show running runs before completion.

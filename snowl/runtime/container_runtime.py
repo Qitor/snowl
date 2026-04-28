@@ -93,8 +93,11 @@ class ContainerRuntime:
 
     def _resolve_provider(self) -> tuple[str, ContainerProvider | None]:
         benchmark = str(self._container_spec.benchmark or self.task_metadata.get("benchmark") or "").strip().lower()
-        provider = self._provider_registry.resolve(benchmark)
-        return benchmark, provider
+        provider_name = str(self._container_spec.provider_name or "").strip().lower()
+        provider = self._provider_registry.resolve(provider_name) if provider_name else None
+        if provider is None:
+            provider = self._provider_registry.resolve(benchmark)
+        return (provider_name or benchmark), provider
 
     def describe_requirements(self) -> dict[str, Any]:
         benchmark, provider = self._resolve_provider()

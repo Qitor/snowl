@@ -17,9 +17,6 @@ agent_matrix:
     - id: qwen3_32b
       model: Qwen/Qwen3-32B
 
-judge:
-  model: gpt-4.1-mini
-
 eval:
   benchmark: toolemu
   code:
@@ -39,7 +36,5 @@ runtime:
 
 benchmarks:
   toolemu:
-    agent_type: naive
-    simulator_type: adv_thought
-    max_iterations: 15
-    verbose: false
+    output_dir: outputs
+    run_stamp: ""

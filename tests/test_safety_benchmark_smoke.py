@@ -8,8 +8,11 @@ from types import SimpleNamespace
 from snowl.benchmarks.agentharm import AgentHarmBenchmarkAdapter
 from snowl.benchmarks.assets import DirectURLAsset, HFDatasetAsset, HFSnapshotFileAsset, stable_benchmark_id
 from snowl.benchmarks.coconot import CoconotBenchmarkAdapter, CoconotScorer
+from snowl.benchmarks.cybermetric import CyberMetricBenchmarkAdapter
 from snowl.benchmarks.fortress import FortressAdversarialScorer, FortressBenchmarkAdapter
 from snowl.benchmarks.registry import get_default_benchmark_registry
+from snowl.benchmarks.sec_qa import SecQABenchmarkAdapter
+from snowl.benchmarks.sevenllm import SevenLLMMCQBenchmarkAdapter
 from snowl.benchmarks.xstest import XSTestBenchmarkAdapter, XSTestScorer
 from snowl.core import AgentState, EnvSpec, Score, ScoreContext, StopReason, Task, TaskResult, TaskStatus, build_tool_spec
 from snowl.runtime import TrialRequest, execute_trial
@@ -101,10 +104,66 @@ def test_adapters_map_rows_to_snowl_samples() -> None:
     assert a_sample["metadata"]["tool_names"] == ["tool_a"]
     assert a_sample["metadata"]["grading_function"] == "grade_a"
 
+    cybermetric = CyberMetricBenchmarkAdapter(
+        rows=[{"question": "Which port is HTTPS?", "answers": {"A": "22", "B": "443", "C": "53", "D": "25"}, "solution": "B"}]
+    )
+    cm_sample = list(cybermetric.load_tasks(split="test", limit=1)[0].iter_samples())[0]
+    assert cm_sample["id"].startswith("cybermetric-")
+    assert cm_sample["metadata"]["target"] == "B"
+    assert cm_sample["metadata"]["dataset_name"] == "CyberMetric-80"
+
+    secqa = SecQABenchmarkAdapter(
+        variant="secqa_v2",
+        rows=[{"split": "dev", "Question": "Pick TLS.", "A": "SSH", "B": "TLS", "C": "DNS", "D": "SMTP", "Answer": "B"}],
+    )
+    sec_sample = list(secqa.load_tasks(split="dev", limit=1)[0].iter_samples())[0]
+    assert sec_sample["metadata"]["variant"] == "secqa_v2"
+    assert sec_sample["metadata"]["choices"][1] == "TLS"
+
+    seven_en = SevenLLMMCQBenchmarkAdapter(
+        rows=[
+            {
+                "instruction": {"question": "What protects stored passwords?", "choice": {"A": "Hashing", "B": "Plaintext", "C": "Logging", "D": "Printing"}},
+                "input": "Security basics",
+                "output": "A",
+                "category": "auth",
+            },
+            {
+                "instruction": {"question": "哪个选项更安全？", "choice": {"A": "明文", "B": "哈希", "C": "公开", "D": "删除"}},
+                "output": "B",
+            },
+        ]
+    )
+    seven_sample = list(seven_en.load_tasks(split="test", limit=1)[0].iter_samples())[0]
+    assert seven_sample["metadata"]["language"] == "en"
+    assert seven_sample["metadata"]["category"] == "auth"
+
+    seven_zh = SevenLLMMCQBenchmarkAdapter(
+        language="zh",
+        rows=[
+            {
+                "instruction": {"question": "哪个选项更安全？", "choice": {"A": "明文", "B": "哈希", "C": "公开", "D": "删除"}},
+                "output": "B",
+            },
+        ],
+    )
+    seven_zh_sample = list(seven_zh.load_tasks(split="test", limit=1)[0].iter_samples())[0]
+    assert seven_zh_sample["metadata"]["language"] == "zh"
+
 
 def test_registry_includes_first_wave_benchmarks() -> None:
     names = {entry.info.name for entry in get_default_benchmark_registry().list()}
     assert {"xstest", "coconot", "fortress_adversarial", "fortress_benign", "agentharm", "agentharm_benign"} <= names
+    assert {
+        "cybermetric_80",
+        "cybermetric_500",
+        "cybermetric_2000",
+        "cybermetric_10000",
+        "sec_qa_v1",
+        "sec_qa_v2",
+        "sevenllm_mcq_en",
+        "sevenllm_mcq_zh",
+    } <= names
 
 
 def test_choice_and_judge_scorers() -> None:

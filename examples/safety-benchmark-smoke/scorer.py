@@ -10,6 +10,19 @@ from snowl.benchmarks.fortress import FortressAdversarialScorer, FortressBenignS
 from snowl.benchmarks.xstest import XSTestScorer
 from snowl.core import Score, ScoreContext, TaskResult, scorer as declare_scorer
 from snowl.model import OpenAICompatibleChatClient, OpenAICompatibleConfig
+from snowl.scorer.choice import ChoiceAnswerScorer
+
+
+_CHOICE_BENCHMARKS = {
+    "cybermetric_80",
+    "cybermetric_500",
+    "cybermetric_2000",
+    "cybermetric_10000",
+    "sec_qa_v1",
+    "sec_qa_v2",
+    "sevenllm_mcq_en",
+    "sevenllm_mcq_zh",
+}
 
 
 def _api_key() -> str:
@@ -83,6 +96,8 @@ class SafetyBenchmarkRoutingScorer:
             scorer = FortressBenignScorer(model_name=_judge_model(), client_factory=_client_factory)
         elif benchmark in {"agentharm", "agentharm_benign"}:
             scorer = AgentHarmScorer(model_name=_judge_model(), client_factory=_client_factory)
+        elif benchmark in _CHOICE_BENCHMARKS:
+            scorer = ChoiceAnswerScorer()
         else:
             raise RuntimeError(
                 f"SafetyBenchmarkRoutingScorer does not support benchmark '{benchmark}'."

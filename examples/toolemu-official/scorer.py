@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from snowl.benchmarks.toolemu import ToolEmuScorer, build_tool_emu_llm
+from snowl.benchmarks.toolemu import ToolEmuScorer
 from snowl.benchmarks.toolemu.runtime import persist_tool_emu_scores
 from snowl.core import scorer as declare_scorer
 from snowl.core import Score, ScoreContext, TaskResult
@@ -52,19 +52,4 @@ class SavingToolEmuScorer(ToolEmuScorer):
 
 @declare_scorer()
 def scorer() -> ToolEmuScorer:
-    if PROJECT.judge is None:
-        raise RuntimeError("toolemu-official scorer requires judge.model in project.yml")
-    evaluator_llm = build_tool_emu_llm(
-        "evaluator",
-        model_name=PROJECT.judge.model,
-        openai_api_key=PROJECT.judge.config.api_key,
-        openai_api_base=PROJECT.judge.config.base_url,
-        request_timeout=int(PROJECT.judge.config.timeout),
-        max_retries=PROJECT.judge.config.max_retries,
-        max_tokens=(
-            int(TOOLEMU_SETTINGS["evaluator_max_tokens"])
-            if TOOLEMU_SETTINGS.get("evaluator_max_tokens") is not None
-            else None
-        ),
-    )
-    return SavingToolEmuScorer(evaluator_llm=evaluator_llm)
+    return SavingToolEmuScorer()

@@ -9,12 +9,21 @@ safety benchmark adapters:
 - `fortress_benign`
 - `agentharm`
 - `agentharm_benign`
+- `cybermetric_80`
+- `cybermetric_500`
+- `cybermetric_2000`
+- `cybermetric_10000`
+- `sec_qa_v1`
+- `sec_qa_v2`
+- `sevenllm_mcq_en`
+- `sevenllm_mcq_zh`
 
 It is intentionally configured for small `--limit` runs. Use it to verify:
 
 - remote model endpoints and credentials
 - pinned benchmark asset download/cache
 - judge regex parsing and Snowl aggregate artifacts
+- multiple-choice extraction and accuracy aggregation
 
 ## Setup
 
@@ -102,3 +111,22 @@ snowl bench run fortress_adversarial \
 AgentHarm can be loaded with this project, but samples may request tools via
 `target_functions`. Add a `tool.py` with matching Snowl tools before running
 tool-requiring samples.
+
+Try a cybersecurity MCQ adapter:
+
+```bash
+snowl bench run cybermetric_80 \
+  --project examples/safety-benchmark-smoke \
+  --split test \
+  --limit 2
+
+snowl bench run sec_qa_v1 \
+  --project examples/safety-benchmark-smoke \
+  --split test \
+  --limit 2
+
+snowl bench run sevenllm_mcq_en \
+  --project examples/safety-benchmark-smoke \
+  --split test \
+  --limit 2
+```

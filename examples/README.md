@@ -34,9 +34,8 @@ Agent wrapper snippets live under `examples/agents/`. They are intentionally
 small files for adapting your own async agent, OpenAI SDK loop, or LangGraph app
 to Snowl's `agent_id` + async `run(state, context, tools=None)` contract.
 
-Some examples depend on reference repos under `references/`, especially:
+Some examples depend on static benchmark data or environment assets under `references/`, especially:
 
-- `toolemu-official` -> `references/ToolEmu`
 - `agentsafetybench-official` -> `references/Agent-SafetyBench`
 - `terminalbench-official` -> `references/terminal-bench`
 - `osworld-official` -> `references/OSWorld`
@@ -67,4 +66,5 @@ Remote safety benchmark smoke testing:
 export SNOWL_SMOKE_API_KEY=...
 snowl bench run coconot --project examples/safety-benchmark-smoke --split test --limit 1
 snowl bench run xstest --project examples/safety-benchmark-smoke --split test --limit 1 --adapter-arg subset=unsafe
+snowl bench run cybermetric_80 --project examples/safety-benchmark-smoke --split test --limit 2
 ```

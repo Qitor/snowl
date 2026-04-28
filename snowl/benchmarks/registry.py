@@ -18,14 +18,21 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from snowl.benchmarks.base import BenchmarkAdapter, BenchmarkInfo
+from snowl.benchmarks.agent_bench_os import AgentBenchOSBenchmarkAdapter
+from snowl.benchmarks.agentdojo import AgentDojoBenchmarkAdapter
 from snowl.benchmarks.agentsafetybench import AgentSafetyBenchBenchmarkAdapter
 from snowl.benchmarks.agentharm import AgentHarmBenchmarkAdapter
+from snowl.benchmarks.bfcl import BFCLBenchmarkAdapter
 from snowl.benchmarks.coconot import CoconotBenchmarkAdapter
 from snowl.benchmarks.csv_adapter import CsvBenchmarkAdapter
+from snowl.benchmarks.cybermetric import CyberMetricBenchmarkAdapter
 from snowl.benchmarks.fortress import FortressBenchmarkAdapter
+from snowl.benchmarks.ipi_coding_agent import IPICodingAgentBenchmarkAdapter
 from snowl.benchmarks.jsonl_adapter import JsonlBenchmarkAdapter
 from snowl.benchmarks.mask import MASKBenchmarkAdapter
 from snowl.benchmarks.osworld import OSWorldBenchmarkAdapter
+from snowl.benchmarks.sec_qa import SecQABenchmarkAdapter
+from snowl.benchmarks.sevenllm import SevenLLMMCQBenchmarkAdapter
 from snowl.benchmarks.strongreject import StrongRejectBenchmarkAdapter
 from snowl.benchmarks.terminalbench import TerminalBenchBenchmarkAdapter
 from snowl.benchmarks.toolemu import ToolEmuBenchmarkAdapter
@@ -73,6 +80,36 @@ def get_default_benchmark_registry() -> BenchmarkRegistry:
 def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> BenchmarkRegistry:
     registry = registry or get_default_benchmark_registry()
     registry.register(
+        name="agent_bench_os",
+        info=BenchmarkInfo(
+            name="agent_bench_os",
+            description="AgentBench OS benchmark adapter.",
+            domain="agentic_capability",
+            benchmark_type="capability",
+            family="agent_bench",
+            primary_metric="agent_bench_os_success",
+            higher_is_better=True,
+            sample_preview_mode="code_trace",
+            dashboard_tags=["terminal", "tool_use", "os"],
+        ),
+        factory=lambda **kwargs: AgentBenchOSBenchmarkAdapter(**kwargs),
+    )
+    registry.register(
+        name="agentdojo",
+        info=BenchmarkInfo(
+            name="agentdojo",
+            description="AgentDojo benchmark adapter.",
+            domain="agentic_safety",
+            benchmark_type="safety",
+            family="agentdojo",
+            primary_metric="agentdojo_score",
+            higher_is_better=True,
+            sample_preview_mode="tool_trace",
+            dashboard_tags=["prompt_injection", "tool_use", "stateful"],
+        ),
+        factory=lambda **kwargs: AgentDojoBenchmarkAdapter(**kwargs),
+    )
+    registry.register(
         name="agentharm",
         info=BenchmarkInfo(
             name="agentharm",
@@ -118,6 +155,21 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
         factory=lambda **kwargs: AgentSafetyBenchBenchmarkAdapter(**kwargs),
     )
     registry.register(
+        name="bfcl",
+        info=BenchmarkInfo(
+            name="bfcl",
+            description="Function-calling benchmark adapter.",
+            domain="agentic_capability",
+            benchmark_type="capability",
+            family="bfcl",
+            primary_metric="function_call_accuracy",
+            higher_is_better=True,
+            sample_preview_mode="tool_trace",
+            dashboard_tags=["function_calling", "tool_use"],
+        ),
+        factory=lambda **kwargs: BFCLBenchmarkAdapter(**kwargs),
+    )
+    registry.register(
         name="coconot",
         info=BenchmarkInfo(
             name="coconot",
@@ -148,6 +200,43 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
         ),
         factory=lambda **kwargs: CsvBenchmarkAdapter(**kwargs),
     )
+    registry.register(
+        name="ipi_coding_agent",
+        info=BenchmarkInfo(
+            name="ipi_coding_agent",
+            description="Coding-agent prompt-injection benchmark adapter.",
+            domain="agentic_safety",
+            benchmark_type="safety",
+            family="ipi_coding_agent",
+            primary_metric="ipi_coding_agent_score",
+            higher_is_better=True,
+            sample_preview_mode="code_trace",
+            dashboard_tags=["prompt_injection", "coding", "tool_use"],
+        ),
+        factory=lambda **kwargs: IPICodingAgentBenchmarkAdapter(**kwargs),
+    )
+    for dataset_name in ("CyberMetric-80", "CyberMetric-500", "CyberMetric-2000", "CyberMetric-10000"):
+        adapter_name = f"cybermetric_{dataset_name.rsplit('-', 1)[-1]}"
+        registry.register(
+            name=adapter_name,
+            info=BenchmarkInfo(
+                name=adapter_name,
+                description="CyberMetric multiple-choice benchmark adapter.",
+                display_name=dataset_name,
+                short_description=f"{dataset_name} cybersecurity multiple-choice benchmark",
+                domain="cyber_offense",
+                benchmark_type="capability",
+                family="cybermetric",
+                primary_metric="accuracy",
+                higher_is_better=True,
+                sample_preview_mode="qa",
+                dashboard_tags=["mcq", "cybersecurity"],
+            ),
+            factory=lambda dataset_name=dataset_name, **kwargs: CyberMetricBenchmarkAdapter(
+                dataset_name=dataset_name,
+                **kwargs,
+            ),
+        )
     registry.register(
         name="fortress_adversarial",
         info=BenchmarkInfo(
@@ -222,6 +311,74 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             dashboard_tags=["gui", "desktop", "agent_capability"],
         ),
         factory=lambda **kwargs: OSWorldBenchmarkAdapter(**kwargs),
+    )
+    registry.register(
+        name="sec_qa_v1",
+        info=BenchmarkInfo(
+            name="sec_qa_v1",
+            description="SecQA v1 multiple-choice benchmark adapter.",
+            display_name="SecQA v1",
+            short_description="SecQA v1 cybersecurity multiple-choice benchmark",
+            domain="cyber_offense",
+            benchmark_type="capability",
+            family="sec_qa",
+            primary_metric="accuracy",
+            higher_is_better=True,
+            sample_preview_mode="qa",
+            dashboard_tags=["mcq", "cybersecurity"],
+        ),
+        factory=lambda **kwargs: SecQABenchmarkAdapter(variant="secqa_v1", **kwargs),
+    )
+    registry.register(
+        name="sec_qa_v2",
+        info=BenchmarkInfo(
+            name="sec_qa_v2",
+            description="SecQA v2 multiple-choice benchmark adapter.",
+            display_name="SecQA v2",
+            short_description="SecQA v2 cybersecurity multiple-choice benchmark",
+            domain="cyber_offense",
+            benchmark_type="capability",
+            family="sec_qa",
+            primary_metric="accuracy",
+            higher_is_better=True,
+            sample_preview_mode="qa",
+            dashboard_tags=["mcq", "cybersecurity"],
+        ),
+        factory=lambda **kwargs: SecQABenchmarkAdapter(variant="secqa_v2", **kwargs),
+    )
+    registry.register(
+        name="sevenllm_mcq_en",
+        info=BenchmarkInfo(
+            name="sevenllm_mcq_en",
+            description="SEVENLLM English multiple-choice benchmark adapter.",
+            display_name="SEVENLLM MCQ EN",
+            short_description="SEVENLLM English cybersecurity multiple-choice benchmark",
+            domain="cyber_offense",
+            benchmark_type="capability",
+            family="sevenllm",
+            primary_metric="accuracy",
+            higher_is_better=True,
+            sample_preview_mode="qa",
+            dashboard_tags=["mcq", "cybersecurity", "en"],
+        ),
+        factory=lambda **kwargs: SevenLLMMCQBenchmarkAdapter(language="en", **kwargs),
+    )
+    registry.register(
+        name="sevenllm_mcq_zh",
+        info=BenchmarkInfo(
+            name="sevenllm_mcq_zh",
+            description="SEVENLLM Chinese multiple-choice benchmark adapter.",
+            display_name="SEVENLLM MCQ ZH",
+            short_description="SEVENLLM Chinese cybersecurity multiple-choice benchmark",
+            domain="cyber_offense",
+            benchmark_type="capability",
+            family="sevenllm",
+            primary_metric="accuracy",
+            higher_is_better=True,
+            sample_preview_mode="qa",
+            dashboard_tags=["mcq", "cybersecurity", "zh"],
+        ),
+        factory=lambda **kwargs: SevenLLMMCQBenchmarkAdapter(language="zh", **kwargs),
     )
     registry.register(
         name="toolemu",
