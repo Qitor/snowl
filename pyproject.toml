@@ -61,7 +61,9 @@ osworld_eval = [
 snowl = "snowl.cli:main"
 
 [project.urls]
-Homepage = "https://pypi.org/project/snowl/"
+Homepage = "https://github.com/Qitor/snowl"
+Repository = "https://github.com/Qitor/snowl"
+Issues = "https://github.com/Qitor/snowl/issues"
 
 [tool.setuptools]
 include-package-data = true
@@ -72,6 +74,17 @@ include = ["snowl", "snowl.*"]
 [tool.setuptools.package-data]
 "snowl" = ["_webui/**", "_webui/**/*"]
 "snowl.ui" = ["panel_configs/*.yml", "panel_configs/*.yaml", "panel_configs/README.md"]
+
+[tool.setuptools.exclude-package-data]
+"snowl" = [
+  "_webui/node_modules/**",
+  "_webui/node_modules/**/*",
+  "_webui/.snowl/**",
+  "_webui/.snowl/**/*",
+  "_webui/.next/cache/**",
+  "_webui/.next/cache/**/*",
+  "_webui/**/*.tsbuildinfo",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
