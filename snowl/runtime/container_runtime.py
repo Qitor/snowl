@@ -144,6 +144,7 @@ class ContainerRuntime:
         resource_id: str | None = None
         if self._lifecycle_manager is not None and self._session is not None:
             env = self._session.env
+            env_map = dict(env) if isinstance(env, Mapping) else {}
             resource_id = self._lifecycle_manager.register_container(
                 trial_id=self.trial_id,
                 benchmark=benchmark,
@@ -151,9 +152,10 @@ class ContainerRuntime:
                 spec_hash=self._container_spec.spec_hash,
                 cleanup_policy=self._container_spec.cleanup_policy,
                 debug_preserve=self._container_spec.debug_preserve_default,
-                container_id=getattr(env, "container_id", None),
-                compose_project=getattr(env, "compose_project", None),
-                compose_file=getattr(env, "compose_file", None),
+                container_id=getattr(env, "container_id", None) or env_map.get("container_id"),
+                compose_project=getattr(env, "compose_project", None) or env_map.get("compose_project"),
+                compose_file=getattr(env, "compose_file", None) or env_map.get("compose_file"),
+                workspace_dir=dict(self._session.metadata).get("workspace_dir"),
                 session_kind=getattr(self._session, "kind", None),
                 provider_metadata={
                     **dict(self._session.metadata),

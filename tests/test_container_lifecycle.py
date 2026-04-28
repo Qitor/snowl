@@ -50,6 +50,40 @@ def test_runtime_container_contract_merges_task_and_sample_layers() -> None:
     assert spec.spec_hash is not None
 
 
+def test_runtime_container_contract_v2_fields_and_legacy_startup() -> None:
+    spec = resolve_runtime_container_spec(
+        task_metadata={
+            "benchmark": "ipi_coding_agent",
+            "runtime_container": {
+                "provider_name": "docker_container",
+                "requires_container": True,
+                "network": "disabled",
+                "env": {"A": "1"},
+                "workspace": {"enabled": True, "repo_files": {"a.txt": "x"}},
+                "resource_limits": {"start_timeout_seconds": 10},
+            },
+        },
+        sample={
+            "id": "sample-1",
+            "metadata": {
+                "runtime_container": {
+                    "startup": {"image": "python:3.12", "verification_command": "pytest -q"},
+                    "init_command": "pip install -e .",
+                    "env": {"B": "2"},
+                }
+            },
+        },
+    )
+
+    assert spec.provider_name == "docker_container"
+    assert spec.network == "disabled"
+    assert spec.env == {"A": "1", "B": "2"}
+    assert spec.workspace["enabled"] is True
+    assert spec.init_command == "pip install -e ."
+    assert spec.check_command == "pytest -q"
+    assert spec.resource_limits["start_timeout_seconds"] == 10
+
+
 def test_runtime_container_lifecycle_register_release_destroy_default() -> None:
     torn_down: list[str] = []
     emitted: list[dict[str, object]] = []

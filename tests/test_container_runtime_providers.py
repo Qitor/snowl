@@ -8,6 +8,7 @@ from snowl.runtime.container_providers import (
     ContainerProviderContext,
     ContainerProviderRegistry,
     ContainerSession,
+    DockerContainerProvider,
     OSWorldProvider,
     TerminalBenchProvider,
     default_container_provider_registry,
@@ -136,6 +137,7 @@ def test_default_provider_registry_contains_terminalbench_and_osworld() -> None:
     registry = default_container_provider_registry()
     assert registry.resolve("terminalbench") is not None
     assert registry.resolve("osworld") is not None
+    assert registry.resolve("docker_container") is not None
 
 
 def test_terminalbench_provider_emits_compatible_lifecycle_events(monkeypatch, tmp_path: Path) -> None:
@@ -306,6 +308,124 @@ def test_terminalbench_provider_isolates_resources_per_variant(monkeypatch, tmp_
     assert session_v1.env.compose_env["T_BENCH_TASK_LOGS_PATH"] != session_v2.env.compose_env["T_BENCH_TASK_LOGS_PATH"]
     assert session_v1.env.compose_env["T_BENCH_TASK_AGENT_LOGS_PATH"] != session_v2.env.compose_env["T_BENCH_TASK_AGENT_LOGS_PATH"]
     assert session_v1.env.compose_env["T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME"] != session_v2.env.compose_env["T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME"]
+
+
+def test_compose_terminal_provider_runs_lifecycle_commands(monkeypatch, tmp_path: Path) -> None:
+    events: list[dict[str, object]] = []
+
+    class _FakeTerminalEnv:
+        def __init__(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.compose_project = kwargs.get("compose_project")
+            self.compose_file = kwargs.get("compose_file")
+            self.compose_service = kwargs.get("compose_service")
+            self.compose_env = dict(kwargs.get("compose_env") or {})
+            self.use_docker_compose = False
+            self.commands: list[str] = []
+
+        def exec(self, command, timeout_seconds=None):  # type: ignore[no-untyped-def]
+            _ = timeout_seconds
+            self.commands.append(str(command))
+            return {"command": command, "exit_code": 0, "duration_ms": 1, "stdout": "ok", "stderr": ""}
+
+    monkeypatch.setattr("snowl.runtime.container_providers.TerminalEnv", _FakeTerminalEnv)
+    provider = default_container_provider_registry().resolve("compose_terminal")
+    assert provider is not None
+    context = ContainerProviderContext(
+        run_id="run-1",
+        trial_id="trial-1",
+        task_id="task-1",
+        agent_id="agent-1",
+        variant_id="v1",
+        task_env_type="terminal",
+        task_metadata={"benchmark": "agent_bench_os"},
+        sample={"id": "sample-1"},
+        container_spec=resolve_runtime_container_spec(
+            task_metadata={"benchmark": "agent_bench_os"},
+            sample={
+                "id": "sample-1",
+                "metadata": {
+                    "runtime_container": {
+                        "benchmark": "agent_bench_os",
+                        "provider_name": "compose_terminal",
+                        "requires_container": True,
+                        "init_command": "echo init",
+                        "check_command": "echo check",
+                        "workspace": {"workspace_dir": str(tmp_path)},
+                    }
+                },
+            },
+        ),
+        emit=events.append,
+    )
+    session = asyncio.run(provider.prepare(context))
+    close_out = asyncio.run(provider.close(context, session))
+
+    assert session.metadata["workspace_dir"] == str(tmp_path)
+    assert session.env.commands == ["echo init", "echo check"]
+    assert close_out["exit_code"] == 0
+    names = [str(evt.get("event")) for evt in events]
+    assert "compose_terminal.container.init.finish" in names
+    assert "compose_terminal.container.check.finish" in names
+
+
+def test_docker_container_provider_lifecycle_with_mock_backend(monkeypatch, tmp_path: Path) -> None:
+    events: list[dict[str, object]] = []
+    calls: list[list[str]] = []
+
+    class _FakeRunner:
+        def __init__(self, cwd=None):  # type: ignore[no-untyped-def]
+            self.cwd = cwd
+
+        def run(self, cmd, **kwargs):  # type: ignore[no-untyped-def]
+            _ = kwargs
+            calls.append(list(cmd))
+            stdout = "container-123\n" if cmd[:2] == ["docker", "run"] else "ok\n"
+            return {"command": list(cmd), "stdout": stdout, "stderr": "", "exit_code": 0, "duration_ms": 1}
+
+    monkeypatch.setattr("snowl.runtime.container_providers.CommandRunner", _FakeRunner)
+    monkeypatch.setattr("snowl.runtime.container_providers.shutil.which", lambda _name: "/usr/bin/docker")
+    provider = DockerContainerProvider()
+    context = ContainerProviderContext(
+        run_id="run-1",
+        trial_id="trial-1",
+        task_id="task-1",
+        agent_id="agent-1",
+        variant_id="v1",
+        task_env_type="terminal",
+        task_metadata={"benchmark": "ipi_coding_agent"},
+        sample={"id": "sample-1"},
+        container_spec=resolve_runtime_container_spec(
+            task_metadata={"benchmark": "ipi_coding_agent"},
+            sample={
+                "id": "sample-1",
+                "metadata": {
+                    "runtime_container": {
+                        "benchmark": "ipi_coding_agent",
+                        "provider_name": "docker_container",
+                        "requires_container": True,
+                        "network": "disabled",
+                        "init_command": "echo init",
+                        "check_command": "echo check",
+                        "workspace": {"workspace_dir": str(tmp_path)},
+                        "startup": {"image": "python:3.12", "workspace_dir": str(tmp_path)},
+                    }
+                },
+            },
+        ),
+        emit=events.append,
+    )
+
+    session = asyncio.run(provider.prepare(context))
+    close_out = asyncio.run(provider.close(context, session))
+
+    assert session.kind == "docker_container"
+    assert session.metadata["container_id"] == "container-123"
+    assert close_out["exit_code"] == 0
+    rendered = [" ".join(call) for call in calls]
+    assert any("--network none" in call for call in rendered)
+    assert any("docker exec" in call and "echo init" in call for call in rendered)
+    assert any("docker exec" in call and "echo check" in call for call in rendered)
+    assert any("docker rm -f container-123" in call for call in rendered)
 
 
 def test_osworld_provider_prepare_and_close_emit_events(monkeypatch) -> None:

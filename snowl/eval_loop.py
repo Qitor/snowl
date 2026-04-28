@@ -17,10 +17,11 @@ from snowl.core import Scorer, ToolSpec
 from snowl.observability.events import RunEventBus
 from snowl.planning import PlanTrial, trial_key as make_trial_key
 from snowl.runtime import TrialOutcome, TrialRequest
+from snowl.runtime.container_contract import resolve_runtime_container_spec
 from snowl.runtime.container_lifecycle import RuntimeContainerLifecycleManager
 from snowl.runtime.engine import finalize_trial_phase, prepare_trial_phase, execute_agent_phase, score_trial_phase
 from snowl.runtime.recovery import RecoveryManager, attempt_is_success
-from snowl.runtime.resource_scheduler import ResourceScheduler
+from snowl.runtime.resource_scheduler import ResourceScheduler, TaskExecutionPlan, TrialDescriptor
 from snowl.ui.contracts import TaskMonitor, normalize_ui_event
 
 
@@ -119,6 +120,29 @@ class EvalTrialLifecycle:
         if retry_source != "initial_run":
             self._emit_retry_start(trial=trial, retry_source=retry_source)
 
+        container_spec = resolve_runtime_container_spec(
+            task_metadata=trial.task.metadata,
+            sample=trial.sample,
+        )
+        trial_descriptor = TrialDescriptor(
+            trial_id=key,
+            task_id=trial.task_id,
+            sample_id=trial.sample_id,
+            agent_id=trial.agent_id,
+            variant_id=trial.variant_id,
+            scorer_id=getattr(self.scorer, "scorer_id", None),
+            seed=None,
+            spec_hash=container_spec.spec_hash,
+            provider_ids=(),
+        )
+        execution_plan = TaskExecutionPlan(
+            trial=trial_descriptor,
+            requires_container=bool(container_spec.requires_container),
+            requires_prepare=True,
+            requires_build=False,
+            estimated_prepare_cost="container" if container_spec.requires_container else "light",
+            spec_hash=container_spec.spec_hash,
+        )
         request = TrialRequest(
             task=trial.task,
             agent=trial.agent,
@@ -127,16 +151,20 @@ class EvalTrialLifecycle:
             tools=self.tool_specs,
             sandbox_runtime=self.shared_sandbox_runtime,
             on_event=lambda event: self._on_runtime_event(event, trial=trial),
+            execution_plan=execution_plan,
+            trial_descriptor=trial_descriptor,
             container_lifecycle=self.container_lifecycle,
             run_id=self.run_id,
             trial_id=key,
         )
-        async with self.scheduler.running_trial_slot():
+        async with self.scheduler.begin_prepare(execution_plan):
             prepared = await prepare_trial_phase(request)
+        async with self.scheduler.begin_execute(execution_plan):
             partial = await execute_agent_phase(prepared)
-        async with self.scheduler.scoring_slot():
+        async with self.scheduler.begin_score(execution_plan):
             outcome = await score_trial_phase(prepared, partial)
-        outcome, _ = await finalize_trial_phase(prepared, outcome)
+        async with self.scheduler.begin_finalize(execution_plan):
+            outcome, _ = await finalize_trial_phase(prepared, outcome)
 
         async with self.checkpoint_lock:
             attempt_row = self.recovery_manager.record_attempt(

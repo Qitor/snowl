@@ -43,6 +43,7 @@ class RuntimeOwnedResourceRecord:
     container_id: str | None = None
     compose_project: str | None = None
     compose_file: str | None = None
+    workspace_dir: str | None = None
     session_kind: str | None = None
     provider_metadata: dict[str, Any] = field(default_factory=dict)
     teardown_error: str | None = None
@@ -100,6 +101,7 @@ class RuntimeContainerLifecycleManager:
         container_id: str | None,
         compose_project: str | None,
         compose_file: str | None,
+        workspace_dir: str | None = None,
         session_kind: str | None,
         provider_metadata: dict[str, Any] | None,
         teardown: Callable[[], Awaitable[dict[str, Any] | None]],
@@ -123,6 +125,7 @@ class RuntimeContainerLifecycleManager:
             container_id=str(container_id) if container_id else None,
             compose_project=str(compose_project) if compose_project else None,
             compose_file=str(compose_file) if compose_file else None,
+            workspace_dir=str(workspace_dir) if workspace_dir else None,
             session_kind=str(session_kind) if session_kind else None,
             provider_metadata=dict(provider_metadata or {}),
         )
@@ -144,6 +147,7 @@ class RuntimeContainerLifecycleManager:
                 "container_id": record.container_id,
                 "compose_project": record.compose_project,
                 "compose_file": record.compose_file,
+                "workspace_dir": record.workspace_dir,
                 "session_kind": record.session_kind,
                 "cleanup_policy": record.cleanup_policy,
                 "debug_preserve": record.debug_preserve,
@@ -183,6 +187,7 @@ class RuntimeContainerLifecycleManager:
                 "spec_hash": record.spec_hash,
                 "container_id": record.container_id,
                 "compose_project": record.compose_project,
+                "workspace_dir": record.workspace_dir,
                 "session_kind": record.session_kind,
                 "lifecycle_state": record.lifecycle_state.value,
                 "debug_preserve": record.debug_preserve,

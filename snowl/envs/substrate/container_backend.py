@@ -32,6 +32,10 @@ class ContainerBackend:
         self,
         *,
         image: str,
+        name: str | None = None,
+        command: str | None = None,
+        workdir: str | None = None,
+        network: str | None = None,
         env: Mapping[str, str] | None = None,
         ports: Mapping[int, int] | None = None,
         volumes: Mapping[str, str] | None = None,
@@ -44,6 +48,13 @@ class ContainerBackend:
         cmd = ["docker", "run"]
         if detach:
             cmd.append("-d")
+        if name:
+            cmd += ["--name", str(name)]
+        if network:
+            network_value = "none" if str(network).lower() in {"disabled", "none", "off"} else str(network)
+            cmd += ["--network", network_value]
+        if workdir:
+            cmd += ["-w", str(workdir)]
         for cap in (cap_add or ()):
             cap_name = str(cap).strip()
             if cap_name:
@@ -59,6 +70,8 @@ class ContainerBackend:
         for key, value in (env or {}).items():
             cmd += ["-e", f"{key}={value}"]
         cmd.append(str(image))
+        if command:
+            cmd += ["bash", "-lc", str(command)]
         return self._runner.run(
             cmd,
             timeout_seconds=timeout_seconds,
@@ -92,6 +105,28 @@ class ContainerBackend:
         timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         cmd = ["docker", "logs", "--tail", str(max(1, int(tail))), str(container_id)]
+        return self._runner.run(
+            cmd,
+            timeout_seconds=timeout_seconds,
+            on_event=on_event,
+        )
+
+    def exec(
+        self,
+        container_id: str,
+        command: str,
+        *,
+        env: Mapping[str, str] | None = None,
+        workdir: str | None = None,
+        on_event: EventSink = None,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        cmd = ["docker", "exec"]
+        if workdir:
+            cmd += ["-w", str(workdir)]
+        for key, value in (env or {}).items():
+            cmd += ["-e", f"{key}={value}"]
+        cmd += [str(container_id), "bash", "-lc", str(command)]
         return self._runner.run(
             cmd,
             timeout_seconds=timeout_seconds,

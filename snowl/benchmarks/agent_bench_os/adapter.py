@@ -82,10 +82,19 @@ class AgentBenchOSBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
         }
         startup = _runtime_startup(row)
         if startup:
+            check_command = startup.get("check_command")
+            if check_command:
+                metadata["check_command"] = check_command
+                metadata["verification_command"] = check_command
             metadata["runtime_container"] = {
                 "benchmark": self.name,
-                "provider_name": "compose_terminal",
+                "provider_name": startup.pop("provider_name", "compose_terminal"),
                 "requires_container": True,
+                "init_command": startup.get("init_command"),
+                "start_command": startup.get("start_command"),
+                "check_command": check_command,
+                "network": startup.get("network"),
+                "workspace": dict(startup.get("workspace") or {}),
                 "startup": startup,
             }
         return {"id": f"agent-bench-os-{sample_id}", "input": prompt, "metadata": metadata}
@@ -109,6 +118,19 @@ def _runtime_startup(row: Mapping[str, Any]) -> dict[str, Any]:
         startup["init_command"] = init
     if row.get("start"):
         startup["start_command"] = str(row.get("start"))
+    evaluation = row.get("evaluation")
+    if isinstance(evaluation, Mapping):
+        command = evaluation.get("command") or evaluation.get("check_command") or evaluation.get("verification_command")
+        if command is not None:
+            startup["check_command"] = str(command)
     if create.get("compose_file"):
         startup["compose_file"] = str(create.get("compose_file"))
+    if create.get("docker_image") or create.get("image"):
+        startup["provider_name"] = "docker_container"
+        startup["image"] = str(create.get("docker_image") or create.get("image"))
+    if create.get("network"):
+        startup["network"] = str(create.get("network"))
+    repo_files = create.get("repo_files")
+    if isinstance(repo_files, Mapping):
+        startup["workspace"] = {"enabled": True, "repo_files": dict(repo_files)}
     return startup

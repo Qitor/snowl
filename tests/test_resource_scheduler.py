@@ -8,7 +8,7 @@ import pytest
 
 from snowl.core import SandboxSpec
 from snowl.envs.sandbox_runtime import PreparedSandbox
-from snowl.runtime.resource_scheduler import ResourceScheduler
+from snowl.runtime.resource_scheduler import ResourceScheduler, TaskExecutionPlan, TrialDescriptor
 
 
 def test_trial_slots_enforce_quota() -> None:
@@ -224,3 +224,35 @@ def test_sandbox_slots_release_on_teardown_and_prepare_failure() -> None:
         await wrapped.teardown(extra)
 
     asyncio.run(_run())
+
+
+def test_scheduler_records_independent_phase_admission() -> None:
+    scheduler = ResourceScheduler(max_running_trials=1, max_container_slots=1, max_scoring_tasks=1)
+
+    async def _run() -> None:
+        descriptor = TrialDescriptor(
+            trial_id="trial-1",
+            task_id="task-1",
+            sample_id="sample-1",
+            agent_id="agent-1",
+            variant_id="v1",
+            scorer_id="s1",
+            seed=None,
+            spec_hash="abc",
+            provider_ids=(),
+        )
+        plan = TaskExecutionPlan(trial=descriptor, requires_container=True)
+        async with scheduler.begin_prepare(plan):
+            assert scheduler.stats_snapshot()["active"]["container_slots"] == 1
+        async with scheduler.begin_execute(plan):
+            assert scheduler.stats_snapshot()["active"]["running_trials"] == 1
+        async with scheduler.begin_score(plan):
+            assert scheduler.stats_snapshot()["active"]["scoring_tasks"] == 1
+        async with scheduler.begin_finalize(plan):
+            assert scheduler.stats_snapshot()["active"]["finalizing"] == 1
+
+    asyncio.run(_run())
+    stats = scheduler.stats_snapshot()
+    assert stats["active"]["container_slots"] == 0
+    assert stats["active"]["running_trials"] == 0
+    assert stats["active"]["scoring_tasks"] == 0
