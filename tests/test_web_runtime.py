@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from snowl.web import runtime as web_runtime
 
 
@@ -124,3 +126,45 @@ def test_resolve_webui_source_prefers_repo_in_auto_mode(monkeypatch, tmp_path: P
     source_dir, source_mode = web_runtime.resolve_webui_source()
     assert source_dir == repo_webui
     assert source_mode == "repo"
+
+
+def test_resolve_webui_source_uses_bundled_when_repo_missing(monkeypatch, tmp_path: Path) -> None:
+    repo_webui = tmp_path / "repo" / "webui"
+    bundled = tmp_path / "bundled"
+    bundled.mkdir(parents=True, exist_ok=True)
+    _write_json(bundled / "package.json", {"name": "bundled-webui"})
+
+    monkeypatch.setattr(web_runtime, "_repo_webui_dir", lambda: repo_webui)
+    monkeypatch.setattr(web_runtime, "_bundled_webui_dir", lambda: bundled)
+    monkeypatch.delenv("SNOWL_WEBUI_SOURCE", raising=False)
+
+    source_dir, source_mode = web_runtime.resolve_webui_source()
+    assert source_dir == bundled
+    assert source_mode == "bundled"
+
+
+def test_resolve_webui_source_can_force_bundled(monkeypatch, tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    (repo_root / "pyproject.toml").write_text("[project]\nname='snowl'\nversion='0.0.0'\n", encoding="utf-8")
+    (repo_root / "snowl").mkdir(parents=True, exist_ok=True)
+    repo_webui = repo_root / "webui"
+    repo_webui.mkdir(parents=True, exist_ok=True)
+    _write_json(repo_webui / "package.json", {"name": "repo-webui"})
+    bundled = tmp_path / "bundled"
+    bundled.mkdir(parents=True, exist_ok=True)
+    _write_json(bundled / "package.json", {"name": "bundled-webui"})
+
+    monkeypatch.setattr(web_runtime, "_repo_webui_dir", lambda: repo_webui)
+    monkeypatch.setattr(web_runtime, "_bundled_webui_dir", lambda: bundled)
+    monkeypatch.setenv("SNOWL_WEBUI_SOURCE", "bundled")
+
+    source_dir, source_mode = web_runtime.resolve_webui_source()
+    assert source_dir == bundled
+    assert source_mode == "bundled"
+
+
+def test_node_preflight_error_is_clear(monkeypatch) -> None:
+    monkeypatch.setattr(web_runtime.shutil, "which", lambda _name: None)
+    with pytest.raises(web_runtime.WebRuntimeError, match="Node.js \\+ npm are required"):
+        web_runtime._ensure_node_available()

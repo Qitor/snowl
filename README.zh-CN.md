@@ -1,5 +1,10 @@
 # Snowl（中文说明）
 
+[![CI](https://github.com/Qitor/snowl/actions/workflows/ci.yml/badge.svg)](https://github.com/Qitor/snowl/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
+![Docker Sandbox](https://img.shields.io/badge/docker--sandbox-ready-2496ED)
+![License](https://img.shields.io/badge/license-Apache--2.0-blue)
+
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
 Snowl 是一个 Agent 评测框架，并且正在朝工业级评测平台收敛。
@@ -53,12 +58,20 @@ Snowl 现在已经支持：
 
 ## 安装
 
+从 PyPI 安装：
+
+```bash
+pip install snowl
+```
+
+本地开发安装：
+
 ```bash
 cd /Users/morinop/coding/snowl_v2
 pip install -e .
 ```
 
-安装阶段会一并构建内置 Web UI。
+启动 Web monitor 时会按需准备内置 Web UI；普通 CLI/benchmark 命令不依赖 Node 构建。
 
 ## 准备 reference 仓库
 

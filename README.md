@@ -4,7 +4,7 @@
 ![Python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![Docker Sandbox](https://img.shields.io/badge/docker--sandbox-ready-2496ED)
 ![Benchmarks](https://img.shields.io/badge/benchmarks-20%2B-success)
-![License](https://img.shields.io/badge/license-see%20repo-lightgrey)
+![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
@@ -74,7 +74,13 @@ adapters, environment blueprints, plugins, and dynamic test generation.
 
 ## Quick Start
 
-Install in editable mode:
+Install from PyPI:
+
+```bash
+pip install snowl
+```
+
+For local development, install in editable mode:
 
 ```bash
 git clone https://github.com/Qitor/snowl.git
@@ -484,4 +490,4 @@ Stars help the project reach more people who are trying to build safer agents.
 
 ## License
 
-See the repository license file.
+Snowl is licensed under the Apache License 2.0. See [LICENSE](./LICENSE).

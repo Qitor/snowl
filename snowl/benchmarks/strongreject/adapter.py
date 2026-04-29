@@ -15,7 +15,9 @@ Change guardrails:
 from __future__ import annotations
 
 import hashlib
+from importlib import resources
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from snowl.benchmarks.base_adapter import BaseBenchmarkAdapter
@@ -24,11 +26,20 @@ from snowl.core import EnvSpec
 
 
 def _default_dataset_path() -> str:
-    return default_reference_path(
-        __file__,
-        "strongreject",
-        "strongreject_dataset",
-        "strongreject_small_dataset.csv",
+    reference_path = Path(
+        default_reference_path(
+            __file__,
+            "strongreject",
+            "strongreject_dataset",
+            "strongreject_small_dataset.csv",
+        )
+    )
+    if reference_path.exists():
+        return str(reference_path)
+    return str(
+        resources.files("snowl.benchmarks.strongreject")
+        .joinpath("data")
+        .joinpath("strongreject_smoke.csv")
     )
 
 
