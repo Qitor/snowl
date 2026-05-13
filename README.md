@@ -7,9 +7,12 @@
 ![License](https://img.shields.io/badge/license-see%20repo-lightgrey)
 
 [![Docs](https://img.shields.io/badge/docs-site-blue)](https://qitor.github.io/snowl)
+![Developed by](https://img.shields.io/badge/developed%20by-SII%20%7C%20Fudan%20University-9b59b6)
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
-Snowl is an open-source safety evaluation framework for AI agents.
+Snowl is an open-source safety evaluation framework for AI agents, jointly
+developed by the [Shanghai Innovation Institute (SII)](https://www.sii.sh) and
+[Fudan University](https://www.fudan.edu.cn).
 
 It helps you run reproducible, observable, and retryable evaluations across agent
 implementations, model variants, benchmarks, and execution environments. Think

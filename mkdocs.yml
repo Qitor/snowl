@@ -40,6 +40,8 @@ theme:
     - content.tabs.link
 
 extra:
+  generator: false
+  copyright: "Jointly developed by Shanghai Innovation Institute (SII) and Fudan University"
   alternate:
     - name: English
       link: /
