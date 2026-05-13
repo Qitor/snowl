@@ -2,10 +2,11 @@
 
 Framework role:
 - Defines the interface concrete adapters must implement to integrate with Snowl benchmark execution.
+- Defines `BenchmarkConcurrencyProfile` for benchmark-specific runtime budget guidance.
 
 Runtime/usage wiring:
 - Used by adapter implementations, registry, and conformance checks.
-- Key top-level symbols in this file: `BenchmarkInfo`, `BenchmarkAdapter`, `validate_benchmark_adapter`.
+- Key top-level symbols in this file: `BenchmarkInfo`, `BenchmarkConcurrencyProfile`, `BenchmarkAdapter`, `validate_benchmark_adapter`.
 
 Change guardrails:
 - Any API change here is cross-adapter and high-impact.
@@ -21,6 +22,32 @@ from snowl.errors import SnowlValidationError
 
 
 @dataclass(frozen=True)
+class BenchmarkConcurrencyProfile:
+    """Benchmark-specific guidance for RuntimePolicy budget resolution.
+
+    Attributes:
+        name: Benchmark name (for logging and identification).
+        api_call_amplification: Estimated LM API calls per trial. ToolEmu with emulation
+            makes ~30 calls/trial; a simple QA makes ~1. Used to inform provider budget.
+        recommended_max_running: Suggested max_running_trials for this benchmark.
+            Applied when no explicit CLI/config override is provided.
+        scorer_uses_provider: Whether the scorer makes model API calls that need
+            provider admission (e.g., LLM-as-judge).
+        scorer_provider_id: Provider ID for scorer model calls. Required when
+            scorer_uses_provider is True.
+        recommended_scoring_tasks: Suggested max_scoring_tasks. Applied when no
+            explicit override is provided.
+    """
+
+    name: str
+    api_call_amplification: float = 1.0
+    recommended_max_running: int | None = None
+    scorer_uses_provider: bool = False
+    scorer_provider_id: str | None = None
+    recommended_scoring_tasks: int | None = None
+
+
+@dataclass(frozen=True)
 class BenchmarkInfo:
     name: str
     description: str
@@ -33,6 +60,7 @@ class BenchmarkInfo:
     higher_is_better: bool = True
     sample_preview_mode: str = "qa"
     dashboard_tags: list[str] = field(default_factory=list)
+    concurrency_profile: BenchmarkConcurrencyProfile | None = None
 
     def __post_init__(self) -> None:
         if not self.display_name:

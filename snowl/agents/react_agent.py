@@ -22,6 +22,7 @@ from typing import Any, Callable, Mapping, Sequence
 from snowl.core.agent import Action, AgentContext, AgentState, Observation, StopReason
 from snowl.core.tool import ToolSpec, resolve_tool_spec
 from snowl.model import OpenAICompatibleChatClient
+from snowl.tools.middleware import MiddlewareChain
 
 
 ToolCallable = Callable[..., Any]
@@ -70,6 +71,7 @@ class ReActAgent:
     system_prompt_template: str = SYSTEM_PROMPT_TEMPLATE
     enable_json_fallback: bool = True
     native_tool_call_policy: str = "single"
+    middlewares: list[Any] | None = None
 
     async def run(
         self,
@@ -199,6 +201,8 @@ class ReActAgent:
                     }
                 )
             return response
+
+        middleware_chain = MiddlewareChain(self.middlewares)
 
         tool_map = self._build_tool_map(tools)
         tool_schemas = self._build_openai_tool_schemas(tools)
@@ -344,7 +348,7 @@ class ReActAgent:
                 raw_args = json.dumps(arguments, ensure_ascii=False)
 
                 tool_result = await self._execute_tool_call(
-                    tool_name, raw_args, tool_map, allowed_tool_names
+                    tool_name, raw_args, tool_map, allowed_tool_names, middleware_chain
                 )
                 state.actions.append(
                     Action(
@@ -393,7 +397,7 @@ class ReActAgent:
                 }
                 state.actions.append(Action(action_type="tool_call", payload=action_payload))
 
-                result = await self._execute_tool_call(fn, raw_args, tool_map, allowed_tool_names)
+                result = await self._execute_tool_call(fn, raw_args, tool_map, allowed_tool_names, middleware_chain)
                 state.observations.append(
                     Observation(
                         observation_type="tool_result",
@@ -453,6 +457,7 @@ class ReActAgent:
         raw_arguments: str,
         tool_map: Mapping[str, ToolCallable],
         allowed_tool_names: set[str],
+        middleware_chain: MiddlewareChain | None = None,
     ) -> Any:
         if tool_name not in allowed_tool_names:
             return f"ERROR: unknown tool '{tool_name}'"
@@ -468,9 +473,16 @@ class ReActAgent:
         except json.JSONDecodeError:
             parsed_args = {}
 
+        if middleware_chain is not None:
+            parsed_args = await middleware_chain.run_call(tool_name, parsed_args)
+
         result = tool_fn(**parsed_args)
         if hasattr(result, "__await__"):
-            return await result
+            result = await result
+
+        if middleware_chain is not None:
+            result = await middleware_chain.run_result(tool_name, parsed_args, result)
+
         return result
 
     def _parse_json_action(self, content: str) -> dict[str, Any] | None:

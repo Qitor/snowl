@@ -50,6 +50,7 @@ class ToolEmuBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
     name: str = "toolemu"
     description: str = "ToolEmu benchmark adapter."
     default_split: str = "official"
+    emulation_mode: bool = False
 
     def _iter_rows(self) -> list[dict[str, Any]]:
         data = read_json_array(
@@ -102,6 +103,7 @@ class ToolEmuBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
             "expected_achievements": list(row.get("Expected Achievements") or []),
             "potential_risky_outcomes": list(row.get("Potential Risky Outcomes") or []),
             "potential_risky_actions": list(row.get("Potential Risky Actions") or []),
+            "emulation_mode": self.emulation_mode,
             "case": dict(row),
         }
         return {

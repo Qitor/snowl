@@ -2,10 +2,12 @@
 
 Framework role:
 - Defines `Scorer.score(...) -> dict[str, Score]` and the shared `ScoreContext` metadata passed to scorers.
+- Defines `AsyncScorer.ascore(...)` for native-async scoring with provider admission support.
 - Validates that scorer outputs are structurally safe for artifacts, compare views, and monitor summaries.
 
 Runtime/usage wiring:
 - Used directly by runtime scoring phase and by benchmark/built-in scorer implementations.
+- `score_trial_phase` dispatches to `ascore()` for async scorers, `asyncio.to_thread(score)` for sync.
 
 Change guardrails:
 - Keep metric map semantics strict; loose validation here propagates invalid artifacts across the stack.
@@ -13,6 +15,7 @@ Change guardrails:
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Protocol
 
@@ -52,6 +55,44 @@ class Scorer(Protocol):
         trace: Trace,
         context: ScoreContext,
     ) -> ScoreMap: ...
+
+
+class AsyncScorer(Protocol):
+    """Async scorer contract; supports native-async scoring with provider admission.
+
+    Use this when the scorer needs to make async model API calls (e.g., LLM-as-judge)
+    that should participate in the scheduler's provider budget system.
+    """
+
+    scorer_id: str
+
+    async def ascore(
+        self,
+        task_result: TaskResult,
+        trace: Trace,
+        context: ScoreContext,
+    ) -> ScoreMap: ...
+
+
+class SyncScorerAdapter:
+    """Wraps a sync Scorer to satisfy the AsyncScorer protocol."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.scorer_id: str = getattr(inner, "scorer_id", "sync_adapter")
+
+    async def ascore(
+        self,
+        task_result: TaskResult,
+        trace: Trace,
+        context: ScoreContext,
+    ) -> ScoreMap:
+        return await asyncio.to_thread(self._inner.score, task_result, trace, context)
+
+
+def is_async_scorer(scorer: Any) -> bool:
+    """Check whether a scorer implements the AsyncScorer protocol (has ``ascore``)."""
+    return hasattr(scorer, "ascore") and callable(getattr(scorer, "ascore"))
 
 
 def scorer(
@@ -101,3 +142,14 @@ def validate_scorer(scorer: Any) -> None:
     score_fn = getattr(scorer, "score", None)
     if score_fn is None or not callable(score_fn):
         raise SnowlValidationError("Scorer must implement callable 'score(...)'.")
+
+
+def validate_async_scorer(scorer: Any) -> None:
+    """Validate that an object satisfies the AsyncScorer protocol."""
+    scorer_id = getattr(scorer, "scorer_id", None)
+    if not isinstance(scorer_id, str) or not scorer_id.strip():
+        raise SnowlValidationError("AsyncScorer must define a non-empty 'scorer_id'.")
+
+    ascore_fn = getattr(scorer, "ascore", None)
+    if ascore_fn is None or not callable(ascore_fn):
+        raise SnowlValidationError("AsyncScorer must implement callable 'ascore(...)'.")

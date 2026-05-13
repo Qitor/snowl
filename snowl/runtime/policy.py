@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from snowl.benchmarks.base import BenchmarkConcurrencyProfile
 from snowl.core import Task
 from snowl.project_config import ProjectConfig
 
@@ -75,6 +76,25 @@ def benchmark_name_for_task(task: Task) -> str:
         return "custom"
     value = str(metadata.get("benchmark") or metadata.get("benchmark_name") or "").strip().lower()
     return value or "custom"
+
+
+def _get_benchmark_profile(tasks: list[Task]) -> BenchmarkConcurrencyProfile | None:
+    """Look up the concurrency profile from the benchmark registry for the given tasks."""
+    if not tasks:
+        return None
+    benchmark_names = sorted({benchmark_name_for_task(t) for t in tasks})
+    if len(benchmark_names) != 1:
+        return None  # Mixed benchmarks; no single profile applies
+    benchmark_name = benchmark_names[0]
+    try:
+        from snowl.benchmarks.registry import get_default_benchmark_registry
+        registry = get_default_benchmark_registry()
+        for entry in registry.list():
+            if entry.info.name == benchmark_name and entry.info.concurrency_profile is not None:
+                return entry.info.concurrency_profile
+    except Exception:
+        pass
+    return None
 
 
 def is_docker_like_task(task: Task) -> bool:
@@ -158,11 +178,26 @@ class RuntimePolicy:
         if docker_like and not explicit_running:
             max_running_trials = 1
 
+        # Apply benchmark concurrency profile if available and no explicit overrides
+        profile = _get_benchmark_profile(tasks)
+        if profile is not None:
+            if profile.recommended_max_running is not None and not explicit_running and not docker_like:
+                max_running_trials = min(max_running_trials, profile.recommended_max_running)
+            if profile.recommended_scoring_tasks is not None and max_scoring_tasks is None:
+                if runtime_cfg is None or runtime_cfg.max_scoring_tasks is None:
+                    max_scoring_tasks = min(max_scoring_tasks, profile.recommended_scoring_tasks)
+
         provider_budget_map = dict(provider_budgets or {})
         if project_config is not None and project_config.provider.id not in provider_budget_map:
             provider_budget_map[project_config.provider.id] = max(max_running_trials, max_scoring_tasks)
         if not provider_budget_map:
             provider_budget_map["default"] = max(max_running_trials, max_scoring_tasks)
+
+        # Add scorer provider budget if the benchmark profile requires it
+        if profile is not None and profile.scorer_uses_provider and profile.scorer_provider_id:
+            scorer_provider = profile.scorer_provider_id
+            if scorer_provider not in provider_budget_map:
+                provider_budget_map[scorer_provider] = max(max_running_trials, 1)
 
         return RuntimeBudgetResolution(
             max_running_trials=max_running_trials,

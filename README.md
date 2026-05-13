@@ -189,6 +189,19 @@ class SafetyScorer:
 scorer = SafetyScorer()
 ```
 
+**Tool Middleware** intercepts and optionally transforms tool calls within agents. Middlewares compose via `MiddlewareChain` (forward calls, reverse results) and are wired into `ReActAgent`:
+
+```python
+from snowl.tools.middleware import LoggingMiddleware
+
+agent = ReActAgent(
+    model_client=client,
+    middlewares=[LoggingMiddleware()],
+)
+```
+
+Built-in middlewares: `LoggingMiddleware` (records calls/results), `IdentityMiddleware` (no-op). Custom middlewares implement the `ToolMiddleware` protocol (`intercept_call`, `intercept_result`). See `docs/tool_middleware.md` for details.
+
 `project.yml` is the formal run entrypoint.
 
 ```yaml
@@ -365,7 +378,7 @@ Snowl already includes adapters and contracts for several benchmark families:
 | IPI Coding Agent | coding-agent prompt injection | `ipi_coding_agent`; canary, trace, workspace, and checkpoint scoring |
 | TerminalBench | terminal task execution | `terminalbench`; container-aware |
 | OSWorld | GUI desktop tasks | `osworld`; runtime-managed GUI container path |
-| ToolEmu | tool-use safety | `toolemu`; Snowl-native trace-policy scorer |
+| ToolEmu | tool-use safety | `toolemu`; Snowl-native trace-policy scorer; LM-emulated tool execution via `EmulatedToolWrapper` (see `docs/toolemu_emulation.md`) |
 | Agent-SafetyBench | agent safety | `agentsafetybench`; safety benchmark integration |
 | MASK | safety and jailbreak risk | `mask`; risk monitor compatible |
 | WMDP | bio, cyber, chemical risk | `wmdp-cyber`, `wmdp-chem`; risk monitor compatible |
@@ -420,6 +433,7 @@ The internal architecture is being refactored around stable boundaries:
 - `RunEventBus` for observability
 - `RecoveryManager` for retry ledgers
 - `EvalTrialLifecycle` for one-trial execution side effects
+- `ToolMiddleware` for composable tool call/result interception
 
 These are internal APIs for now, but they are the path toward a cleaner Agent
 Adapter SDK and Environment Blueprint system.

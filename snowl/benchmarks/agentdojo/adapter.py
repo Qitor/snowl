@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from snowl.benchmarks.base import BenchmarkInfo
@@ -15,9 +17,21 @@ from snowl.errors import SnowlValidationError
 DEFAULT_SUITES = ("banking", "travel")
 
 
+def _default_assets_dir() -> Path:
+    """Resolve the AgentDojo assets directory within the snowl repo."""
+    # snowl/benchmarks/agentdojo/adapter.py -> snowl root
+    return Path(__file__).resolve().parents[3] / "references" / "AgentDojo" / "assets"
+
+
 @dataclass(frozen=True)
 class AgentDojoBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
     dataset_path: str = ""
+
+    @classmethod
+    def default_dataset_path(cls) -> str:
+        """Return the default path to the generated AgentDojo dataset."""
+        p = _default_assets_dir() / "all_cases.json"
+        return str(p)
     suite: str = "banking"
     suites: str | list[str] | tuple[str, ...] = field(default_factory=lambda: list(DEFAULT_SUITES))
     rows: list[dict[str, Any]] | None = None
@@ -54,9 +68,8 @@ class AgentDojoBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
     def _iter_rows(self) -> list[dict[str, Any]]:
         if self.rows is not None:
             return [dict(row) for row in self.rows]
-        if not self.dataset_path:
-            raise SnowlValidationError("AgentDojo requires rows=... or dataset_path=....")
-        data = read_json_array(self.dataset_path, not_found_message="AgentDojo dataset not found", invalid_message="AgentDojo dataset must be a JSON array")
+        path = self.dataset_path or self.default_dataset_path()
+        data = read_json_array(path, not_found_message="AgentDojo dataset not found", invalid_message="AgentDojo dataset must be a JSON array")
         return [dict(row) for row in data if isinstance(row, dict)]
 
     def _row_split(self, row: dict[str, Any], *, row_index: int) -> str:
@@ -141,6 +154,17 @@ def _tool_schemas(raw: Any) -> list[dict[str, Any]]:
 
 
 def _default_suite_tools(suite: str) -> list[dict[str, Any]]:
+    """Load tool schemas from the generated JSON files, falling back to stubs."""
+    schema_path = _default_assets_dir() / f"{suite}_tools.json"
+    if schema_path.exists():
+        try:
+            with open(schema_path) as f:
+                schemas = json.load(f)
+            if isinstance(schemas, list) and schemas:
+                return schemas
+        except (json.JSONDecodeError, OSError):
+            pass
+    # Fallback stubs
     if suite == "banking":
         names = ("get_balance", "get_transactions", "send_money")
     elif suite == "travel":

@@ -1010,7 +1010,10 @@ async def score_trial_phase(prepared: PreparedTrial | TrialRequest, partial: Par
                 "scorer_id": getattr(request.scorer, "scorer_id", "scorer"),
             }
         )
-        scores = await asyncio.to_thread(request.scorer.score, task_result, trace, score_context)
+        if hasattr(request.scorer, "ascore") and callable(request.scorer.ascore):
+            scores = await request.scorer.ascore(task_result, trace, score_context)
+        else:
+            scores = await asyncio.to_thread(request.scorer.score, task_result, trace, score_context)
         validate_scores(scores)
         emit(
             {

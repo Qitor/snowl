@@ -99,6 +99,8 @@ Responsibilities:
 - execute scorer logic
 - normalize output into `TaskResult`
 
+Tool middleware is applied inside the agent's tool execution path. When `ReActAgent` is configured with `middlewares`, a `MiddlewareChain` wraps each tool call: `intercept_call` transforms arguments before execution, `intercept_result` transforms the result after execution. Calls flow forward through the chain; results flow in reverse. Middleware is only invoked for known, allowed tools.
+
 The engine now exposes two runtime phases explicitly:
 
 - `execute_agent_phase(...) -> PartialTrialResult`

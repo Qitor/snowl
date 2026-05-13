@@ -15,13 +15,14 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import datetime, timezone
+import io
 import json
 from pathlib import Path
 import shutil
 import sys
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from snowl.ui.contracts import TaskExecutionStatus, TaskMonitor, normalize_ui_event
@@ -44,29 +45,126 @@ class ThemeTokens:
     banner_tag: str
 
 
+@dataclass(frozen=True)
+class StreamingTheme:
+    """Color tokens for the scrolling streaming console."""
+
+    section_border: str = "blue"
+    section_title: str = "bold cyan"
+    step_number: str = "bold yellow"
+    model_name: str = "bold magenta"
+    direction_in: str = "green"
+    direction_out: str = "cyan"
+    scorer_metric: str = "bold green"
+    scorer_value: str = "yellow"
+    error: str = "bold red"
+    status_ok: str = "green"
+    status_fail: str = "red"
+    progress_fill: str = "green"
+    emulation_tag: str = "bold blue"
+    detail_key: str = "cyan"
+    detail_value: str = "white"
+
+
 @dataclass
 class ConsoleRenderer:
     """Lightweight text renderer for MVP CLI interactivity."""
 
     verbose: bool = True
     width: int | None = None
+    streaming_theme: StreamingTheme = field(default_factory=StreamingTheme)
 
     def __post_init__(self) -> None:
         self._lock = threading.Lock()
+        self._rich_console = None
+        self._is_tty = False
+        try:
+            from rich.console import Console
+
+            self._is_tty = bool(getattr(sys.stdout, "isatty", lambda: False)())
+            self._rich_console = Console(
+                file=sys.stdout,
+                force_terminal=self._is_tty,
+                width=self.width,
+                highlight=False,
+                color_system="auto",
+            )
+        except Exception:
+            self._rich_console = None
 
     def _effective_width(self) -> int:
         if self.width is not None:
             return max(20, int(self.width))
+        if self._rich_console is not None:
+            return max(20, self._rich_console.width)
         cols = shutil.get_terminal_size(fallback=(120, 20)).columns
         return max(20, int(cols))
 
-    def _emit(self, text: str) -> None:
-        max_width = self._effective_width()
-        safe_text = text if len(text) <= max_width else text[: max_width - 1] + ">"
-        with self._lock:
-            print(safe_text)
+    def _emit(self, renderable: Any = "") -> None:
+        """Emit a string or Rich renderable.
 
-    def _debug_value(self, value: Any, *, limit: int = 520) -> str:
+        - Plain strings: textwrap + print()
+        - Rich renderables on TTY: console.print() with color
+        - Rich renderables in capture: render to text then print()
+        """
+        with self._lock:
+            if isinstance(renderable, str):
+                import textwrap
+                wrapped = textwrap.wrap(
+                    renderable,
+                    width=self._effective_width(),
+                    subsequent_indent="  ",
+                    replace_whitespace=False,
+                    drop_whitespace=False,
+                ) or [""]
+                for line in wrapped:
+                    print(line)
+            elif self._rich_console is not None and self._is_tty:
+                self._rich_console.print(renderable)
+            elif self._rich_console is not None:
+                buf = io.StringIO()
+                tmp = self._rich_console.__class__(
+                    file=buf,
+                    width=self._rich_console.width,
+                    force_terminal=False,
+                    highlight=False,
+                    color_system=None,
+                    legacy_windows=False,
+                )
+                tmp.print(renderable)
+                print(buf.getvalue(), end="")
+            else:
+                print(str(renderable))
+
+    def _emit_rich(self, renderable: Any) -> None:
+        """Backward-compatible alias for _emit()."""
+        self._emit(renderable)
+
+    # ── helpers ──────────────────────────────────────────────────────
+
+    @staticmethod
+    def _pick(event: dict[str, Any], key: str) -> Any:
+        """Look up a key from event, then event.payload, then event.payload.payload."""
+        value = event.get(key)
+        if value is not None:
+            return value
+        payload = event.get("payload")
+        if isinstance(payload, dict):
+            value = payload.get(key)
+            if value is not None:
+                return value
+            nested = payload.get("payload")
+            if isinstance(nested, dict):
+                return nested.get(key)
+        return None
+
+    @staticmethod
+    def _clip_text(value: Any, *, limit: int = 200) -> str:
+        text = str(value).replace("\n", " ").strip()
+        return text if len(text) <= limit else text[: limit - 3] + "..."
+
+    @staticmethod
+    def _debug_value(value: Any, *, limit: int = 520) -> str:
         if value is None:
             return "null"
         if isinstance(value, str):
@@ -78,11 +176,9 @@ class ConsoleRenderer:
                 text = str(value)
         return text if len(text) <= limit else text[: limit - 1] + "…"
 
-    def _emit_model_debug(self, event: dict[str, Any], *, prefix: str = "[live]") -> None:
-        for line in self._model_debug_lines(event, prefix=prefix):
-            self._emit(line)
-
-    def _model_debug_lines(self, event: dict[str, Any], *, prefix: str) -> list[str]:
+    @staticmethod
+    def _model_debug_lines(event: dict[str, Any], *, prefix: str = "[live]") -> list[str]:
+        """Extract model debug lines from a model I/O event. Used by LiveConsoleRenderer."""
         payload = event.get("payload")
         if not isinstance(payload, dict):
             payload = {}
@@ -106,156 +202,253 @@ class ConsoleRenderer:
         if error_type is None:
             error_type = event.get("error_type")
 
+        dv = ConsoleRenderer._debug_value
         lines: list[str] = []
         if direction is not None:
-            lines.append(f"{prefix} runtime.model.io.direction={self._debug_value(direction, limit=32)}")
+            lines.append(f"{prefix} runtime.model.io.direction={dv(direction, limit=32)}")
         if model_input is not None:
-            lines.append(f"{prefix} model_input={self._debug_value(model_input)}")
+            lines.append(f"{prefix} model_input={dv(model_input)}")
         if model_output is not None:
-            lines.append(f"{prefix} model_output={self._debug_value(model_output)}")
+            lines.append(f"{prefix} model_output={dv(model_output)}")
         if request:
             if "messages" in request:
-                lines.append(f"{prefix} provider.request.messages={self._debug_value(request.get('messages'))}")
+                lines.append(f"{prefix} provider.request.messages={dv(request.get('messages'))}")
             if "generation_kwargs" in request:
-                lines.append(f"{prefix} provider.request.kwargs={self._debug_value(request.get('generation_kwargs'))}")
-
+                lines.append(f"{prefix} provider.request.kwargs={dv(request.get('generation_kwargs'))}")
         if error_type is not None:
-            lines.append(f"{prefix} provider.error_type={self._debug_value(error_type, limit=120)}")
-
+            lines.append(f"{prefix} provider.error_type={dv(error_type, limit=120)}")
         if name == "runtime.model.query.error":
             return lines
-
         if response:
             if "message" in response:
-                lines.append(f"{prefix} provider.response.message={self._debug_value(response.get('message'))}")
+                lines.append(f"{prefix} provider.response.message={dv(response.get('message'))}")
             if "raw" in response:
-                lines.append(f"{prefix} provider.response.raw={self._debug_value(response.get('raw'))}")
+                lines.append(f"{prefix} provider.response.raw={dv(response.get('raw'))}")
         return lines
 
-    def render_plan(self, plan: Any) -> None:
-        if not self.verbose:
-            return
-        self._emit("")
-        self._emit("=== Plan ===")
-        self._emit(
-            "mode={mode} tasks={tasks} agents={agents} variants={variants} samples={samples} total_trials={trials}".format(
-                mode=plan.mode,
-                tasks=len(plan.task_ids),
-                agents=len(plan.agent_ids),
-                variants=len(getattr(plan, "variant_ids", []) or []),
-                samples=plan.sample_count,
-                trials=len(plan.trials),
-            )
-        )
+    # ── event formatters ────────────────────────────────────────────
 
-    def render_global(self, *, done: int, total: int, success: int, incorrect: int, other: int) -> None:
-        if not self.verbose:
-            return
-        self._emit("")
-        self._emit("=== Global ===")
-        self._emit(
-            f"progress={done}/{total} success={success} incorrect={incorrect} other={other}"
-        )
+    def _format_agent_step(self, event: dict[str, Any]) -> None:
+        theme = self.streaming_theme
+        step = self._pick(event, "step") or "?"
+        mode = self._pick(event, "mode") or "?"
+        status = self._pick(event, "status") or "running"
+        try:
+            from rich.text import Text
+            status_style = theme.status_ok if status in ("running", "complete", "completed") else theme.status_fail
+            t = Text()
+            t.append("  Step ", style="default")
+            t.append(str(step), style=theme.step_number)
+            t.append(f" [{mode}]  ", style="default")
+            t.append(str(status), style=status_style)
+            self._emit(t)
+        except Exception:
+            self._emit(f"  Step {step} [{mode}]  {status}")
 
-    def render_trial_start(self, trial: Any, index: int, total: int) -> None:
-        if not self.verbose:
-            return
-        self._emit("")
-        self._emit("=== Trial ===")
-        self._emit(
-            "[{idx}/{total}] task={task} agent={agent} variant={variant} sample={sample}".format(
-                idx=index,
-                total=total,
-                task=trial.task_id,
-                agent=trial.agent_id,
-                variant=getattr(trial, "variant_id", "default"),
-                sample=trial.sample_id,
-            )
-        )
+    def _format_emulation(self, event: dict[str, Any]) -> None:
+        theme = self.streaming_theme
+        tool_name = self._pick(event, "tool_name") or "?"
+        tool_args = self._pick(event, "tool_args") or {}
+        observation = self._pick(event, "observation") or ""
+        thought = self._pick(event, "thought_summary") or ""
+        scratchpad_n = self._pick(event, "scratchpad_entries") or 0
+        try:
+            from rich.text import Text
+            t = Text()
+            t.append("  [emulation] ", style=theme.emulation_tag)
+            t.append(str(tool_name), style="bold")
+            self._emit(t)
+            if tool_args:
+                args_str = json.dumps(tool_args, ensure_ascii=False) if not isinstance(tool_args, str) else tool_args
+                self._emit(Text(f"    args: {self._clip_text(args_str, limit=300)}", style=theme.detail_value))
+            if thought:
+                self._emit(Text(f"    thought: {self._clip_text(thought, limit=200)}", style=theme.detail_value))
+            if observation:
+                self._emit(Text(f"    observation: {self._clip_text(observation, limit=300)}", style=theme.detail_value))
+            if scratchpad_n:
+                self._emit(Text(f"    scratchpad: {scratchpad_n} entries", style=theme.detail_value))
+        except Exception:
+            self._emit(f"  [emulation] {tool_name}")
+            if tool_args:
+                args_str = json.dumps(tool_args, ensure_ascii=False) if not isinstance(tool_args, str) else tool_args
+                self._emit(f"    args: {self._clip_text(args_str, limit=300)}")
+            if thought:
+                self._emit(f"    thought: {self._clip_text(thought, limit=200)}")
+            if observation:
+                self._emit(f"    observation: {self._clip_text(observation, limit=300)}")
+            if scratchpad_n:
+                self._emit(f"    scratchpad: {scratchpad_n} entries")
 
-    def render_trial_finish(self, outcome: Any) -> None:
-        if not self.verbose:
-            return
-        trace_events = outcome.trace.get("trace_events", []) if isinstance(outcome.trace, dict) else []
-        latest = trace_events[-1]["event"] if trace_events else "none"
-        status = outcome.task_result.status.value
-        self._emit(
-            "status={status} latest_trace={trace} tokens={tokens}".format(
-                status=status,
-                trace=latest,
-                tokens=(outcome.task_result.usage.total_tokens if outcome.task_result.usage else 0),
-            )
-        )
-        error = getattr(outcome.task_result, "error", None)
-        if status == "error" and error is not None:
-            code = getattr(error, "code", "unknown")
-            msg = str(getattr(error, "message", ""))[:200]
-            self._emit(f"error_code={code} error_message={msg}")
+    def _format_model_io(self, event: dict[str, Any]) -> None:
+        theme = self.streaming_theme
+        direction = self._pick(event, "direction")
+        model = self._pick(event, "model") or "?"
+        try:
+            from rich.text import Text
+            if direction == "input":
+                t = Text()
+                t.append("  [model] ", style="default")
+                t.append("input -> ", style=theme.direction_in)
+                t.append(str(model), style=theme.model_name)
+                self._emit(t)
+                model_input = self._pick(event, "model_input")
+                request = self._pick(event, "request")
+                messages = None
+                if isinstance(model_input, dict):
+                    messages = model_input.get("messages")
+                if messages is None and isinstance(request, dict):
+                    messages = request.get("messages")
+                if messages and isinstance(messages, list):
+                    n = len(messages)
+                    last = messages[-1] if messages else {}
+                    role = last.get("role", "?")
+                    content = self._clip_text(last.get("content", ""), limit=80)
+                    self._emit(Text(f"    messages: {n} | last {role}: {content!r}", style=theme.detail_value))
+            elif direction == "output":
+                t = Text()
+                t.append("  [model] ", style="default")
+                t.append("output <- ", style=theme.direction_out)
+                t.append(str(model), style=theme.model_name)
+                self._emit(t)
+                model_output = self._pick(event, "model_output")
+                if model_output and isinstance(model_output, dict):
+                    content = self._clip_text(model_output.get("content", ""), limit=120)
+                    self._emit(Text(f"    content: {content!r}", style=theme.detail_value))
+                response = self._pick(event, "response")
+                if isinstance(response, dict):
+                    usage = response.get("usage", {})
+                    if usage:
+                        self._emit(Text(
+                            f"    tokens: in={usage.get('input_tokens', '?')} "
+                            f"out={usage.get('output_tokens', '?')} "
+                            f"total={usage.get('total_tokens', '?')}",
+                            style=theme.detail_value,
+                        ))
+            else:
+                t = Text()
+                t.append("  [model] ", style="default")
+                t.append(f"{direction or '?'} | ", style="default")
+                t.append(str(model), style=theme.model_name)
+                self._emit(t)
+        except Exception:
+            if direction == "input":
+                self._emit(f"  [model] input -> {model}")
+                model_input = self._pick(event, "model_input")
+                request = self._pick(event, "request")
+                messages = None
+                if isinstance(model_input, dict):
+                    messages = model_input.get("messages")
+                if messages is None and isinstance(request, dict):
+                    messages = request.get("messages")
+                if messages and isinstance(messages, list):
+                    n = len(messages)
+                    last = messages[-1] if messages else {}
+                    role = last.get("role", "?")
+                    content = self._clip_text(last.get("content", ""), limit=80)
+                    self._emit(f"    messages: {n} | last {role}: {content!r}")
+            elif direction == "output":
+                self._emit(f"  [model] output <- {model}")
+                model_output = self._pick(event, "model_output")
+                if model_output and isinstance(model_output, dict):
+                    content = self._clip_text(model_output.get("content", ""), limit=120)
+                    self._emit(f"    content: {content!r}")
+                response = self._pick(event, "response")
+                if isinstance(response, dict):
+                    usage = response.get("usage", {})
+                    if usage:
+                        self._emit(
+                            f"    tokens: in={usage.get('input_tokens', '?')} "
+                            f"out={usage.get('output_tokens', '?')} "
+                            f"total={usage.get('total_tokens', '?')}"
+                        )
+            else:
+                self._emit(f"  [model] {direction or '?'} | {model}")
 
-    def render_compare(self, aggregate: Any) -> None:
-        if not self.verbose:
-            return
-        self._emit("")
-        self._emit("=== Compare ===")
-        matrix = getattr(aggregate, "matrix", {}) or {}
-        for task_id in sorted(matrix.keys()):
-            agent_rows = matrix.get(task_id) or {}
-            for agent_id in sorted(agent_rows.keys()):
-                metrics = agent_rows[agent_id]
-                metric_str = ", ".join(f"{k}={v:.3f}" for k, v in sorted(metrics.items()))
-                self._emit(f"task={task_id} agent={agent_id} {metric_str}")
+    def _format_model_query(self, event: dict[str, Any]) -> None:
+        theme = self.streaming_theme
+        name = self._pick(event, "event") or ""
+        model = self._pick(event, "model") or "?"
+        try:
+            from rich.text import Text
+            if name == "runtime.model.query.start":
+                t = Text()
+                t.append("  [model] ", style="default")
+                t.append("querying ", style=theme.direction_in)
+                t.append(str(model), style=theme.model_name)
+                t.append("...", style="dim")
+                self._emit(t)
+            elif name == "runtime.model.query.finish":
+                duration = self._pick(event, "duration_ms") or "?"
+                total_tokens = self._pick(event, "total_tokens") or ""
+                t = Text()
+                t.append("  [model] ", style="default")
+                t.append("response <- ", style=theme.direction_out)
+                t.append(str(model), style=theme.model_name)
+                t.append(f"  {duration}ms", style="bold")
+                if total_tokens:
+                    t.append(f"  tokens={total_tokens}", style=theme.detail_key)
+                self._emit(t)
+        except Exception:
+            if name == "runtime.model.query.start":
+                self._emit(f"  [model] querying {model}...")
+            elif name == "runtime.model.query.finish":
+                duration = self._pick(event, "duration_ms") or "?"
+                total_tokens = self._pick(event, "total_tokens") or ""
+                token_str = f"  tokens={total_tokens}" if total_tokens else ""
+                self._emit(f"  [model] response <- {model}  {duration}ms{token_str}")
 
-    def render_controls(self) -> None:
-        if not self.verbose:
-            return
-        self._emit("")
-        self._emit("=== Controls ===")
-        self._emit("keys: p=pause/resume, f=focus-failed, a=group-agent, t=group-task, r=rerun-failed")
+    def _format_scorer_start(self, event: dict[str, Any]) -> None:
+        theme = self.streaming_theme
+        scorer_id = self._pick(event, "scorer_id") or self._pick(event, "agent_id") or "?"
+        try:
+            from rich.text import Text
+            t = Text()
+            t.append("  [scorer] ", style=theme.scorer_metric)
+            t.append("scoring...  scorer=", style="default")
+            t.append(str(scorer_id), style=theme.detail_value)
+            self._emit(t)
+        except Exception:
+            self._emit(f"  [scorer] scoring...  scorer={scorer_id}")
 
-    def render_summary(self, summary: Any, artifacts_dir: str, rerun_cmd: str) -> None:
-        if not self.verbose:
-            return
-        self._emit("")
-        self._emit("=== Summary ===")
-        self._emit(
-            "total={total} success={success} incorrect={incorrect} error={error} limit_exceeded={limit} cancelled={cancelled}".format(
-                total=summary.total,
-                success=summary.success,
-                incorrect=summary.incorrect,
-                error=summary.error,
-                limit=summary.limit_exceeded,
-                cancelled=summary.cancelled,
-            )
-        )
-        self._emit(f"artifacts={artifacts_dir}")
-        self._emit(f"log={artifacts_dir}/run.log")
-        self._emit(f"rerun={rerun_cmd}")
+    def _format_scorer_finish(self, event: dict[str, Any]) -> None:
+        theme = self.streaming_theme
+        metrics = self._pick(event, "metrics") or {}
+        try:
+            from rich.text import Text
+            self._emit(Text("  [scorer] done", style=theme.scorer_metric))
+            if isinstance(metrics, dict):
+                for k, v in sorted(metrics.items()):
+                    t = Text()
+                    t.append(f"    {k}: ", style=theme.scorer_metric)
+                    val_str = f"{v:.3f}" if isinstance(v, (int, float)) else str(v)
+                    t.append(val_str, style=theme.scorer_value)
+                    self._emit(t)
+        except Exception:
+            self._emit("  [scorer] done")
+            if isinstance(metrics, dict):
+                for k, v in sorted(metrics.items()):
+                    self._emit(f"    {k}: {v:.3f}" if isinstance(v, (int, float)) else f"    {k}: {v}")
 
-    def render_runtime_event(self, event: dict[str, Any]) -> None:
-        if not self.verbose:
-            return
+    def _format_model_error(self, event: dict[str, Any]) -> None:
+        theme = self.streaming_theme
+        model = self._pick(event, "model") or "?"
+        error_type = self._pick(event, "error_type") or "?"
+        message = self._clip_text(self._pick(event, "message") or "", limit=200)
+        try:
+            from rich.text import Text
+            t = Text()
+            t.append("  [model] ", style="default")
+            t.append("error <- ", style=theme.error)
+            t.append(str(model), style=theme.model_name)
+            t.append(f"  {error_type}: {message}", style=theme.error)
+            self._emit(t)
+        except Exception:
+            self._emit(f"  [model] error <- {model}  {error_type}: {message}")
+
+    def _format_generic_event(self, event: dict[str, Any]) -> None:
         name = str(event.get("event", "runtime.event"))
-        if name == "ui.heartbeat":
-            return
-        payload = event.get("payload")
-        if not isinstance(payload, dict):
-            payload = {}
+        pick = self._pick
 
-        def _pick(key: str) -> Any:
-            value = event.get(key)
-            if value is None:
-                value = payload.get(key)
-            if value is None:
-                nested = payload.get("payload")
-                if isinstance(nested, dict):
-                    value = nested.get(key)
-            return value
-
-        def _clip(value: Any, *, limit: int = 160) -> str:
-            text = str(value).replace("\n", "\\n")
-            return text if len(text) <= limit else text[: limit - 1] + "…"
-
-        # Keep runtime stream concise but visible for container startup/debug.
         details = []
         for key in (
             "task_id",
@@ -276,13 +469,369 @@ class ConsoleRenderer:
             "stdout_tail",
             "stderr_tail",
         ):
-            value = _pick(key)
+            value = pick(event, key)
             if value is not None:
-                details.append(f"{key}={_clip(value)}")
-        suffix = (" " + " ".join(details)) if details else ""
-        self._emit(f"[live] {name}{suffix}")
-        if name in {"runtime.model.query.error", "runtime.model.io"}:
-            self._emit_model_debug(event)
+                details.append(f"{key}: {self._clip_text(value, limit=120)}")
+        suffix = ("  " + "  ".join(details)) if details else ""
+        self._emit(f"  [{name}]{suffix}")
+
+    # ── render methods ──────────────────────────────────────────────
+
+    def render_plan(self, plan: Any) -> None:
+        if not self.verbose:
+            return
+        theme = self.streaming_theme
+        try:
+            from rich.panel import Panel
+            from rich.table import Table
+
+            grid = Table.grid(padding=(0, 2))
+            grid.add_column(style=theme.detail_key)
+            grid.add_column(style=theme.detail_value)
+            fields = [
+                ("mode", plan.mode),
+                ("tasks", str(len(plan.task_ids))),
+                ("agents", str(len(plan.agent_ids))),
+                ("variants", str(len(getattr(plan, "variant_ids", []) or []))),
+                ("samples", str(plan.sample_count)),
+                ("trials", str(len(plan.trials))),
+            ]
+            for label, value in fields:
+                grid.add_row(f"{label}:", value)
+            panel = Panel(
+                grid,
+                title="[bold]Plan[/]",
+                title_align="left",
+                border_style=theme.section_border,
+                padding=(0, 1),
+            )
+            self._emit(panel)
+        except Exception:
+            self._emit("")
+            self._emit("\u2500\u2500 Plan \u2500\u2500")
+            fields = [
+                ("mode", plan.mode),
+                ("tasks", str(len(plan.task_ids))),
+                ("agents", str(len(plan.agent_ids))),
+                ("variants", str(len(getattr(plan, "variant_ids", []) or []))),
+                ("samples", str(plan.sample_count)),
+                ("trials", str(len(plan.trials))),
+            ]
+            label_w = max(len(f[0]) for f in fields)
+            for label, value in fields:
+                self._emit(f"  {label + ':':<{label_w + 1}} {value}")
+
+    def render_global(self, *, done: int, total: int, success: int, incorrect: int, other: int) -> None:
+        if not self.verbose:
+            return
+        theme = self.streaming_theme
+        t = max(1, total)
+        pct = (done / t) * 100.0
+        try:
+            from rich.panel import Panel
+            from rich.progress_bar import ProgressBar
+            from rich.table import Table
+            from rich.text import Text
+
+            bar = ProgressBar(
+                total=t,
+                completed=done,
+                width=max(16, min(40, self._effective_width() // 3)),
+                complete_style=theme.progress_fill,
+                finished_style=theme.progress_fill,
+            )
+            grid = Table.grid(expand=True)
+            grid.add_column(ratio=3)
+            grid.add_column(ratio=2)
+            grid.add_row(
+                bar,
+                Text(
+                    f"{done}/{total} ({pct:.0f}%)  success: {success}  incorrect: {incorrect}  other: {other}",
+                    style="bold",
+                ),
+            )
+            panel = Panel(
+                grid,
+                title="[bold]Progress[/]",
+                title_align="left",
+                border_style=theme.section_border,
+                padding=(0, 1),
+            )
+            self._emit(panel)
+        except Exception:
+            ratio = max(0.0, min(1.0, float(done) / float(t)))
+            slots = 20
+            filled = int(round(slots * ratio))
+            bar = "[" + ("#" * filled) + ("." * (slots - filled)) + "]"
+            self._emit("")
+            self._emit(f"\u2500\u2500 Progress \u2500\u2500  {bar} {done}/{total} ({pct:.0f}%)")
+            self._emit(f"  success: {success}   incorrect: {incorrect}   other: {other}")
+
+    def render_trial_start(self, trial: Any, index: int, total: int) -> None:
+        if not self.verbose:
+            return
+        theme = self.streaming_theme
+        try:
+            from rich.panel import Panel
+            from rich.table import Table
+
+            grid = Table.grid(padding=(0, 2))
+            grid.add_column(style=theme.detail_key)
+            grid.add_column(style=theme.detail_value)
+            fields = [
+                ("task", trial.task_id),
+                ("agent", trial.agent_id),
+                ("variant", getattr(trial, "variant_id", "default")),
+                ("sample", trial.sample_id),
+            ]
+            for label, value in fields:
+                grid.add_row(f"{label}:", value)
+            panel = Panel(
+                grid,
+                title=f"[bold]Trial [{index}/{total}][/]",
+                title_align="left",
+                border_style=theme.section_border,
+                padding=(0, 1),
+            )
+            self._emit(panel)
+        except Exception:
+            self._emit("")
+            self._emit(f"\u2500\u2500 Trial [{index}/{total}] \u2500\u2500")
+            fields = [
+                ("task", trial.task_id),
+                ("agent", trial.agent_id),
+                ("variant", getattr(trial, "variant_id", "default")),
+                ("sample", trial.sample_id),
+            ]
+            label_w = max(len(f[0]) for f in fields)
+            for label, value in fields:
+                self._emit(f"  {label + ':':<{label_w + 1}} {value}")
+
+    def render_trial_finish(self, outcome: Any) -> None:
+        if not self.verbose:
+            return
+        theme = self.streaming_theme
+        trace_events = outcome.trace.get("trace_events", []) if isinstance(outcome.trace, dict) else []
+        latest = trace_events[-1]["event"] if trace_events else "none"
+        status = outcome.task_result.status.value
+        tokens = outcome.task_result.usage.total_tokens if outcome.task_result.usage else 0
+        error = getattr(outcome.task_result, "error", None)
+
+        try:
+            from rich.panel import Panel
+            from rich.table import Table
+            from rich.text import Text
+
+            status_style = theme.status_ok if status == "success" else theme.status_fail
+            grid = Table.grid(padding=(0, 2))
+            grid.add_column(style=theme.detail_key)
+            grid.add_column()
+            grid.add_row("status:", Text(status, style=status_style))
+            grid.add_row("trace:", Text(latest, style=theme.detail_value))
+            grid.add_row("tokens:", Text(str(tokens), style=theme.detail_value))
+            if status == "error" and error is not None:
+                code = getattr(error, "code", "unknown")
+                msg = str(getattr(error, "message", ""))[:200]
+                grid.add_row("error_code:", Text(code, style=theme.error))
+                grid.add_row("error_msg:", Text(msg, style=theme.error))
+            panel = Panel(
+                grid,
+                title="[bold]Trial Result[/]",
+                title_align="left",
+                border_style=theme.section_border,
+                padding=(0, 1),
+            )
+            self._emit(panel)
+        except Exception:
+            self._emit(f"\u2500\u2500 Trial Result \u2500\u2500")
+            self._emit(f"  status:  {status}")
+            self._emit(f"  trace:   {latest}")
+            self._emit(f"  tokens:  {tokens}")
+            if status == "error" and error is not None:
+                code = getattr(error, "code", "unknown")
+                msg = str(getattr(error, "message", ""))[:200]
+                self._emit(f"  error_code: {code}")
+                self._emit(f"  error_msg:  {msg}")
+
+    def render_compare(self, aggregate: Any) -> None:
+        if not self.verbose:
+            return
+        theme = self.streaming_theme
+        matrix = getattr(aggregate, "matrix", {}) or {}
+        if not matrix:
+            self._emit("  (no data)")
+            return
+        # Collect all metric names for column headers
+        all_metrics: list[str] = []
+        for task_id in sorted(matrix.keys()):
+            agent_rows = matrix.get(task_id) or {}
+            for agent_id in sorted(agent_rows.keys()):
+                for k in sorted(agent_rows[agent_id].keys()):
+                    if k not in all_metrics:
+                        all_metrics.append(k)
+
+        try:
+            from rich.panel import Panel
+            from rich.table import Table
+            from rich.text import Text
+
+            table = Table(show_header=True, header_style="bold", box=None)
+            table.add_column("task", style="cyan")
+            table.add_column("agent", style="cyan")
+            for m in all_metrics:
+                table.add_column(m, justify="right")
+            for task_id in sorted(matrix.keys()):
+                agent_rows = matrix.get(task_id) or {}
+                for agent_id in sorted(agent_rows.keys()):
+                    metrics = agent_rows[agent_id]
+                    row = [task_id, agent_id]
+                    for m in all_metrics:
+                        v = metrics.get(m)
+                        if isinstance(v, (int, float)):
+                            v_style = theme.status_ok if v >= 0.8 else (theme.scorer_value if v >= 0.3 else theme.error)
+                            row.append(Text(f"{v:.3f}", style=v_style))
+                        else:
+                            row.append(str(v))
+                    table.add_row(*row)
+            panel = Panel(
+                table,
+                title="[bold]Compare[/]",
+                title_align="left",
+                border_style=theme.section_border,
+                padding=(0, 1),
+            )
+            self._emit(panel)
+            return
+        except Exception:
+            pass
+
+        # Text fallback: aligned columns
+        self._emit("")
+        self._emit("\u2500\u2500 Compare \u2500\u2500")
+        task_w = max(len(str(t)) for t in matrix.keys())
+        agent_w = max(len(str(a)) for rows in matrix.values() for a in (rows or {}).keys())
+        metric_ws = {m: max(len(m), 6) for m in all_metrics}
+        header = f"  {'task':<{task_w}}  {'agent':<{agent_w}}"
+        for m in all_metrics:
+            header += f"  {m:>{metric_ws[m]}}"
+        self._emit(header)
+        self._emit("  " + "-" * (len(header) - 2))
+        for task_id in sorted(matrix.keys()):
+            agent_rows = matrix.get(task_id) or {}
+            for agent_id in sorted(agent_rows.keys()):
+                metrics = agent_rows[agent_id]
+                line = f"  {task_id:<{task_w}}  {agent_id:<{agent_w}}"
+                for m in all_metrics:
+                    v = metrics.get(m)
+                    cell = f"{v:.3f}" if isinstance(v, (int, float)) else str(v)
+                    line += f"  {cell:>{metric_ws[m]}}"
+                self._emit(line)
+
+    def render_controls(self) -> None:
+        if not self.verbose:
+            return
+        theme = self.streaming_theme
+        try:
+            from rich.panel import Panel
+            from rich.text import Text
+
+            panel = Panel(
+                Text("keys: p=pause/resume  f=focus-failed  a=group-agent  t=group-task  r=rerun-failed"),
+                title="[bold]Controls[/]",
+                title_align="left",
+                border_style=theme.section_border,
+                padding=(0, 1),
+            )
+            self._emit(panel)
+        except Exception:
+            self._emit("")
+            self._emit("\u2500\u2500 Controls \u2500\u2500")
+            self._emit("  keys: p=pause/resume  f=focus-failed  a=group-agent  t=group-task  r=rerun-failed")
+
+    def render_summary(self, summary: Any, artifacts_dir: str, rerun_cmd: str) -> None:
+        if not self.verbose:
+            return
+        theme = self.streaming_theme
+        rows = [
+            ("success", summary.success, theme.status_ok),
+            ("incorrect", summary.incorrect, theme.status_fail),
+            ("error", summary.error, theme.error),
+            ("limit_exceeded", summary.limit_exceeded, theme.scorer_value),
+            ("cancelled", summary.cancelled, "dim"),
+            ("total", summary.total, "bold"),
+        ]
+
+        try:
+            from rich.panel import Panel
+            from rich.table import Table
+            from rich.text import Text
+
+            table = Table(show_header=True, header_style="bold", box=None)
+            table.add_column("status", style="cyan")
+            table.add_column("count", justify="right")
+            for label, count, _style in rows:
+                table.add_row(label, Text(str(count), style=_style))
+
+            # Build footer with artifact paths
+            footer = Table.grid(padding=(0, 2))
+            footer.add_column(style=theme.detail_key)
+            footer.add_column(style=theme.detail_value)
+            footer.add_row("artifacts:", artifacts_dir)
+            footer.add_row("log:", f"{artifacts_dir}/run.log")
+            footer.add_row("rerun:", rerun_cmd)
+
+            from rich.console import Group
+            content = Group(table, Text(""), footer)
+            panel = Panel(
+                content,
+                title="[bold]Summary[/]",
+                title_align="left",
+                border_style=theme.section_border,
+                padding=(0, 1),
+            )
+            self._emit(panel)
+        except Exception:
+            self._emit("")
+            self._emit("\u2500\u2500 Summary \u2500\u2500")
+            label_w = max(len(r[0]) for r in rows)
+            for label, count, _style in rows:
+                self._emit(f"  {label + ':':<{label_w + 1}} {count}")
+            self._emit("")
+            self._emit(f"  artifacts: {artifacts_dir}")
+            self._emit(f"  log:       {artifacts_dir}/run.log")
+            self._emit(f"  rerun:     {rerun_cmd}")
+
+    def render_runtime_event(self, event: dict[str, Any]) -> None:
+        if not self.verbose:
+            return
+        name = str(event.get("event", "runtime.event"))
+        if name == "ui.heartbeat":
+            return
+
+        # Dispatch to specialized formatters
+        if name == "runtime.agent.step":
+            self._format_agent_step(event)
+            return
+        if name == "toolemu.emulation":
+            self._format_emulation(event)
+            return
+        if name == "runtime.model.io":
+            self._format_model_io(event)
+            return
+        if name in {"runtime.model.query.start", "runtime.model.query.finish"}:
+            self._format_model_query(event)
+            return
+        if name == "runtime.model.query.error":
+            self._format_model_error(event)
+            return
+        if name == "runtime.scorer.start":
+            self._format_scorer_start(event)
+            return
+        if name == "runtime.scorer.finish":
+            self._format_scorer_finish(event)
+            return
+
+        self._format_generic_event(event)
 
 
 @dataclass

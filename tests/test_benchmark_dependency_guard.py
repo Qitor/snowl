@@ -6,6 +6,8 @@ from pathlib import Path
 def test_builtin_benchmarks_do_not_bridge_reference_runtimes() -> None:
     root = Path(__file__).resolve().parents[1] / "snowl" / "benchmarks"
     guarded = {"agent_bench_os", "agentdojo", "bfcl", "ipi_coding_agent", "toolemu"}
+    # Offline build scripts are allowed to import from reference code
+    exempt_suffixes = {"build_dataset.py"}
     banned = (
         "sys.path.insert",
         "references/",
@@ -24,6 +26,8 @@ def test_builtin_benchmarks_do_not_bridge_reference_runtimes() -> None:
             continue
         paths = package_root.rglob("*.py")
         for path in paths:
+            if path.name in exempt_suffixes:
+                continue
             rel = path.relative_to(root)
             text = path.read_text(encoding="utf-8")
             for token in banned:

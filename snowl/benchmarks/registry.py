@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from snowl.benchmarks.base import BenchmarkAdapter, BenchmarkInfo
+from snowl.benchmarks.base import BenchmarkAdapter, BenchmarkConcurrencyProfile, BenchmarkInfo
 from snowl.benchmarks.agent_bench_os import AgentBenchOSBenchmarkAdapter
 from snowl.benchmarks.agentdojo import AgentDojoBenchmarkAdapter
 from snowl.benchmarks.agentsafetybench import AgentSafetyBenchBenchmarkAdapter
@@ -106,6 +106,11 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=True,
             sample_preview_mode="tool_trace",
             dashboard_tags=["prompt_injection", "tool_use", "stateful"],
+            concurrency_profile=BenchmarkConcurrencyProfile(
+                name="agentdojo",
+                api_call_amplification=5.0,
+                recommended_max_running=6,
+            ),
         ),
         factory=lambda **kwargs: AgentDojoBenchmarkAdapter(**kwargs),
     )
@@ -392,6 +397,13 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=False,
             sample_preview_mode="tool_trace",
             dashboard_tags=["tool_use", "agent_risk"],
+            concurrency_profile=BenchmarkConcurrencyProfile(
+                name="toolemu",
+                api_call_amplification=30.0,
+                recommended_max_running=3,
+                scorer_uses_provider=True,
+                scorer_provider_id="openai",
+            ),
         ),
         factory=lambda **kwargs: ToolEmuBenchmarkAdapter(**kwargs),
     )

@@ -302,6 +302,70 @@ class ModelAsJudgeJSONScorer:
                 )
             }
 
+    async def ascore(
+        self,
+        task_result: TaskResult,
+        trace: Mapping[str, Any],
+        context: ScoreContext,
+    ) -> dict[str, Score]:
+        """Async-native scoring that calls the judge model directly without thread shims."""
+        variables = self._build_template_variables(task_result, trace, context)
+        system_prompt = _render_template(
+            self.system_prompt_template,
+            variables,
+            strict=self.strict_templates,
+        )
+        user_prompt = _render_template(
+            self.user_prompt_template,
+            variables,
+            strict=self.strict_templates,
+        )
+        client = self._get_client()
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        raw_text = ""
+        parsed: dict[str, Any] | None = None
+        try:
+            response = await client.generate(messages, model=self.model_name)
+            raw_text = self._extract_content(response)
+            parsed = _extract_json_object(raw_text)
+            if self.schema is not None:
+                _validate_schema(parsed, self.schema)
+            score_value = float(parsed[self.score_field])
+            explanation = str(parsed.get(self.explanation_field, "")).strip() or None
+            return {
+                self.metric_name: Score(
+                    value=score_value,
+                    explanation=explanation,
+                    metadata={
+                        "judge_model": self.model_name,
+                        "judge_system_prompt": system_prompt,
+                        "judge_prompt": user_prompt,
+                        "judge_raw_output": raw_text,
+                        "judge_parsed": parsed,
+                    },
+                )
+            }
+        except Exception as exc:
+            if self.strict:
+                raise
+            return {
+                self.metric_name: Score(
+                    value=0.0,
+                    explanation=f"judge_error: {exc}",
+                    metadata={
+                        "judge_model": self.model_name,
+                        "judge_system_prompt": system_prompt,
+                        "judge_prompt": user_prompt,
+                        "judge_raw_output": raw_text,
+                        "judge_parsed": parsed,
+                        "judge_error": str(exc),
+                    },
+                )
+            }
+
 
 def model_as_judge_json(
     *,

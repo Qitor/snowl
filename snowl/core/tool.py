@@ -17,7 +17,7 @@ import inspect
 import re
 import types
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping, Protocol, Union, get_args, get_origin, get_type_hints, runtime_checkable
+from typing import Any, Awaitable, Callable, Mapping, Protocol, Union, get_args, get_origin, get_type_hints, runtime_checkable
 
 from snowl.errors import SnowlValidationError
 
@@ -38,6 +38,7 @@ class ToolSpec:
     description: str
     parameters: dict[str, Any]
     callable: ToolCallable
+    async_callable: Callable[..., Awaitable[Any]] | None = None
     required_ops: tuple[str, ...] = field(default_factory=tuple)
 
     def to_openai_tool(self) -> dict[str, Any]:
@@ -49,6 +50,17 @@ class ToolSpec:
                 "parameters": self.parameters,
             },
         }
+
+    async def execute(self, **kwargs: Any) -> Any:
+        """Execute the tool, preferring async_callable if available."""
+        if self.async_callable is not None:
+            return await self.async_callable(**kwargs)
+        if self.callable is not None:
+            result = self.callable(**kwargs)
+            if hasattr(result, "__await__"):
+                return await result
+            return result
+        raise RuntimeError(f"ToolSpec '{self.name}' has no callable or async_callable.")
 
 
 class ToolRegistry:
