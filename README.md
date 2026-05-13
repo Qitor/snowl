@@ -11,7 +11,7 @@
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
 Snowl is an open-source safety evaluation framework for AI agents, jointly
-developed by the [Shanghai Innovation Institute (SII)](https://www.sii.sh) and
+developed by the [Shanghai Innovation Institute (SII)](https://www.sii.edu.cn/) and
 [Fudan University](https://www.fudan.edu.cn).
 
 It helps you run reproducible, observable, and retryable evaluations across agent
