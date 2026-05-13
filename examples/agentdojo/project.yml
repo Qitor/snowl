@@ -5,21 +5,24 @@ project:
 provider:
   id: inf
   kind: openai_compatible
-  base_url: https://ekkmopeh8ecgccbjjb9johhhd5dcabcc.openapi-sj.sii.edu.cn/v1
-  api_key: stpmj/4hRawPjQCf0fk70W6HnObgXtkonX3qHCCNsPc=
+  base_url: ${OPENAI_BASE_URL}
+  api_key: ${OPENAI_API_KEY}
   timeout: 120
   max_retries: 2
 
 agent_matrix:
   models:
-    - id: glm51_w4a8
-      model: glm-5.1-w4a8
+    - id: default
+      model: ${OPENAI_MODEL}
       metadata:
         company: zhipu
         source_type: open_source
 
 eval:
   benchmark: agentdojo
+  agent_type: stateful
+  agent_config:
+    suite: banking
   split: official
   code:
     base_dir: .

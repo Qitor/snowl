@@ -1,0 +1,125 @@
+site_name: Snowl
+site_description: Open-source safety evaluation framework for AI agents
+site_url: https://qitor.github.io/snowl
+repo_name: Qitor/snowl
+repo_url: https://github.com/Qitor/snowl
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  logo: assets/logo.svg
+  favicon: assets/favicon.ico
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+
+extra:
+  alternate:
+    - name: English
+      link: /
+      lang: en
+    - name: 简体中文
+      link: /zh/
+      lang: zh
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Qitor/snowl
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - tables
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [snowl]
+          options:
+            show_root_heading: true
+            show_source: false
+            show_signature_annotations: true
+            separate_signature: true
+            heading_level: 2
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - getting-started/index.md
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quick-start.md
+  - Tutorials:
+    - tutorials/index.md
+    - Project Anatomy: tutorials/project-anatomy.md
+    - Writing an Agent: tutorials/writing-an-agent.md
+    - Writing a Task: tutorials/writing-a-task.md
+    - Writing a Scorer: tutorials/writing-a-scorer.md
+    - Tool Middleware: tutorials/tool-middleware.md
+    - Stateful Tool Execution: tutorials/stateful-tool-execution.md
+  - How-to Guides:
+    - how-to/index.md
+    - Custom Benchmark Adapter: how-to/custom-benchmark-adapter.md
+    - Multi-Model Sweeps: how-to/multi-model-sweeps.md
+    - ToolEmu Emulation: how-to/toolemu-emulation.md
+    - AgentDojo Integration: how-to/agentdojo-integration.md
+    - Run Recovery: how-to/run-recovery.md
+    - CLI Reference: how-to/cli-reference.md
+  - Benchmark Catalog:
+    - benchmarks/index.md
+  - API Reference:
+    - api-reference/index.md
+    - Core: api-reference/core.md
+    - Agents: api-reference/agents.md
+    - Model Client: api-reference/model-client.md
+    - Tools & Middleware: api-reference/tools-middleware.md
+    - Benchmarks: api-reference/benchmarks.md
+    - Scorers: api-reference/scorers.md
+    - UI: api-reference/ui.md
+  - Architecture:
+    - architecture/index.md
+    - Runtime & Scheduler: architecture/runtime-and-scheduler.md

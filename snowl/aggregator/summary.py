@@ -94,6 +94,8 @@ class BenchmarkRow:
     primary_metric_value: float
     metric_means: dict[str, float]
     sample_count: int
+    metric_stderr: dict[str, float] = field(default_factory=dict)
+    metric_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -148,8 +150,12 @@ def aggregate_benchmark_rows(
     (with keys like domain, benchmark_type, primary_metric, higher_is_better).
     If absent, falls back to empty defaults.
     """
+    from snowl.aggregator.metrics import MetricAggregator, MetricDefinition
+
     if benchmark_metadata_map is None:
         benchmark_metadata_map = {}
+
+    aggregator = MetricAggregator()
 
     groups: dict[tuple[str, str, str], list[TrialOutcome]] = {}
     for o in outcomes:
@@ -167,12 +173,40 @@ def aggregate_benchmark_rows(
         primary_metric = meta.get("primary_metric", "")
         higher_is_better = meta.get("higher_is_better", True)
 
+        # Build metric definitions from benchmark metadata if available
+        metric_defs_raw = meta.get("metric_definitions") or []
+        metric_defs = [MetricDefinition(**d) if isinstance(d, dict) else d for d in metric_defs_raw]
+
         metric_values: dict[str, list[float]] = {}
         for out in bucket:
             for metric, score in out.scores.items():
                 metric_values.setdefault(metric, []).append(float(score.value))
 
+        # Use MetricAggregator for structured reports
+        score_maps = [{m: v for m, v in row.items()} for row in [{k: v[i] for k, v in metric_values.items()} for i in range(max((len(v) for v in metric_values.values()), default=0))]] if metric_values else []
+        reports = aggregator.aggregate(score_maps, definitions=metric_defs or None)
+
         metric_means = {m: _mean(v) for m, v in metric_values.items()}
+        metric_stderr = {r.name: r.stderr for r in reports}
+
+        # Build metric_metadata from reports and benchmark meta
+        metric_metadata: dict[str, dict[str, Any]] = {}
+        for r in reports:
+            metric_metadata[r.name] = {
+                "higher_is_better": r.higher_is_better,
+                "aggregation": r.definition.aggregation,
+                "stderr": r.stderr,
+            }
+            if r.definition.description:
+                metric_metadata[r.name]["description"] = r.definition.description
+        # Add threshold/baseline from benchmark meta if present
+        metric_thresholds = meta.get("metric_thresholds") or {}
+        metric_baselines = meta.get("metric_baselines") or {}
+        for m_name in metric_means:
+            if m_name in metric_thresholds:
+                metric_metadata.setdefault(m_name, {})["threshold"] = metric_thresholds[m_name]
+            if m_name in metric_baselines:
+                metric_metadata.setdefault(m_name, {})["baseline"] = metric_baselines[m_name]
 
         primary_metric_value = 0.0
         if primary_metric and primary_metric in metric_means:
@@ -196,6 +230,8 @@ def aggregate_benchmark_rows(
             primary_metric=primary_metric,
             primary_metric_value=primary_metric_value,
             metric_means=metric_means,
+            metric_stderr=metric_stderr,
+            metric_metadata=metric_metadata,
             sample_count=len(bucket),
             metadata=model_metadata,
         ))

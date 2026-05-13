@@ -22,8 +22,10 @@ build/
 dist/
 *.egg-info/
 .eggs/
+site/
 pip-wheel-metadata/
 webui/.next/
+snowl/_webui/.next/
 webui/node_modules/
 node_modules/
 .cache/

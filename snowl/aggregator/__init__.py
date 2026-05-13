@@ -20,6 +20,11 @@ from snowl.aggregator.schema import (
     RESULT_SCHEMA_VERSION,
     RESULT_SCHEMA_VERSION_V2,
 )
+from snowl.aggregator.metrics import (
+    MetricAggregator,
+    MetricDefinition,
+    MetricReport,
+)
 from snowl.aggregator.summary import (
     AggregateResult,
     BenchmarkRow,
@@ -44,6 +49,10 @@ __all__ = [
     "RESULT_SCHEMA_URI",
     "RESULT_SCHEMA_VERSION",
     "RESULT_SCHEMA_VERSION_V2",
+    # Metric aggregation
+    "MetricAggregator",
+    "MetricDefinition",
+    "MetricReport",
     # V1 aggregation
     "AggregateResult",
     "aggregate_outcomes",

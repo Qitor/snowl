@@ -304,6 +304,7 @@ def build_dataset(
                         "user_task_id": ut_id,
                         "injection_task_id": it_id,
                         "attack_type": attack_name,
+                        "attack_string": attack_string,
                         "split": "official",
                         "requires_sandbox": False,
                         "tool_schemas": tool_schemas,

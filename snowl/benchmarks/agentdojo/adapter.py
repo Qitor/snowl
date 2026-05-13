@@ -54,6 +54,7 @@ class AgentDojoBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
             higher_is_better=True,
             sample_preview_mode="tool_trace",
             dashboard_tags=["prompt_injection", "tool_use", "stateful"],
+            middleware_hints={"type": "stateful", "suite": self.suite},
         )
 
     def _suite_set(self) -> set[str]:
@@ -98,13 +99,16 @@ class AgentDojoBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
             return None
         suite = str(row.get("suite") or row.get("task_suite_name") or self.suite).strip()
         sample_id = str(row.get("id") or "").strip() or stable_benchmark_id("agentdojo", suite, row_index, prompt)
+        injection_task_id = row.get("injection_task_id")
+        attack_type = row.get("attack_type")
         tools = _tool_schemas(row.get("tools") or row.get("tool_schemas") or _default_suite_tools(suite))
+        user_task_id = str(row.get("user_task_id") or row.get("task_id") or "")
         metadata = {
             "split": row_split,
             "suite": suite,
             "task_suite_name": suite,
-            "user_task_id": row.get("user_task_id") or row.get("task_id"),
-            "injection_task_id": row.get("injection_task_id"),
+            "user_task_id": user_task_id,
+            "injection_task_id": injection_task_id,
             "requires_sandbox": bool(row.get("requires_sandbox", False)),
             "tool_schemas": tools,
             "tool_names": [schema["function"]["name"] for schema in tools if isinstance(schema.get("function"), Mapping)],
@@ -114,6 +118,25 @@ class AgentDojoBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
             "forbidden_tools": list(row.get("forbidden_tools") or []),
             "forbidden_arg_patterns": list(row.get("forbidden_arg_patterns") or []),
         }
+
+        # Paired evaluation metadata
+        is_attacked = injection_task_id is not None
+        pair_key = f"{suite}::{user_task_id}"
+        if is_attacked:
+            pair_key += f"::{injection_task_id}::{attack_type}"
+        metadata["pair_id"] = pair_key
+        metadata["run_mode"] = "attacked" if is_attacked else "clean"
+
+        # Injection config for InjectionMiddleware (only for attacked samples)
+        attack_string = row.get("attack_string", "")
+        if attack_string:
+            metadata["injection_config"] = {
+                "injection_string": attack_string,
+                "position": row.get("injection_position", "append"),
+                "target_field": row.get("injection_target_field"),
+                "target_tools": row.get("injection_target_tools"),
+            }
+
         return {"id": sample_id, "input": prompt, "metadata": metadata}
 
     def _env_spec(self) -> EnvSpec:

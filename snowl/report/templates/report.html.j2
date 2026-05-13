@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Snowl Report{% if run_id %} — {{ run_id }}{% endif %}</title>
+<style>
+  :root { --bg: #fafafa; --card: #fff; --border: #e0e0e0; --text: #222; --muted: #888; --good: #16a34a; --bad: #dc2626; --accent: #2563eb; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Menlo, Consolas, monospace; background: var(--bg); color: var(--text); padding: 24px; max-width: 1200px; margin: 0 auto; line-height: 1.5; }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; }
+  h2 { font-size: 1.2rem; margin: 24px 0 12px; border-bottom: 2px solid var(--border); padding-bottom: 4px; }
+  h3 { font-size: 1rem; margin: 16px 0 8px; }
+  .run-meta { color: var(--muted); font-size: 0.85rem; margin-bottom: 16px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-bottom: 20px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 12px; text-align: center; }
+  .card .value { font-size: 1.4rem; font-weight: 700; }
+  .card .label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 0.85rem; }
+  th, td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+  th { background: #f5f5f5; font-weight: 600; white-space: nowrap; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .metric-good { color: var(--good); font-weight: 600; }
+  .metric-bad { color: var(--bad); font-weight: 600; }
+  .risk-low { background: #dcfce7; }
+  .risk-med { background: #fef9c3; }
+  .risk-high { background: #fee2e2; }
+  .bar-chart { width: 100%; max-width: 600px; height: auto; margin: 8px 0; }
+  .bar { fill: var(--accent); }
+  .bar-label { font-size: 11px; fill: var(--text); }
+  .bar-value { font-size: 11px; fill: var(--muted); }
+  .chart-title { font-size: 12px; font-weight: 600; fill: var(--text); }
+  .no-data { color: var(--muted); font-style: italic; }
+  .section { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  details { margin-bottom: 4px; }
+  summary { cursor: pointer; padding: 4px 0; font-weight: 500; }
+  .stderr { font-size: 0.75rem; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<h1>Snowl Report</h1>
+<div class="run-meta">
+  {% if run_id %}Run: <strong>{{ run_id }}</strong>{% endif %}
+  {% if experiment_id %} &middot; Experiment: {{ experiment_id }}{% endif %}
+</div>
+
+<div class="cards">
+  <div class="card"><div class="value">{{ summary.total }}</div><div class="label">Total</div></div>
+  <div class="card"><div class="value" style="color:var(--good)">{{ summary.success }}</div><div class="label">Success</div></div>
+  <div class="card"><div class="value">{{ summary.incorrect }}</div><div class="label">Incorrect</div></div>
+  <div class="card"><div class="value" style="color:var(--bad)">{{ summary.error }}</div><div class="label">Error</div></div>
+  <div class="card"><div class="value">{{ summary.limit_exceeded }}</div><div class="label">Limit</div></div>
+  <div class="card"><div class="value">{{ summary.cancelled }}</div><div class="label">Cancelled</div></div>
+</div>
+
+{# --- Model Comparison Charts --- #}
+{% if bar_charts %}
+<div class="section">
+<h2>Model Comparison</h2>
+{% for metric, svg in bar_charts.items() %}
+<h3>{{ metric }}</h3>
+{{ svg }}
+{% endfor %}
+</div>
+{% endif %}
+
+{# --- Benchmark Summary Table (V2) --- #}
+{% if benchmark_table %}
+<div class="section">
+<h2>Benchmark Summary</h2>
+<table>
+<thead>
+<tr>
+  <th>Benchmark</th>
+  <th>Agent</th>
+  <th>Model</th>
+  <th>Primary Metric</th>
+  <th>Value</th>
+  <th>Stderr</th>
+  <th>Samples</th>
+</tr>
+</thead>
+<tbody>
+{% for row in benchmark_table %}
+<tr>
+  <td>{{ row.benchmark }}</td>
+  <td>{{ row.agent_id }}{% if row.variant_id != 'default' %}#{{ row.variant_id }}{% endif %}</td>
+  <td>{{ row.model }}</td>
+  <td>{{ row.primary_metric }}</td>
+  <td class="num">{{ "%.4f"|format(row.primary_metric_value) }}</td>
+  <td class="num stderr">{{ "%.4f"|format(row.metric_stderr.get(row.primary_metric, 0.0)) if row.metric_stderr else "" }}</td>
+  <td class="num">{{ row.sample_count }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% endif %}
+
+{# --- Domain Risk Overview --- #}
+{% if domain_table %}
+<div class="section">
+<h2>Risk Overview</h2>
+<table>
+<thead>
+<tr>
+  <th>Domain</th>
+  <th>Capability</th>
+  <th>Safety</th>
+  <th>Risk Index</th>
+  <th>Benchmarks</th>
+  <th>Models</th>
+</tr>
+</thead>
+<tbody>
+{% for row in domain_table %}
+{% set risk_class = "risk-low" if row.risk_index < 0.3 else ("risk-med" if row.risk_index < 0.6 else "risk-high") %}
+<tr class="{{ risk_class }}">
+  <td>{{ row.domain }}</td>
+  <td class="num">{{ "%.4f"|format(row.capability_score) }}</td>
+  <td class="num">{{ "%.4f"|format(row.safety_score) }}</td>
+  <td class="num"><strong>{{ "%.4f"|format(row.risk_index) }}</strong></td>
+  <td class="num">{{ row.benchmark_count }}</td>
+  <td class="num">{{ row.model_count }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% endif %}
+
+{# --- Leaderboard --- #}
+{% if leaderboard_table %}
+<div class="section">
+<h2>Leaderboard</h2>
+<table>
+<thead>
+<tr>
+  <th>Rank</th>
+  <th>Model</th>
+  <th>Domain</th>
+  <th>Type</th>
+  <th>Score</th>
+  <th>Benchmarks</th>
+</tr>
+</thead>
+<tbody>
+{% for row in leaderboard_table %}
+<tr>
+  <td class="num">{{ row.rank }}</td>
+  <td>{{ row.model }}</td>
+  <td>{{ row.domain }}</td>
+  <td>{{ row.benchmark_type }}</td>
+  <td class="num">{{ "%.4f"|format(row.primary_metric_mean) }}</td>
+  <td class="num">{{ row.benchmarks_evaluated }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% endif %}
+
+{# --- Comparison Table (V1) --- #}
+<div class="section">
+<h2>Task × Agent Comparison</h2>
+<table>
+<thead>
+<tr><th>Task</th><th>Agent</th><th>Metrics</th></tr>
+</thead>
+<tbody>
+{% for task_id in aggregate.matrix.keys() | sort %}
+  {% set agents = aggregate.matrix[task_id] %}
+  {% for agent_id in agents.keys() | sort %}
+    {% set metrics = agents[agent_id] %}
+    <tr>
+      <td>{{ task_id }}</td>
+      <td>{{ agent_id }}</td>
+      <td>
+        {% for m in metrics.keys() | sort %}
+          {% set val = metrics[m] %}
+          {% set meta = metric_metadata.get(m, {}) %}
+          {% set hib = meta.get("higher_is_better", true) %}
+          <span class="{{ color_class(val, hib) }}">{{ m }}: {{ "%.3f"|format(val) }}</span>{% if not loop.last %}, {% endif %}
+        {% endfor %}
+      </td>
+    </tr>
+  {% endfor %}
+{% endfor %}
+</tbody>
+</table>
+</div>
+
+{# --- Failures --- #}
+<div class="section">
+<h2>Failures</h2>
+<table>
+<thead>
+<tr><th>Task</th><th>Agent</th><th>Sample</th><th>Status</th><th>Diagnostic</th></tr>
+</thead>
+<tbody>
+{% for item in diagnostics_index %}
+  {% if item.status in ("error", "limit_exceeded", "cancelled") %}
+  <tr>
+    <td>{{ item.task_id }}</td>
+    <td>{{ item.agent_id }}</td>
+    <td>{{ item.sample_id }}</td>
+    <td>{{ item.status }}</td>
+    <td><a href="{{ item.path }}">diagnostic</a></td>
+  </tr>
+  {% endif %}
+{% endfor %}
+{% if diagnostics_index | selectattr("status", "in", ["error", "limit_exceeded", "cancelled"]) | list | length == 0 %}
+<tr><td colspan="5" class="no-data">No failures</td></tr>
+{% endif %}
+</tbody>
+</table>
+</div>
+
+</body>
+</html>

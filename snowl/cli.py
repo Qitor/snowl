@@ -1065,6 +1065,271 @@ def _cmd_web_monitor(
         return 2
 
 
+def _resolve_run_dir(run_id: str, project: str) -> Path:
+    """Resolve a run_id to its artifact directory."""
+    base_dir = Path(project).resolve()
+    runs_root = base_dir / ".snowl" / "runs"
+
+    if run_id == "latest":
+        # Find the most recent run directory
+        candidates = [d for d in runs_root.iterdir() if d.is_dir()] if runs_root.exists() else []
+        if not candidates:
+            raise FileNotFoundError(f"No runs found in {runs_root}")
+        return max(candidates, key=lambda d: d.stat().st_mtime)
+
+    # Try direct match
+    direct = runs_root / run_id.removeprefix("run-")
+    if direct.exists():
+        return direct
+
+    # Try by_run_id symlink
+    by_id = runs_root / "by_run_id" / run_id
+    if by_id.exists() and by_id.is_symlink():
+        return by_id.resolve()
+
+    raise FileNotFoundError(f"Run '{run_id}' not found in {runs_root}")
+
+
+def _cmd_report(
+    run_id: str,
+    *,
+    project: str,
+    format: str,
+    output: str | None,
+) -> int:
+    """Regenerate report from a previous run."""
+    import json as json_mod
+    from snowl.aggregator import (
+        aggregate_benchmark_rows,
+        aggregate_domain_rows,
+        aggregate_leaderboard_rows,
+        aggregate_outcomes,
+    )
+    from snowl.report.html import render_report
+    from snowl.artifacts import build_benchmark_metadata_map
+
+    try:
+        run_dir = _resolve_run_dir(run_id, project)
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}")
+        return 1
+
+    # Load outcomes
+    outcomes_path = run_dir / "outcomes.json"
+    if not outcomes_path.exists():
+        print(f"Error: No outcomes.json in {run_dir}")
+        return 1
+
+    with outcomes_path.open("r", encoding="utf-8") as f:
+        raw_outcomes = json_mod.load(f)
+
+    # Load aggregate
+    aggregate_path = run_dir / "aggregate.json"
+    if not aggregate_path.exists():
+        print(f"Error: No aggregate.json in {run_dir}")
+        return 1
+
+    with aggregate_path.open("r", encoding="utf-8") as f:
+        raw_aggregate = json_mod.load(f)
+
+    # Load diagnostics
+    diagnostics_path = run_dir / "diagnostics_index.json"
+    diagnostics_index = []
+    if diagnostics_path.exists():
+        with diagnostics_path.open("r", encoding="utf-8") as f:
+            diagnostics_index = json_mod.load(f)
+
+    # Load summary
+    summary_path = run_dir / "summary.json"
+    summary_data = {}
+    if summary_path.exists():
+        with summary_path.open("r", encoding="utf-8") as f:
+            summary_data = json_mod.load(f)
+
+    # Build lightweight summary/aggregate objects for rendering
+    class _Summary:
+        def __init__(self, data: dict):
+            self.total = data.get("total", 0)
+            self.success = data.get("success", 0)
+            self.incorrect = data.get("incorrect", 0)
+            self.error = data.get("error", 0)
+            self.limit_exceeded = data.get("limit_exceeded", 0)
+            self.cancelled = data.get("cancelled", 0)
+
+    class _Aggregate:
+        def __init__(self, data: dict):
+            self.matrix = data.get("matrix", {})
+
+    summary = _Summary(summary_data)
+    aggregate = _Aggregate(raw_aggregate)
+
+    # Load manifest for benchmark name
+    manifest_path = run_dir / "manifest.json"
+    benchmark_name = None
+    if manifest_path.exists():
+        with manifest_path.open("r", encoding="utf-8") as f:
+            manifest = json_mod.load(f)
+            benchmark_name = manifest.get("benchmark")
+
+    benchmark_metadata_map = build_benchmark_metadata_map(benchmark_name)
+
+    if format == "json":
+        import sys
+        json_mod.dump(raw_aggregate, sys.stdout, ensure_ascii=False, indent=2)
+        return 0
+
+    if format == "markdown":
+        import sys
+        lines = ["# Snowl Report", ""]
+        lines.append(f"**Total**: {summary.total} | **Success**: {summary.success} | **Error**: {summary.error}")
+        lines.append("")
+        lines.append("## Metrics")
+        lines.append("")
+        lines.append("| Task | Agent | Metrics |")
+        lines.append("|------|-------|---------|")
+        for task_id in sorted(aggregate.matrix.keys()):
+            agents = aggregate.matrix[task_id]
+            for agent_id in sorted(agents.keys()):
+                metrics = agents[agent_id]
+                metric_text = ", ".join(f"{k}: {v:.3f}" for k, v in sorted(metrics.items()))
+                lines.append(f"| {task_id} | {agent_id} | {metric_text} |")
+        lines.append("")
+        sys.stdout.write("\n".join(lines) + "\n")
+        return 0
+
+    # format == "html"
+    # Re-aggregate V2 data for richer report
+    benchmark_rows = None
+    domain_rows = None
+    leaderboard_rows = None
+    try:
+        from snowl.runtime.results import outcome_from_serialized
+        outcomes = [outcome_from_serialized(o) for o in raw_outcomes]
+        benchmark_rows = aggregate_benchmark_rows(outcomes, benchmark_metadata_map)
+        domain_rows = aggregate_domain_rows(benchmark_rows)
+        leaderboard_rows = aggregate_leaderboard_rows(benchmark_rows)
+    except Exception:
+        pass  # Fall back to V1-only report
+
+    html = render_report(
+        summary=summary,
+        aggregate=aggregate,
+        diagnostics_index=diagnostics_index,
+        benchmark_rows=benchmark_rows,
+        domain_rows=domain_rows,
+        leaderboard_rows=leaderboard_rows,
+        run_id=run_id if run_id != "latest" else "",
+    )
+
+    if output:
+        Path(output).write_text(html, encoding="utf-8")
+        print(f"Report written to {output}")
+    else:
+        report_path = run_dir / "report.html"
+        report_path.write_text(html, encoding="utf-8")
+        print(f"Report written to {report_path}")
+
+    return 0
+
+
+def _cmd_compare(
+    run_id_a: str,
+    run_id_b: str,
+    *,
+    project: str,
+    format: str,
+    output: str | None,
+) -> int:
+    """Compare results from two runs."""
+    import json as json_mod
+    import sys
+    from snowl.report.compare import compare_runs
+
+    try:
+        run_dir_a = _resolve_run_dir(run_id_a, project)
+        run_dir_b = _resolve_run_dir(run_id_b, project)
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}")
+        return 1
+
+    # Load aggregate data
+    def _load_aggregate(run_dir: Path) -> dict:
+        agg_path = run_dir / "aggregate.json"
+        if not agg_path.exists():
+            print(f"Error: No aggregate.json in {run_dir}")
+            raise SystemExit(1)
+        with agg_path.open("r", encoding="utf-8") as f:
+            return json_mod.load(f)
+
+    def _load_benchmark_summary(run_dir: Path) -> list[dict]:
+        bs_path = run_dir / "benchmark_summary.json"
+        if not bs_path.exists():
+            return []
+        with bs_path.open("r", encoding="utf-8") as f:
+            return json_mod.load(f).get("rows", [])
+
+    agg_a = _load_aggregate(run_dir_a)
+    agg_b = _load_aggregate(run_dir_b)
+    bs_a = _load_benchmark_summary(run_dir_a)
+    bs_b = _load_benchmark_summary(run_dir_b)
+
+    diff = compare_runs(agg_a, agg_b, benchmark_rows_a=bs_a, benchmark_rows_b=bs_b)
+
+    if format == "json":
+        json_mod.dump(diff, sys.stdout, ensure_ascii=False, indent=2)
+    elif format == "html":
+        from snowl.report.compare import render_compare_html
+        html = render_compare_html(diff, run_id_a=run_id_a, run_id_b=run_id_b)
+        if output:
+            Path(output).write_text(html, encoding="utf-8")
+            print(f"Compare report written to {output}")
+        else:
+            sys.stdout.write(html)
+    else:
+        # markdown
+        lines = [f"# Compare: {run_id_a} vs {run_id_b}", ""]
+        summary = diff.get("summary", {})
+        lines.append(f"Improved: {summary.get('improved', 0)} | Regressed: {summary.get('regressed', 0)} | Unchanged: {summary.get('unchanged', 0)}")
+        lines.append("")
+        deltas = diff.get("deltas", [])
+        if deltas:
+            lines.append("| Key | Metric | A | B | Delta | Direction |")
+            lines.append("|-----|--------|---|---|-------|-----------|")
+            for d in deltas:
+                lines.append(f"| {d['key']} | {d['metric']} | {d['value_a']:.4f} | {d['value_b']:.4f} | {d['delta']:+.4f} | {d['direction']} |")
+        sys.stdout.write("\n".join(lines) + "\n")
+
+    return 0
+
+
+def _cmd_rescore(
+    run_id: str,
+    *,
+    project: str,
+    scorer: str | None,
+) -> int:
+    """Re-score trials from a previous run."""
+    import asyncio
+    import json as json_mod
+    from snowl.rescore import rescore_run
+
+    try:
+        run_dir = _resolve_run_dir(run_id, project)
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}")
+        return 1
+
+    scorer_filter = [s.strip() for s in scorer.split(",") if s.strip()] if scorer else None
+
+    try:
+        asyncio.run(rescore_run(run_dir=run_dir, scorer_filter=scorer_filter))
+        print(f"Rescoring complete for {run_dir}")
+        return 0
+    except Exception as exc:
+        print(f"Rescore failed: {exc}")
+        return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="snowl")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1371,6 +1636,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Background run discovery poll interval.",
     )
 
+    report_parser = sub.add_parser("report", help="Regenerate report from a previous run.")
+    report_parser.add_argument("run_id", nargs="?", default="latest", help="Run id or 'latest'.")
+    report_parser.add_argument("--project", default=".", help="Project root path.")
+    report_parser.add_argument("--format", choices=["html", "json", "markdown"], default="html", help="Output format.")
+    report_parser.add_argument("--output", "-o", default=None, help="Output file path (default: stdout for json/markdown, overwrite report.html for html).")
+
+    compare_parser = sub.add_parser("compare", help="Compare results from two runs.")
+    compare_parser.add_argument("run_id_a", help="First run id.")
+    compare_parser.add_argument("run_id_b", help="Second run id.")
+    compare_parser.add_argument("--project", default=".", help="Project root path.")
+    compare_parser.add_argument("--format", choices=["html", "markdown", "json"], default="markdown", help="Output format.")
+    compare_parser.add_argument("--output", "-o", default=None, help="Output file path (default: stdout).")
+
+    rescore_parser = sub.add_parser("rescore", help="Re-score trials from a previous run.")
+    rescore_parser.add_argument("run_id", nargs="?", default="latest", help="Run id or 'latest'.")
+    rescore_parser.add_argument("--project", default=".", help="Project root path.")
+    rescore_parser.add_argument("--scorer", default=None, help="Scorer id selector (csv). Only re-score with these scorers.")
+
     return parser
 
 
@@ -1502,6 +1785,30 @@ def main(argv: list[str] | None = None) -> int:
                 port=int(args.port),
                 poll_interval_sec=float(args.poll_interval_sec),
             )
+
+    if args.command == "report":
+        return _cmd_report(
+            args.run_id,
+            project=str(Path(args.project)),
+            format=args.format,
+            output=args.output,
+        )
+
+    if args.command == "compare":
+        return _cmd_compare(
+            args.run_id_a,
+            args.run_id_b,
+            project=str(Path(args.project)),
+            format=args.format,
+            output=args.output,
+        )
+
+    if args.command == "rescore":
+        return _cmd_rescore(
+            args.run_id,
+            project=str(Path(args.project)),
+            scorer=args.scorer,
+        )
 
     parser.print_help()
     return 2

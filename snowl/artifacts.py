@@ -251,7 +251,14 @@ class RunArtifactStore:
             manifest_payload.update(dict(manifest_extra))
         _write_json_file(out_dir / "manifest.json", manifest_payload)
         (out_dir / "report.html").write_text(
-            self._html_report(summary=summary, aggregate=aggregate, diagnostics_index=diagnostics_index),
+            self._html_report(
+                summary=summary,
+                aggregate=aggregate,
+                diagnostics_index=diagnostics_index,
+                benchmark_rows=benchmark_rows,
+                domain_rows=domain_rows,
+                leaderboard_rows=leaderboard_rows,
+            ),
             encoding="utf-8",
         )
         if run_log_lines is not None:
@@ -371,21 +378,26 @@ class RunArtifactStore:
         _ = summary
         return payload
 
-    def _html_report(self, *, summary: Any, aggregate: Any, diagnostics_index: list[dict[str, Any]]) -> str:
-        failure_rows = []
-        for item in diagnostics_index:
-            if item["status"] in {"error", "limit_exceeded", "cancelled"}:
-                failure_rows.append(
-                    f"<tr><td>{item['task_id']}</td><td>{item['agent_id']}</td><td>{item['sample_id']}</td><td>{item['status']}</td><td><a href='{item['path']}'>diagnostic</a></td></tr>"
-                )
-        matrix_rows = []
-        for task_id in sorted(aggregate.matrix.keys()):
-            agents = aggregate.matrix[task_id]
-            for agent_id in sorted(agents.keys()):
-                metrics = agents[agent_id]
-                metric_text = ", ".join([f"{k}: {v:.3f}" for k, v in sorted(metrics.items())])
-                matrix_rows.append(f"<tr><td>{task_id}</td><td>{agent_id}</td><td>{metric_text}</td></tr>")
-        return f"""<!doctype html>\n<html><head><meta charset='utf-8'/><title>Snowl Report</title>\n<style>body{{font-family:Menlo,Consolas,monospace;padding:20px}} table{{border-collapse:collapse;width:100%}} td,th{{border:1px solid #ddd;padding:6px}} .cards{{display:grid;grid-template-columns:repeat(3,minmax(120px,1fr));gap:8px}} .card{{border:1px solid #ccc;padding:8px}}</style>\n</head><body>\n<h1>Snowl Report</h1>\n<div class='cards'>\n<div class='card'>Total: {summary.total}</div>\n<div class='card'>Success: {summary.success}</div>\n<div class='card'>Incorrect: {summary.incorrect}</div>\n<div class='card'>Error: {summary.error}</div>\n<div class='card'>Limit: {summary.limit_exceeded}</div>\n<div class='card'>Cancelled: {summary.cancelled}</div>\n</div>\n<h2>Comparison</h2>\n<table><thead><tr><th>Task</th><th>Agent</th><th>Metrics</th></tr></thead><tbody>{''.join(matrix_rows) or '<tr><td colspan=3>no data</td></tr>'}</tbody></table>\n<h2>Failures</h2>\n<table><thead><tr><th>Task</th><th>Agent</th><th>Sample</th><th>Status</th><th>Diagnostic</th></tr></thead><tbody>{''.join(failure_rows) or '<tr><td colspan=5>no failures</td></tr>'}</tbody></table>\n</body></html>"""
+    def _html_report(
+        self,
+        *,
+        summary: Any,
+        aggregate: Any,
+        diagnostics_index: list[dict[str, Any]],
+        benchmark_rows: list[Any] | None = None,
+        domain_rows: list[Any] | None = None,
+        leaderboard_rows: list[Any] | None = None,
+    ) -> str:
+        from snowl.report.html import render_report
+        return render_report(
+            summary=summary,
+            aggregate=aggregate,
+            diagnostics_index=diagnostics_index,
+            benchmark_rows=benchmark_rows,
+            domain_rows=domain_rows,
+            leaderboard_rows=leaderboard_rows,
+            run_id=self.run_id,
+        )
 
 
 def _write_json_file(path: Path, payload: Any) -> None:

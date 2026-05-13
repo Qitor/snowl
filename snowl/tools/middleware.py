@@ -7,7 +7,8 @@ Framework role:
 
 Runtime/usage wiring:
 - Wired into ReActAgent._execute_tool_call via the middlewares field.
-- Future middleware implementations: EmulatedToolWrapper, StatefulToolExecutor, InjectionMiddleware.
+- Built-in middleware implementations: LoggingMiddleware, IdentityMiddleware.
+  Additional middlewares in separate modules: EmulatedToolWrapper, StatefulToolExecutor, InjectionMiddleware.
 
 Change guardrails:
 - ToolMiddleware protocol is a public contract; adding required methods is breaking.

@@ -15,6 +15,7 @@ Change guardrails:
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -125,6 +126,29 @@ def find_project_file(path: str | Path) -> Path | None:
     return None
 
 
+def _substitute_env_vars(value: Any) -> Any:
+    """Recursively replace ${VAR} and ${env:VAR} patterns with os.environ values."""
+    if isinstance(value, str):
+        import re
+        pattern = re.compile(r"\$\{(?:env:)?(\w+)\}")
+
+        def _replace(match: re.Match) -> str:
+            var_name = match.group(1)
+            env_value = os.environ.get(var_name)
+            if env_value is None:
+                raise SnowlValidationError(
+                    f"Environment variable '{var_name}' referenced in project.yml but not set"
+                )
+            return env_value
+
+        return pattern.sub(_replace, value)
+    if isinstance(value, dict):
+        return {k: _substitute_env_vars(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_substitute_env_vars(item) for item in value]
+    return value
+
+
 def load_project_config(path: str | Path) -> ProjectConfig:
     config_path = find_project_file(path)
     if config_path is None:
@@ -135,6 +159,8 @@ def load_project_config(path: str | Path) -> ProjectConfig:
     except Exception as exc:
         raise SnowlValidationError(f"Failed to parse project config: {config_path}: {exc}") from exc
     data = _require_mapping(raw, label="project config", path=config_path)
+    data = _substitute_env_vars(data)
+    project_data = _require_mapping(data.get("project"), label="project", path=config_path)
     project_data = _require_mapping(data.get("project"), label="project", path=config_path)
     project_root = _resolve_dir(
         project_data.get("root_dir"),

@@ -151,6 +151,13 @@ class EvalTrialLifecycle:
             estimated_prepare_cost="container" if container_spec.requires_container else "light",
             spec_hash=container_spec.spec_hash,
         )
+        # Build per-trial middleware_config: agent-level config + sample-level overrides
+        agent_middleware = dict(getattr(trial.agent, "middleware_config", {}) or {})
+        sample_meta = trial.sample.get("metadata", {}) if isinstance(trial.sample, dict) else {}
+        per_sample_injection = sample_meta.get("injection_config", {})
+        if per_sample_injection:
+            agent_middleware["injection_config"] = per_sample_injection
+
         request = TrialRequest(
             task=trial.task,
             agent=trial.agent,
@@ -165,6 +172,7 @@ class EvalTrialLifecycle:
             container_lifecycle=self.container_lifecycle,
             run_id=self.run_id,
             trial_id=key,
+            middleware_config=agent_middleware,
         )
         async with self.scheduler.begin_prepare(execution_plan):
             prepared = await prepare_trial_phase(request)

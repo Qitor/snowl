@@ -796,6 +796,28 @@ def _inject_execution_middleware(prepared: PreparedTrial, mode: str, config: dic
         if hasattr(agent, "middlewares"):
             existing = list(agent.middlewares or [])
             existing.append(StatefulToolExecutor())
+            # If injection_config present, also add InjectionMiddleware
+            inj_config = config.get("injection_config")
+            if inj_config:
+                from snowl.tools.injection import build_injection_middleware_from_config
+                existing.append(build_injection_middleware_from_config(inj_config))
+            agent.middlewares = existing
+    elif mode == "injection":
+        from snowl.tools.injection import InjectionMiddleware, build_injection_middleware_from_config
+        middleware = build_injection_middleware_from_config(config)
+        if hasattr(agent, "middlewares"):
+            existing = list(agent.middlewares or [])
+            existing.append(middleware)
+            agent.middlewares = existing
+    elif mode == "stateful+injection":
+        from snowl.tools.stateful_executor import StatefulToolExecutor
+        from snowl.tools.injection import InjectionMiddleware, build_injection_middleware_from_config
+        if hasattr(agent, "middlewares"):
+            existing = list(agent.middlewares or [])
+            existing.append(StatefulToolExecutor())
+            # Injection config comes from "injection_config" sub-key if present
+            inj_config = config.get("injection_config", config)
+            existing.append(build_injection_middleware_from_config(inj_config))
             agent.middlewares = existing
 
 

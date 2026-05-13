@@ -6,6 +6,7 @@
 ![Benchmarks](https://img.shields.io/badge/benchmarks-20%2B-success)
 ![License](https://img.shields.io/badge/license-see%20repo-lightgrey)
 
+[![Docs](https://img.shields.io/badge/docs-site-blue)](https://qitor.github.io/snowl)
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
 Snowl is an open-source safety evaluation framework for AI agents.
