@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from snowl.benchmarks.base import BenchmarkInfo
 from snowl.benchmarks.base_adapter import BaseBenchmarkAdapter
 from snowl.benchmarks.utils import default_reference_path, matches_filters, read_json_array
 from snowl.core import EnvSpec
@@ -51,6 +52,25 @@ class ToolEmuBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
     description: str = "ToolEmu benchmark adapter."
     default_split: str = "official"
     emulation_mode: bool = False
+
+    def benchmark_info(self) -> BenchmarkInfo:
+        base_info = super().benchmark_info()
+        # Return a new BenchmarkInfo with middleware_hints for auto-configuration
+        return BenchmarkInfo(
+            name=base_info.name,
+            description=base_info.description,
+            display_name=base_info.display_name,
+            short_description=base_info.short_description,
+            domain=base_info.domain,
+            benchmark_type=base_info.benchmark_type,
+            family=base_info.family,
+            primary_metric=base_info.primary_metric,
+            higher_is_better=base_info.higher_is_better,
+            sample_preview_mode=base_info.sample_preview_mode,
+            dashboard_tags=list(base_info.dashboard_tags),
+            concurrency_profile=base_info.concurrency_profile,
+            middleware_hints={"type": "emulated", "simulator_type": "std_thought"},
+        )
 
     def _iter_rows(self) -> list[dict[str, Any]]:
         data = read_json_array(

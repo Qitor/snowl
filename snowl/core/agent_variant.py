@@ -28,6 +28,8 @@ class AgentVariant:
     model: str | None = None
     params: dict[str, Any] = field(default_factory=dict)
     provenance: dict[str, Any] = field(default_factory=dict)
+    execution_mode: str = "native"  # "native" | "emulated" | "stateful"
+    middleware_config: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -40,6 +42,8 @@ class AgentVariantAdapter:
     model: str | None = None
     params: dict[str, Any] = field(default_factory=dict)
     provenance: dict[str, Any] = field(default_factory=dict)
+    execution_mode: str = "native"  # "native" | "emulated" | "stateful"
+    middleware_config: dict[str, Any] = field(default_factory=dict)
 
     async def run(self, state, context, tools=None):
         return await self.agent.run(state, context, tools=tools)
@@ -89,5 +93,7 @@ def bind_agent_variant(variant: AgentVariant) -> AgentVariantAdapter:
         model=variant.model,
         params=dict(variant.params),
         provenance=dict(variant.provenance),
+        execution_mode=variant.execution_mode,
+        middleware_config=dict(variant.middleware_config),
     )
 

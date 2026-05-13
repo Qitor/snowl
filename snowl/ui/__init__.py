@@ -10,7 +10,7 @@ Change guardrails:
 - Preserve UI contract exports (`UIEvent`, `TaskMonitorState`, etc.) to keep CLI and web observability aligned.
 """
 
-from snowl.ui.console import ConsoleRenderer, LiveConsoleRenderer
+from snowl.ui.console import ConsoleRenderer, LiveConsoleRenderer, StreamingTheme
 from snowl.ui.contracts import (
     EventPhase,
     ScoreExplanation,
@@ -29,6 +29,7 @@ from snowl.ui.panels import PANEL_TYPES, PanelConfig, PanelLayout, PanelRegistry
 __all__ = [
     "ConsoleRenderer",
     "LiveConsoleRenderer",
+    "StreamingTheme",
     "InteractionController",
     "StdinInputPump",
     "EventPhase",

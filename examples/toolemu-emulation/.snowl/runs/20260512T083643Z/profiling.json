@@ -1,0 +1,39 @@
+{
+  "run": {
+    "run_id": "run-20260512T083643Z",
+    "experiment_id": "toolemu-emulation-20260512T08-8e9b3d60",
+    "benchmark": "toolemu"
+  },
+  "controls": {
+    "max_running_trials": 1,
+    "max_container_slots": 1,
+    "max_builds": 2,
+    "max_scoring_tasks": 2,
+    "provider_budgets": {
+      "siliconflow": 100,
+      "openai": 1
+    },
+    "max_trials": 1,
+    "max_sandboxes": 1,
+    "max_model_calls": 100
+  },
+  "throughput": {
+    "trial_count": 1
+  },
+  "task_monitor": [
+    {
+      "task_id": "toolemu:official",
+      "agent_id": "toolemu_emulation_agent",
+      "variant_id": "qwen3.5_4b",
+      "sample_id": "toolemu-official_0",
+      "model": "Qwen/Qwen3.5-4B",
+      "status": "queued",
+      "step_count": 0,
+      "duration_ms": null,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": null,
+      "scorer_metrics": {}
+    }
+  ]
+}

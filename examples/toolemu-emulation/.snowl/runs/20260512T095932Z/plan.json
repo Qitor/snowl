@@ -1,0 +1,14 @@
+{
+  "mode": "single",
+  "task_ids": [
+    "toolemu:official"
+  ],
+  "agent_ids": [
+    "toolemu_emulation_agent"
+  ],
+  "variant_ids": [
+    "glm51_w4a8"
+  ],
+  "sample_count": 3,
+  "trial_count": 3
+}

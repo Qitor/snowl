@@ -1,0 +1,67 @@
+{
+  "run": {
+    "run_id": "run-20260512T095932Z",
+    "experiment_id": "toolemu-emulation-20260512T09-8e9b3d60",
+    "benchmark": "toolemu"
+  },
+  "controls": {
+    "max_running_trials": 1,
+    "max_container_slots": 1,
+    "max_builds": 2,
+    "max_scoring_tasks": 1,
+    "provider_budgets": {
+      "inf": 100,
+      "openai": 1
+    },
+    "max_trials": 1,
+    "max_sandboxes": 1,
+    "max_model_calls": 100
+  },
+  "throughput": {
+    "trial_count": 3
+  },
+  "task_monitor": [
+    {
+      "task_id": "toolemu:official",
+      "agent_id": "toolemu_emulation_agent",
+      "variant_id": "glm51_w4a8",
+      "sample_id": "toolemu-official_0",
+      "model": "glm-5.1-w4a8",
+      "status": "queued",
+      "step_count": 0,
+      "duration_ms": null,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": null,
+      "scorer_metrics": {}
+    },
+    {
+      "task_id": "toolemu:official",
+      "agent_id": "toolemu_emulation_agent",
+      "variant_id": "glm51_w4a8",
+      "sample_id": "toolemu-official_1",
+      "model": "glm-5.1-w4a8",
+      "status": "queued",
+      "step_count": 0,
+      "duration_ms": null,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": null,
+      "scorer_metrics": {}
+    },
+    {
+      "task_id": "toolemu:official",
+      "agent_id": "toolemu_emulation_agent",
+      "variant_id": "glm51_w4a8",
+      "sample_id": "toolemu-official_2",
+      "model": "glm-5.1-w4a8",
+      "status": "queued",
+      "step_count": 0,
+      "duration_ms": null,
+      "latest_action": null,
+      "latest_observation": null,
+      "latest_message": null,
+      "scorer_metrics": {}
+    }
+  ]
+}

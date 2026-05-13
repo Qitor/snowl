@@ -588,6 +588,7 @@ def _cmd_eval(
     task: str | None,
     agent: str | None,
     variant: str | None,
+    scorer: str | None,
     no_ui: bool,
     resume: bool,
     rerun_failed_only: bool,
@@ -672,6 +673,7 @@ def _cmd_eval(
                     task_filter=_split_csv(task),
                     agent_filter=_split_csv(agent),
                     variant_filter=_split_csv(variant),
+                    scorer_filter=_split_csv(scorer),
                     renderer=renderer,
                     resume=resume,
                     rerun_failed_only=rerun_failed_only,
@@ -1072,6 +1074,7 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser.add_argument("--task", dest="task", default=None, help="Task id selector (csv).")
     eval_parser.add_argument("--agent", dest="agent", default=None, help="Agent id selector (csv).")
     eval_parser.add_argument("--variant", dest="variant", default=None, help="Variant id selector (csv).")
+    eval_parser.add_argument("--scorer", dest="scorer", default=None, help="Scorer id selector (csv).")
     eval_parser.add_argument(
         "--cli-ui",
         action="store_true",
@@ -1381,6 +1384,7 @@ def main(argv: list[str] | None = None) -> int:
             task=args.task,
             agent=args.agent,
             variant=args.variant,
+            scorer=args.scorer,
             no_ui=args.no_ui,
             resume=args.resume,
             rerun_failed_only=args.rerun_failed_only,

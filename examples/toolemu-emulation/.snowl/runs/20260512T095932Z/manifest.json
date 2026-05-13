@@ -1,0 +1,30 @@
+{
+  "schema_version": "v1",
+  "result_schema_uri": "snowl://schemas/results/v1",
+  "aggregate_schema_uri": "snowl://schemas/aggregate/v1",
+  "run_id": "run-20260512T095932Z",
+  "experiment_id": "toolemu-emulation-20260512T09-8e9b3d60",
+  "benchmark": "toolemu",
+  "event_stream_mode": "live_append",
+  "status": "cancelled",
+  "runtime_state": "runtime_state.json",
+  "research_exports": {
+    "events_jsonl": "events.jsonl"
+  },
+  "source": {
+    "kind": "eval",
+    "project_path": "/Users/morinop/snowl/examples/toolemu-emulation/project.yml",
+    "project_root": "/Users/morinop/snowl/examples/toolemu-emulation"
+  },
+  "recovery": {
+    "ledger": "recovery.json",
+    "attempts_jsonl": "attempts.jsonl",
+    "mode": "inline",
+    "auto_retry_non_success": true,
+    "max_auto_retries_per_trial": 1,
+    "backoff_ms": 2000
+  },
+  "ended_at_ts_ms": 1778579973559,
+  "ended_at_utc": "2026-05-12T09:59:33.559000+00:00",
+  "termination_reason": "cancelled"
+}

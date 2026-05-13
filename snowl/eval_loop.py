@@ -52,7 +52,8 @@ class EvalTrialLifecycle:
         resume: bool,
         retry_mode: bool,
         display_total: int,
-        scorer: Scorer,
+        scorer: Scorer | None = None,
+        scorers: tuple[Scorer, ...] = (),
         tool_specs: list[ToolSpec],
         shared_sandbox_runtime: Any | None,
         container_lifecycle: RuntimeContainerLifecycleManager,
@@ -77,7 +78,14 @@ class EvalTrialLifecycle:
         self.resume = resume
         self.retry_mode = retry_mode
         self.display_total = display_total
-        self.scorer = scorer
+        # Backward compat: single scorer wraps into tuple
+        if scorers:
+            self.scorers = scorers
+        elif scorer is not None:
+            self.scorers = (scorer,)
+        else:
+            self.scorers = ()
+        self.scorer = self.scorers[0] if self.scorers else scorer
         self.tool_specs = tool_specs
         self.shared_sandbox_runtime = shared_sandbox_runtime
         self.container_lifecycle = container_lifecycle
@@ -130,7 +138,7 @@ class EvalTrialLifecycle:
             sample_id=trial.sample_id,
             agent_id=trial.agent_id,
             variant_id=trial.variant_id,
-            scorer_id=getattr(self.scorer, "scorer_id", None),
+            scorer_id=getattr(self.scorer, "scorer_id", None) if self.scorer else None,
             seed=None,
             spec_hash=container_spec.spec_hash,
             provider_ids=(),
@@ -147,6 +155,7 @@ class EvalTrialLifecycle:
             task=trial.task,
             agent=trial.agent,
             scorer=self.scorer,
+            scorers=self.scorers,
             sample=trial.sample,
             tools=self.tool_specs,
             sandbox_runtime=self.shared_sandbox_runtime,

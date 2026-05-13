@@ -65,6 +65,8 @@ class ProjectEvalConfig:
     code: ProjectCodeConfig
     split: str | None = None
     limit: int | None = None
+    agent_type: str | None = None  # "native" | "emulated" | "stateful"
+    agent_config: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -259,6 +261,8 @@ def load_project_config(path: str | Path) -> ProjectConfig:
         code=code,
         split=_coerce_optional_str(eval_data.get("split")),
         limit=_coerce_optional_int(eval_data.get("limit"), label="eval.limit", path=config_path),
+        agent_type=_coerce_optional_str(eval_data.get("agent_type")),
+        agent_config=dict(eval_data["agent_config"]) if isinstance(eval_data.get("agent_config"), dict) else None,
     )
 
     runtime_data = _require_mapping(data.get("runtime") or {}, label="runtime", path=config_path)

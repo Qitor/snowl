@@ -61,6 +61,7 @@ class BenchmarkInfo:
     sample_preview_mode: str = "qa"
     dashboard_tags: list[str] = field(default_factory=list)
     concurrency_profile: BenchmarkConcurrencyProfile | None = None
+    middleware_hints: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.display_name:

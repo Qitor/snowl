@@ -1,0 +1,15 @@
+{
+  "run_id": "run-20260512T095932Z",
+  "experiment_id": "toolemu-emulation-20260512T09-8e9b3d60",
+  "benchmark": "toolemu",
+  "status": "cancelled",
+  "owner_pid": 36996,
+  "started_ts_ms": 1778579972757,
+  "started_at_utc": "2026-05-12T09:59:32.757000+00:00",
+  "heartbeat_ts_ms": 1778579973559,
+  "last_event_ts_ms": 1778579973559,
+  "last_progress_ts_ms": 1778579972765,
+  "ended_ts_ms": 1778579973559,
+  "termination_reason": "cancelled",
+  "ended_at_utc": "2026-05-12T09:59:33.559000+00:00"
+}

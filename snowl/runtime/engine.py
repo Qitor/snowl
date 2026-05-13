@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Sequence
 
 from snowl.core.agent import Agent, AgentContext, AgentState, StopReason, validate_agent
@@ -57,10 +57,11 @@ class TrialLimits:
 class TrialRequest:
     task: Task
     agent: Agent
-    scorer: Scorer
     sample: Mapping[str, Any]
     seed: int | None = None
     tools: Sequence[Any] | None = None
+    scorer: Scorer | None = None
+    scorers: tuple[Scorer, ...] = ()
     sandbox_runtime: SandboxRuntime | None = None
     limits: TrialLimits = TrialLimits()
     on_event: Callable[[dict[str, Any]], None] | None = None
@@ -69,6 +70,18 @@ class TrialRequest:
     container_lifecycle: RuntimeContainerLifecycleManager | None = None
     run_id: str | None = None
     trial_id: str | None = None
+    execution_mode: str = "native"  # "native" | "emulated" | "stateful"
+    middleware_config: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Backward compat: if scorers empty but scorer provided, wrap it.
+        if not self.scorers and self.scorer is not None:
+            object.__setattr__(self, "scorers", (self.scorer,))
+        # Inherit execution_mode from agent if not explicitly set
+        if self.execution_mode == "native":
+            agent_mode = getattr(self.agent, "execution_mode", None)
+            if agent_mode and agent_mode != "native":
+                object.__setattr__(self, "execution_mode", agent_mode)
 
 
 @dataclass(frozen=True)
@@ -752,6 +765,40 @@ async def prepare_trial_phase(request: TrialRequest) -> PreparedTrial:
     )
 
 
+def _inject_execution_middleware(prepared: PreparedTrial, mode: str, config: dict[str, Any]) -> None:
+    """Inject middleware chain based on execution_mode before agent.run()."""
+    agent = prepared.request.agent
+    if mode == "emulated":
+        from snowl.tools.emulated_tool import EmulatedToolWrapper
+        from snowl.tools.middleware import MiddlewareChain
+        from snowl.model import OpenAICompatibleChatClient
+        emulator_model = config.get("emulator_model", "gpt-4o-mini")
+        # Build emulator client from provider config if available
+        base_url = config.get("emulator_base_url")
+        api_key = config.get("emulator_api_key")
+        emulator_client = OpenAICompatibleChatClient(
+            model=emulator_model,
+            base_url=base_url,
+            api_key=api_key,
+        )
+        wrapper = EmulatedToolWrapper(
+            emulator_client=emulator_client,
+            simulator_type=config.get("simulator_type", "std_thought"),
+            num_critique_steps=config.get("num_critique_steps", 0),
+        )
+        # Set middleware on the agent if it supports it
+        if hasattr(agent, "middlewares"):
+            existing = list(agent.middlewares or [])
+            existing.append(wrapper)
+            agent.middlewares = existing
+    elif mode == "stateful":
+        from snowl.tools.stateful_executor import StatefulToolExecutor
+        if hasattr(agent, "middlewares"):
+            existing = list(agent.middlewares or [])
+            existing.append(StatefulToolExecutor())
+            agent.middlewares = existing
+
+
 async def execute_agent_phase(prepared: PreparedTrial | TrialRequest) -> PartialTrialResult:
     """Execute the agent/runtime phase and produce a partial trial result."""
 
@@ -768,6 +815,11 @@ async def execute_agent_phase(prepared: PreparedTrial | TrialRequest) -> Partial
     error: ErrorInfo | None = None
     status = TaskStatus.SUCCESS
     state = prepared.state
+
+    # Apply execution strategy: inject middleware based on execution_mode
+    execution_mode = request.execution_mode or "native"
+    if execution_mode != "native":
+        _inject_execution_middleware(prepared, execution_mode, request.middleware_config)
 
     try:
         async def _agent_run():
@@ -987,7 +1039,7 @@ async def execute_agent_phase(prepared: PreparedTrial | TrialRequest) -> Partial
 
 
 async def score_trial_phase(prepared: PreparedTrial | TrialRequest, partial: PartialTrialResult) -> TrialOutcome:
-    """Apply the scorer to a partial trial result and finalize status."""
+    """Apply the scorer(s) to a partial trial result and finalize status."""
     request = prepared.request if isinstance(prepared, PreparedTrial) else prepared
     task_result = partial.task_result
     trace = partial.trace
@@ -998,78 +1050,90 @@ async def score_trial_phase(prepared: PreparedTrial | TrialRequest, partial: Par
     if isinstance(prepared, PreparedTrial) and prepared.failed_partial is partial:
         return TrialOutcome(task_result=task_result, scores={}, trace=trace)
 
-    try:
-        emit(
-            {
-                "event": "runtime.scorer.start",
-                "phase": "scorer",
-                "task_id": task_result.task_id,
-                "agent_id": task_result.agent_id,
-                "variant_id": variant_id,
-                "sample_id": task_result.sample_id,
-                "scorer_id": getattr(request.scorer, "scorer_id", "scorer"),
-            }
-        )
-        if hasattr(request.scorer, "ascore") and callable(request.scorer.ascore):
-            scores = await request.scorer.ascore(task_result, trace, score_context)
-        else:
-            scores = await asyncio.to_thread(request.scorer.score, task_result, trace, score_context)
-        validate_scores(scores)
-        emit(
-            {
-                "event": "runtime.scorer.finish",
-                "phase": "scorer",
-                "task_id": task_result.task_id,
-                "agent_id": task_result.agent_id,
-                "variant_id": variant_id,
-                "sample_id": task_result.sample_id,
-                "scorer_id": getattr(request.scorer, "scorer_id", "scorer"),
-                "metrics": {k: float(v.value) for k, v in scores.items()},
-                "explanations": [
-                    {
-                        "metric": e.metric,
-                        "value": e.value,
-                        "evidence": list(e.evidence),
-                        "reason": e.reason,
-                        "raw": dict(e.raw),
-                    }
-                    for e in build_score_explanations(
-                        scores,
-                        trace=trace,
-                        task_result={"status": task_result.status.value},
-                    )
-                ],
-            }
-        )
-    except Exception as exc:  # pragma: no cover - defensive catch
-        task_result = TaskResult(
-            task_id=task_result.task_id,
-            agent_id=task_result.agent_id,
-            sample_id=task_result.sample_id,
-            seed=task_result.seed,
-            status=TaskStatus.ERROR,
-            final_output=task_result.final_output,
-            timing=task_result.timing,
-            usage=task_result.usage,
-            error=ErrorInfo(code="scorer_error", message=str(exc), retryable=False),
-            artifacts=task_result.artifacts,
-            payload=task_result.payload,
-        )
-        emit(
-            {
-                "event": "runtime.trial.error",
-                "phase": "score",
-                "code": "scorer_error",
-                "message": str(exc),
-                "task_id": task_result.task_id,
-                "agent_id": task_result.agent_id,
-                "variant_id": variant_id,
-                "sample_id": task_result.sample_id,
-            }
-        )
-        return TrialOutcome(task_result=task_result, scores={}, trace=trace)
+    # Use scorers list (backward compat: __post_init__ wraps single scorer)
+    scorers = request.scorers
+    all_scores: dict[str, Any] = {}
+    scorer_error: Exception | None = None
 
-    accuracy = scores.get("accuracy")
+    for scorer in scorers:
+        scorer_id = getattr(scorer, "scorer_id", "scorer")
+        try:
+            emit(
+                {
+                    "event": "runtime.scorer.start",
+                    "phase": "scorer",
+                    "task_id": task_result.task_id,
+                    "agent_id": task_result.agent_id,
+                    "variant_id": variant_id,
+                    "sample_id": task_result.sample_id,
+                    "scorer_id": scorer_id,
+                }
+            )
+            if hasattr(scorer, "ascore") and callable(scorer.ascore):
+                scores = await scorer.ascore(task_result, trace, score_context)
+            else:
+                scores = await asyncio.to_thread(scorer.score, task_result, trace, score_context)
+            validate_scores(scores)
+            all_scores.update(scores)
+            emit(
+                {
+                    "event": "runtime.scorer.finish",
+                    "phase": "scorer",
+                    "task_id": task_result.task_id,
+                    "agent_id": task_result.agent_id,
+                    "variant_id": variant_id,
+                    "sample_id": task_result.sample_id,
+                    "scorer_id": scorer_id,
+                    "metrics": {k: float(v.value) for k, v in scores.items()},
+                    "explanations": [
+                        {
+                            "metric": e.metric,
+                            "value": e.value,
+                            "evidence": list(e.evidence),
+                            "reason": e.reason,
+                            "raw": dict(e.raw),
+                        }
+                        for e in build_score_explanations(
+                            scores,
+                            trace=trace,
+                            task_result={"status": task_result.status.value},
+                        )
+                    ],
+                }
+            )
+        except Exception as exc:  # pragma: no cover - defensive catch
+            scorer_error = exc
+            emit(
+                {
+                    "event": "runtime.trial.error",
+                    "phase": "score",
+                    "code": "scorer_error",
+                    "message": str(exc),
+                    "task_id": task_result.task_id,
+                    "agent_id": task_result.agent_id,
+                    "variant_id": variant_id,
+                    "sample_id": task_result.sample_id,
+                    "scorer_id": scorer_id,
+                }
+            )
+            # If only one scorer and it failed, treat as error; otherwise continue
+            if len(scorers) == 1:
+                task_result = TaskResult(
+                    task_id=task_result.task_id,
+                    agent_id=task_result.agent_id,
+                    sample_id=task_result.sample_id,
+                    seed=task_result.seed,
+                    status=TaskStatus.ERROR,
+                    final_output=task_result.final_output,
+                    timing=task_result.timing,
+                    usage=task_result.usage,
+                    error=ErrorInfo(code="scorer_error", message=str(exc), retryable=False),
+                    artifacts=task_result.artifacts,
+                    payload=task_result.payload,
+                )
+                return TrialOutcome(task_result=task_result, scores={}, trace=trace)
+
+    accuracy = all_scores.get("accuracy")
     if (
         task_result.status == TaskStatus.SUCCESS
         and accuracy is not None
@@ -1100,12 +1164,12 @@ async def score_trial_phase(prepared: PreparedTrial | TrialRequest, partial: Par
             "message": str((task_result.final_output or {}).get("content") or "")[:240],
             "payload": {
                 "final_output": _json_safe(task_result.final_output),
-                "scores": {k: float(v.value) for k, v in scores.items()},
+                "scores": {k: float(v.value) for k, v in all_scores.items()},
             },
         }
     )
 
-    return TrialOutcome(task_result=task_result, scores=scores, trace=trace)
+    return TrialOutcome(task_result=task_result, scores=all_scores, trace=trace)
 
 
 async def finalize_trial_phase(

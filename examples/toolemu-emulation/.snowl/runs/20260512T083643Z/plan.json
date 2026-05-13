@@ -1,0 +1,14 @@
+{
+  "mode": "single",
+  "task_ids": [
+    "toolemu:official"
+  ],
+  "agent_ids": [
+    "toolemu_emulation_agent"
+  ],
+  "variant_ids": [
+    "qwen3.5_4b"
+  ],
+  "sample_count": 1,
+  "trial_count": 1
+}

@@ -1,0 +1,41 @@
+project:
+  name: toolemu-emulation
+  root_dir: .
+
+provider:
+  id: inf
+  kind: openai_compatible
+  base_url: https://ekkmopeh8ecgccbjjb9johhhd5dcabcc.openapi-sj.sii.edu.cn/v1
+  api_key: stpmj/4hRawPjQCf0fk70W6HnObgXtkonX3qHCCNsPc=
+  timeout: 120
+  max_retries: 2
+
+agent_matrix:
+  models:
+    - id: glm51_w4a8
+      model: glm-5.1-w4a8
+      metadata:
+        company: zhipu
+        source_type: open_source
+
+eval:
+  benchmark: toolemu
+  split: official
+  code:
+    base_dir: .
+    task_module: ./task.py
+    agent_module: ./agent.py
+    scorer_module: ./scorer.py
+  limit: 3
+
+runtime:
+  max_running_trials: 1
+  max_container_slots: 0
+  max_scoring_tasks: 1
+  provider_budgets:
+    inf: 100
+
+benchmarks:
+  toolemu:
+    emulation_mode: true
+    simulator_type: std_thought
