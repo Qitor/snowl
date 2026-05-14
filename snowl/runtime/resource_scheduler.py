@@ -17,6 +17,8 @@ Change guardrails:
 from __future__ import annotations
 
 import asyncio
+import logging
+import math
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -24,6 +26,8 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
 from snowl.envs.sandbox_runtime import PreparedSandbox, SandboxRuntime
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -75,6 +79,24 @@ class ResourceLimits:
     max_builds: int | None
     max_scoring_tasks: int | None
     provider_budgets: dict[str, int]
+
+
+@dataclass
+class _ProviderFlowState:
+    """Per-provider adaptive flow controller (AIMD, TCP-like congestion control).
+
+    On 429: multiplicative decrease (halve the limit).
+    On a full window of consecutive successes: additive increase (+1).
+    """
+
+    provider_id: str
+    current_limit: int
+    min_limit: int = 1
+    max_limit: int = 64
+    last_429_ts: float = 0.0
+    consecutive_successes: int = 0
+    total_429s: int = 0
+    total_successes: int = 0
 
 
 class ResourceScheduler:
@@ -164,6 +186,7 @@ class ResourceScheduler:
         }
         self._provider_queue_wait_totals: dict[str, float] = {}
         self._provider_queue_wait_counts: dict[str, int] = {}
+        self._flow_states: dict[str, _ProviderFlowState] = {}
         self._queue_depths: dict[str, int] = {
             "prepare": 0,
             "ready": 0,
@@ -250,6 +273,136 @@ class ResourceScheduler:
                 limit = self._limits.max_scoring_tasks
                 return limit is None or self._active["scoring_tasks"] < limit
             return True
+
+    # ------------------------------------------------------------------
+    # Adaptive flow control (AIMD)
+    # ------------------------------------------------------------------
+
+    def report_429(self, provider_id: str) -> None:
+        """Signal a 429 rate-limit response from *provider_id*.
+
+        Applies multiplicative decrease: ``current_limit = max(min_limit, floor(current_limit / 2))``.
+        Resizes the provider semaphore so subsequent dispatch respects the new limit.
+        """
+        key = str(provider_id or "default").strip() or "default"
+        with self._stats_lock:
+            fs = self._flow_states.get(key)
+            if fs is None:
+                initial = self._limits.provider_budgets.get(key, 8)
+                fs = _ProviderFlowState(
+                    provider_id=key,
+                    current_limit=initial,
+                    min_limit=1,
+                    max_limit=max(initial * 4, 64),
+                )
+                self._flow_states[key] = fs
+
+            fs.last_429_ts = time.time()
+            fs.total_429s += 1
+            fs.consecutive_successes = 0
+            old_limit = fs.current_limit
+            fs.current_limit = max(fs.min_limit, math.floor(fs.current_limit / 2))
+            if fs.current_limit != old_limit:
+                logger.info(
+                    "provider %s: 429 → limit %d → %d",
+                    key, old_limit, fs.current_limit,
+                )
+            self._resize_provider_semaphore(key, fs.current_limit)
+
+    def report_success(self, provider_id: str) -> None:
+        """Signal a successful model call to *provider_id*.
+
+        After a full window of N consecutive successes (N = current_limit),
+        applies additive increase: ``current_limit = min(max_limit, current_limit + 1)``.
+        """
+        key = str(provider_id or "default").strip() or "default"
+        with self._stats_lock:
+            fs = self._flow_states.get(key)
+            if fs is None:
+                initial = self._limits.provider_budgets.get(key, 8)
+                fs = _ProviderFlowState(
+                    provider_id=key,
+                    current_limit=initial,
+                    min_limit=1,
+                    max_limit=max(initial * 4, 64),
+                )
+                self._flow_states[key] = fs
+
+            fs.total_successes += 1
+            fs.consecutive_successes += 1
+            if fs.consecutive_successes >= fs.current_limit and fs.current_limit < fs.max_limit:
+                old_limit = fs.current_limit
+                fs.current_limit = min(fs.max_limit, fs.current_limit + 1)
+                fs.consecutive_successes = 0
+                if fs.current_limit != old_limit:
+                    logger.info(
+                        "provider %s: success window → limit %d → %d",
+                        key, old_limit, fs.current_limit,
+                    )
+                self._resize_provider_semaphore(key, fs.current_limit)
+
+    def resize_provider_budget(self, provider_id: str, new_limit: int) -> None:
+        """Resize the provider budget (e.g. after a warmup probe).
+
+        Also updates ``ResourceLimits.provider_budgets`` so that
+        ``controls()`` and ``stats_snapshot()`` reflect the change.
+        """
+        key = str(provider_id or "default").strip() or "default"
+        new_limit = max(1, int(new_limit))
+        with self._stats_lock:
+            self._limits.provider_budgets[key] = new_limit
+            fs = self._flow_states.get(key)
+            if fs is not None:
+                fs.current_limit = new_limit
+                fs.max_limit = max(new_limit * 4, fs.max_limit)
+            else:
+                # Create a flow state so the new limit is tracked
+                self._flow_states[key] = _ProviderFlowState(
+                    provider_id=key,
+                    current_limit=new_limit,
+                    min_limit=1,
+                    max_limit=max(new_limit * 4, 64),
+                )
+            self._resize_provider_semaphore(key, new_limit)
+
+    def flow_state_snapshot(self) -> dict[str, dict[str, Any]]:
+        """Return a snapshot of all provider flow states for diagnostics."""
+        with self._stats_lock:
+            return {
+                key: {
+                    "current_limit": fs.current_limit,
+                    "min_limit": fs.min_limit,
+                    "max_limit": fs.max_limit,
+                    "consecutive_successes": fs.consecutive_successes,
+                    "total_429s": fs.total_429s,
+                    "total_successes": fs.total_successes,
+                    "last_429_ts": fs.last_429_ts,
+                }
+                for key, fs in self._flow_states.items()
+            }
+
+    def _resize_provider_semaphore(self, provider_id: str, new_limit: int) -> None:
+        """Replace the provider semaphore with a new one at *new_limit*.
+
+        Must be called while holding ``_stats_lock``.
+        If no event loop is running (called from sync context), just update
+        the budget in ``ResourceLimits`` — the semaphore will be lazily
+        created at the correct limit on first async access.
+        """
+        self._limits.provider_budgets[provider_id] = new_limit
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No event loop running (sync context) — semaphore will be
+            # created lazily at the new limit on first provider_slot() call.
+            return
+        loop_key = (id(loop), provider_id)
+        old_sem = self._provider_sems.get(loop_key)
+        if old_sem is not None:
+            # Replace with a fresh semaphore at the new limit.
+            self._provider_sems[loop_key] = asyncio.Semaphore(new_limit)
+        else:
+            self._provider_sems[loop_key] = asyncio.Semaphore(new_limit)
 
     @asynccontextmanager
     async def begin_prepare(self, plan: TaskExecutionPlan | None = None) -> AsyncIterator[None]:

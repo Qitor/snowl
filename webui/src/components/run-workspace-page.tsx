@@ -256,7 +256,7 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
       if (!response.ok) {
         throw new Error(String(payload.detail || `retry failed (${response.status})`));
       }
-      setRetryFeedback(`Retry started for ${runId}. Web 会继续自动跟踪这次恢复。`);
+      setRetryFeedback(`Retry started for ${runId}. The web monitor will track this recovery automatically.`);
     } catch (error) {
       setRetryFeedback(error instanceof Error ? error.message : "Retry failed");
     } finally {
@@ -584,14 +584,14 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
   }, [searchParams]);
 
   const runMetadataCard = (
-    <Card className="rounded-[28px] border-white/80 bg-white/92 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
+    <Card className="rounded-[12px] border border-[#dfdfdf] bg-white">
       <CardHeader>
         <CardTitle className="text-3xl tracking-tight">Run Metadata</CardTitle>
-        <CardDescription className="text-base leading-7">把这次 run 的状态、模型集合、标识与更新时间集中放在一起。</CardDescription>
+        <CardDescription className="text-base leading-7">Run status, models, and metadata.</CardDescription>
       </CardHeader>
       <CardContent className="text-base text-muted-foreground">
         <div className="grid gap-3 md:grid-cols-4">
-          <div className="rounded-[24px] border bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(241,245,249,0.85))] p-4">
+          <div className="rounded-[8px] border border-[#ededed] bg-white p-4">
             <div className="mb-2 flex items-center gap-1 text-sm uppercase tracking-[0.16em] text-foreground/80">
               <Activity className="h-4 w-4" />
               Status
@@ -599,7 +599,7 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
             <div className="text-xl font-semibold text-foreground">status={status}</div>
             <div className="mt-1">progress={runSnapshot?.done || 0}/{runSnapshot?.total || 0}</div>
           </div>
-          <div className="rounded-[24px] border bg-[linear-gradient(180deg,rgba(236,253,245,0.9),rgba(255,255,255,0.85))] p-4">
+          <div className="rounded-[8px] border border-[#ededed] bg-white p-4">
             <div className="mb-2 text-sm uppercase tracking-[0.16em] text-foreground/80">Models</div>
             <div className="text-xl font-semibold text-foreground">{selectedVariantCount} variants</div>
             <div className="mt-1 line-clamp-3 text-sm" title={selectedModels.join(", ") || "-"}>
@@ -608,14 +608,14 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
                 : "-"}
             </div>
           </div>
-          <div className="rounded-[24px] border bg-[linear-gradient(180deg,rgba(239,246,255,0.9),rgba(255,255,255,0.85))] p-4">
+          <div className="rounded-[8px] border border-[#ededed] bg-white p-4">
             <div className="mb-2 text-sm uppercase tracking-[0.16em] text-foreground/80">Identifiers</div>
             <div className="font-[family-name:var(--font-mono)] text-sm text-foreground" title={runTitle}>
               {truncateMiddle(runTitle, 52, 24, 22)}
             </div>
             <div className="mt-1 text-sm">benchmark={benchmark}</div>
           </div>
-          <div className="rounded-[24px] border bg-[linear-gradient(180deg,rgba(250,245,255,0.9),rgba(255,255,255,0.85))] p-4">
+          <div className="rounded-[8px] border border-[#ededed] bg-white p-4">
             <div className="mb-2 flex items-center gap-1 text-sm uppercase tracking-[0.16em] text-foreground/80">
               <CalendarClock className="h-4 w-4" />
               Updated
@@ -634,23 +634,23 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
   );
 
   const taskMonitorCard = (
-    <Card className="rounded-[28px] border-white/80 bg-white/92 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
+    <Card className="rounded-[12px] border border-[#dfdfdf] bg-white">
         <CardHeader>
           <div className="flex items-center justify-between gap-3">
             <div>
               <CardTitle className="text-3xl tracking-tight">Tasks</CardTitle>
             <CardDescription className="text-base leading-7">
-              当前计划 {plannedTrials} 个 trials / {plannedTaskCount || "-"} 个 tasks{attentionTaskCount > 0 ? `，其中 ${attentionTaskCount} 个需要优先关注` : ""}，先筛选模型与状态，再进入具体 trial 细节。
+              Planned {plannedTrials} trials across {plannedTaskCount || "-"} tasks{attentionTaskCount > 0 ? `, ${attentionTaskCount} need attention` : ""}. Filter by model and status to find specific trials.
             </CardDescription>
           </div>
           <Button size="sm" variant="outline" onClick={() => snapshotQuery.refetch()}>
             <RefreshCw className="mr-1 h-4 w-4" />
-            刷新
+            Refresh
           </Button>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="sticky top-3 z-10 grid gap-3 rounded-[24px] border bg-white/95 p-4 shadow-sm backdrop-blur md:grid-cols-12">
+        <div className="sticky top-3 z-10 grid gap-3 rounded-[8px] border border-[#dfdfdf] bg-white p-4 md:grid-cols-12">
           <div className="space-y-1 md:col-span-4">
             <div className="text-sm font-medium text-muted-foreground">Search tasks</div>
             <Input
@@ -726,7 +726,7 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
           <div className="mt-1 text-base font-medium text-foreground">{taskAttentionSummary.reason}</div>
           <div className="mt-1 text-sm text-muted-foreground">Next step: {taskAttentionSummary.next}</div>
         </div>
-        <div className="rounded-xl border bg-white/70 px-4 py-2 text-sm text-muted-foreground">
+        <div className="rounded-lg border border-[#ededed] bg-white px-4 py-2 text-sm text-muted-foreground">
           Showing {taskAttentionOnly ? "attention-only tasks" : "all matched tasks"} · {taskStatusFilter === "all" ? "all status" : taskStatusFilter} ·{" "}
           {identityFilter === "all" ? "all identities" : "selected identity"}
           {taskSearch.trim() ? ` · query "${taskSearch.trim()}"` : ""}
@@ -734,7 +734,7 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
         {selectedTrialKey && !filteredTaskRows.some((row) => row.trialKey === selectedTrialKey) && taskRows.some((row) => row.trialKey === selectedTrialKey) ? (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50/80 px-4 py-3">
             <div className="text-sm text-amber-900">
-              当前选中的 trial 不在过滤结果里。你可以清空筛选后重新定位它。
+              The selected trial is not in filtered results. Clear filters to locate it.
             </div>
             <Button
               size="sm"
@@ -746,11 +746,11 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
                 setIdentityFilter("all");
               }}
             >
-              清空筛选
+              Clear filters
             </Button>
           </div>
         ) : null}
-        <div ref={taskContainerRef} className="h-[560px] overflow-auto rounded-[24px] border bg-[linear-gradient(180deg,rgba(248,250,252,0.75),rgba(255,255,255,0.92))]">
+        <div ref={taskContainerRef} className="h-[560px] overflow-auto rounded-[8px] border border-[#dfdfdf] bg-white">
           <div style={{ height: `${taskVirtualizer.getTotalSize()}px`, position: "relative" }}>
             {taskVirtualizer.getVirtualItems().map((item) => {
               const row = filteredTaskRows[item.index];
@@ -815,7 +815,7 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
                           setQuickPeekOpen(true);
                         }}
                       >
-                        查看详情
+                        Details
                       </Button>
                       <Button
                         size="sm"
@@ -846,7 +846,7 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
             })}
           </div>
           {filteredTaskRows.length === 0 ? (
-            <div className="p-4 text-base text-muted-foreground">没有匹配项，试试切换模型过滤或放宽关键字。</div>
+            <div className="p-4 text-base text-muted-foreground">No matches. Try different filters or keywords.</div>
           ) : null}
         </div>
       </CardContent>
@@ -854,10 +854,10 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
   );
 
   const runtimeLogsCard = (
-    <Card className="rounded-[28px] border-white/80 bg-white/92 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
+    <Card className="rounded-[12px] border border-[#dfdfdf] bg-white">
       <CardHeader>
         <CardTitle className="text-3xl tracking-tight">Runtime Logs</CardTitle>
-        <CardDescription className="text-base leading-7">先看异常，再按事件类型和模型收窄，适合快速定位启动或评测过程里的问题。</CardDescription>
+        <CardDescription className="text-base leading-7">Filter by event type and model to diagnose issues.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="grid gap-3 rounded-[24px] border bg-muted/20 p-4 md:grid-cols-12">
@@ -902,12 +902,12 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
             </div>
           </div>
         </div>
-        <div className="rounded-xl border bg-white/70 px-4 py-2 text-sm text-muted-foreground">
+        <div className="rounded-lg border border-[#ededed] bg-white px-4 py-2 text-sm text-muted-foreground">
           Showing {runtimeEventFilter === "attention" ? "attention-priority events" : runtimeEventFilter} · {identityFilter === "all" ? "all identities" : "selected identity"}
           {runtimeSearch.trim() ? ` · query "${runtimeSearch.trim()}"` : ""}
         </div>
         <VirtualLogViewer events={filteredRuntimeEvents} />
-        <div className="flex flex-col gap-3 rounded-2xl border bg-white/80 p-3 md:flex-row md:items-end">
+        <div className="flex flex-col gap-3 rounded-lg border border-[#ededed] bg-white p-3 md:flex-row md:items-end">
           <div className="min-w-0 flex-1 space-y-1">
             <div className="text-sm font-medium text-muted-foreground">Jump to Trial Detail</div>
           <Input
@@ -927,7 +927,7 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
               openWorkspaceTrialDetail(trialKeyInput.trim());
             }}
           >
-            查看详情
+            Details
           </Button>
           <Button
             variant="outline"
@@ -942,7 +942,7 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
               setDrawerOpen(true);
             }}
           >
-            打开 Pretask
+            Pretask
           </Button>
         </div>
       </CardContent>
@@ -978,14 +978,14 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
   if (runSummaryQuery.isError || snapshotQuery.isError) {
     return (
       <main className="mx-auto max-w-[1600px] px-5 py-6 md:px-10 md:py-8">
-        <Card className="rounded-[28px] border-dashed">
+        <Card className="rounded-[12px] border-dashed">
           <CardHeader>
-            <CardTitle className="text-3xl">找不到这个 run</CardTitle>
-            <CardDescription>这个 run 可能已经被清理，或者当前监控项目下不存在它。</CardDescription>
+            <CardTitle className="text-3xl">Run not found</CardTitle>
+            <CardDescription>This run may have been removed or does not exist in the current project.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-wrap gap-3">
             <Link href="/" className={cn(buttonVariants({ variant: "default" }))}>
-              返回 Runs
+              Back to Runs
             </Link>
           </CardContent>
         </Card>
@@ -995,20 +995,20 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
 
   return (
     <main className="mx-auto max-w-[1880px] px-5 py-6 md:px-10 md:py-8">
-      <header className="mb-6 overflow-hidden rounded-[34px] border border-white/80 bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(6,182,212,0.18),transparent_28%),linear-gradient(165deg,rgba(248,255,252,0.98),rgba(239,250,255,0.95))] p-7 shadow-[0_24px_80px_rgba(15,118,110,0.12)] md:p-9">
+      <header className="mb-6 rounded-[12px] border border-[#dfdfdf] bg-white p-7 md:p-9">
         <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
           <div className="max-w-5xl space-y-4">
             <div className="flex flex-wrap items-center gap-3">
               <Link href="/" className={cn(buttonVariants({ variant: "outline" }), "h-11 rounded-full px-5")}>
                 <ArrowLeft className="mr-2 h-4 w-4" />
-                返回 Runs
+                Back to Runs
               </Link>
               <Link href="/compare" className={cn(buttonVariants({ variant: "outline" }), "h-11 rounded-full px-5")}>
-                历史对比
+                Compare
               </Link>
               <Button
                 variant="outline"
-                className="h-11 rounded-full px-5"
+                className="h-11 rounded-[6px] px-5"
                 disabled={retrySubmitting || (status === "running" && Boolean(runSnapshot?.runner_alive))}
                 onClick={() => void triggerRetry()}
               >
@@ -1042,7 +1042,7 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
             </div>
             {retryFeedback ? <p className="text-sm text-muted-foreground">{retryFeedback}</p> : null}
           </div>
-          <div className="grid gap-3 rounded-[28px] border border-white/80 bg-white/80 p-4 shadow-sm md:min-w-[320px]">
+          <div className="grid gap-3 rounded-[12px] border border-[#dfdfdf] bg-white p-4 md:min-w-[320px]">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm uppercase tracking-[0.18em] text-muted-foreground">Live connection</div>
@@ -1091,7 +1091,7 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
       </header>
 
       <section className="space-y-4">
-        <Card className="rounded-[28px] border-white/80 bg-white/92 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
+        <Card className="rounded-[12px] border border-[#dfdfdf] bg-white">
           <CardHeader className="pb-3">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
@@ -1114,7 +1114,7 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
             </div>
             <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-4">
               {[
-                { key: "overview", label: "Overview", hint: "整体进度、模型分布与总量" },
+                { key: "overview", label: "Overview", hint: "Progress, model distribution, and totals" },
                 { key: "tasks", label: "Tasks", hint: `${filteredTaskRows.length}/${taskRows.length} task rows` },
                 { key: "runtime", label: "Runtime Logs", hint: `${runtimeEventFilter === "attention" ? "attention-first · " : ""}${filteredRuntimeEvents.length}/${events.length} live events` },
                 { key: "trial_detail", label: "Trial Detail", hint: selectedTrialKey ? `selected ${truncateMiddle(selectedTrialKey, 40, 16, 14)}` : "choose a trial from tasks" },
@@ -1129,9 +1129,9 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
                       syncWorkspaceUrl({ tab: nextTab });
                     }}
                     className={cn(
-                      "min-h-[78px] rounded-[22px] border px-5 py-4 text-left transition",
+                      "min-h-[78px] rounded-[6px] border px-5 py-4 text-left transition",
                       active
-                        ? "border-primary bg-primary text-primary-foreground shadow-[0_14px_34px_rgba(13,148,136,0.22)]"
+                        ? "border-primary bg-primary text-primary-foreground"
                         : "bg-background text-muted-foreground hover:bg-muted hover:text-foreground",
                     )}
                   >
@@ -1146,61 +1146,61 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
 
         {activeTab === "overview" ? (
           <>
-            <Card className="rounded-[28px] border-white/80 bg-white/92 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
+            <Card className="rounded-[12px] border border-[#dfdfdf] bg-white">
               <CardHeader>
                 <CardTitle className="text-3xl tracking-tight">Run Summary</CardTitle>
                 <CardDescription className="text-base leading-7">
-                  Live summary based on scored trials. 整体进度和模型统计现在共用同一条运行中数据链。
+                  Live summary based on scored trials.
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-                  <div className="rounded-[24px] border bg-[linear-gradient(180deg,rgba(240,253,250,0.95),rgba(255,255,255,0.92))] p-4">
+                  <div className="rounded-[8px] border border-[#ededed] bg-white p-4">
                     <div className="text-base text-muted-foreground">Overall Progress</div>
                     <div className="mt-2 text-4xl font-semibold">{formatPercent(completionRate)}</div>
                     <div className="mt-1 text-sm text-muted-foreground">
                       {progress.done}/{progress.total}
                     </div>
                   </div>
-                  <div className="rounded-[24px] border bg-[linear-gradient(180deg,rgba(255,251,235,0.95),rgba(255,255,255,0.92))] p-4">
+                  <div className="rounded-[8px] border border-[#ededed] bg-white p-4">
                     <div className="text-base text-muted-foreground">Running</div>
                     <div className="mt-2 text-4xl font-semibold text-warning">{progress.running}</div>
                   </div>
-                  <div className="rounded-[24px] border bg-[linear-gradient(180deg,rgba(236,253,245,0.95),rgba(255,255,255,0.92))] p-4">
+                  <div className="rounded-[8px] border border-[#ededed] bg-white p-4">
                     <div className="text-base text-muted-foreground">Completed</div>
                     <div className="mt-2 text-4xl font-semibold text-success">{progress.completed}</div>
                   </div>
-                  <div className="rounded-[24px] border bg-[linear-gradient(180deg,rgba(255,241,242,0.95),rgba(255,255,255,0.92))] p-4">
+                  <div className="rounded-[8px] border border-[#ededed] bg-white p-4">
                     <div className="text-base text-muted-foreground">Failed</div>
                     <div className="mt-2 text-4xl font-semibold text-danger">{progress.failed}</div>
                   </div>
-                  <div className="rounded-[24px] border bg-[linear-gradient(180deg,rgba(239,246,255,0.95),rgba(255,255,255,0.92))] p-4">
+                  <div className="rounded-[8px] border border-[#ededed] bg-white p-4">
                     <div className="text-base text-muted-foreground">Variant Count</div>
                     <div className="mt-2 text-4xl font-semibold">{selectedVariantCount}</div>
                   </div>
-                  <div className="rounded-[24px] border bg-[linear-gradient(180deg,rgba(245,243,255,0.95),rgba(255,255,255,0.92))] p-4">
+                  <div className="rounded-[8px] border border-[#ededed] bg-white p-4">
                     <div className="text-base text-muted-foreground">Scored Trials</div>
                     <div className="mt-2 text-4xl font-semibold">{scoredTrials}</div>
                     <div className="mt-1 text-sm text-muted-foreground">
                       {scoredTrials}/{plannedTrials || progress.total}
                     </div>
                   </div>
-                  <div className="rounded-[24px] border bg-[linear-gradient(180deg,rgba(255,251,235,0.95),rgba(255,255,255,0.92))] p-4">
+                  <div className="rounded-[8px] border border-[#ededed] bg-white p-4">
                     <div className="text-base text-muted-foreground">Recoverable</div>
                     <div className="mt-2 text-4xl font-semibold text-warning">{recoverableTrials}</div>
                     <div className="mt-1 text-sm text-muted-foreground">unfinished + non-success effective</div>
                   </div>
-                  <div className="rounded-[24px] border bg-[linear-gradient(180deg,rgba(236,253,245,0.95),rgba(255,255,255,0.92))] p-4">
+                  <div className="rounded-[8px] border border-[#ededed] bg-white p-4">
                     <div className="text-base text-muted-foreground">Recovered</div>
                     <div className="mt-2 text-4xl font-semibold text-success">{recoveredTrials}</div>
                     <div className="mt-1 text-sm text-muted-foreground">latest effective attempt is success</div>
                   </div>
-                  <div className="rounded-[24px] border bg-[linear-gradient(180deg,rgba(255,241,242,0.95),rgba(255,255,255,0.92))] p-4">
+                  <div className="rounded-[8px] border border-[#ededed] bg-white p-4">
                     <div className="text-base text-muted-foreground">Still failing</div>
                     <div className="mt-2 text-4xl font-semibold text-danger">{stillFailingTrials}</div>
                     <div className="mt-1 text-sm text-muted-foreground">retried but not yet healthy</div>
                   </div>
-                  <div className="rounded-[24px] border bg-[linear-gradient(180deg,rgba(239,246,255,0.95),rgba(255,255,255,0.92))] p-4">
+                  <div className="rounded-[8px] border border-[#ededed] bg-white p-4">
                     <div className="text-base text-muted-foreground">Retry Attempts</div>
                     <div className="mt-2 text-4xl font-semibold">{retriedTrials}</div>
                     <div className="mt-1 text-sm text-muted-foreground">trials with attempt history &gt; 1</div>
@@ -1215,10 +1215,10 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
                   <div className="grid gap-2 md:grid-cols-2">
                     {scoredTrials === 0 ? (
                       <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-                        Waiting for first scored trial. 首个 scorer 结果到达后，这里的模型分数会开始实时波动。
+                        Waiting for first scored trial…
                       </div>
                     ) : topIdentities.length === 0 ? (
-                      <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">暂无 ranking 数据。</div>
+                      <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">No ranking data yet.</div>
                     ) : (
                       topIdentities.map((agent) => (
                         <div key={`${agent.display_id}-${agent.model || "-"}`} className="rounded-2xl border p-3">
@@ -1243,15 +1243,15 @@ export function RunWorkspacePage({ runId }: { runId: string }) {
               </CardContent>
             </Card>
 
-            <Card className="rounded-[28px] border-white/80 bg-white/92 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
+            <Card className="rounded-[12px] border border-[#dfdfdf] bg-white">
               <CardHeader>
                 <CardTitle className="text-3xl tracking-tight">Task Matrix</CardTitle>
                 <CardDescription className="text-base leading-7">
                   {scoredTrials === 0
-                    ? "Waiting for first scored trial. 当前矩阵会在第一个 scorer 结果出现后开始刷新。"
+                    ? "Waiting for first scored trial…"
                     : view === "variant-first"
-                      ? "按模型横向对比每个 task 的当前平均结果。"
-                      : "按 task 反向查看不同模型的当前平均表现。"}
+                      ? "Compare average scores per task, grouped by model."
+                      : "Compare average scores per model, grouped by task."}
                 </CardDescription>
               </CardHeader>
               <CardContent>

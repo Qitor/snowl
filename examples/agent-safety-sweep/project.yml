@@ -1,0 +1,104 @@
+project:
+  name: agent-safety-6model-sweep
+  root_dir: .
+
+provider:
+  id: inf
+  kind: openai_compatible
+  # Fallback provider — used for judge/scorer calls.
+  # Per-model overrides below supply the actual model endpoints.
+  base_url: https://cbpecq8oomh5cpbbk9gm5ck85cbpoaoe.openapi-sj.sii.edu.cn/v1
+  api_key: ${SNOWL_PROVIDER_API_KEY}
+  timeout: 120
+  max_retries: 2
+
+judge:
+  model: ds-v4-flash
+
+agent_matrix:
+  models:
+    - id: deepseek_v4_pro
+      model: ds-v4-pro
+      provider:
+        base_url: https://o8kjqm58o8ogcm5ek8aggddkb5ggk8dp.openapi-sj.sii.edu.cn/v1
+        api_key: ${SNOWL_DEEPSEEK_V4_PRO_API_KEY}
+      metadata:
+        model_family: DeepSeek
+        country: CN
+        source_type: open_source
+
+    - id: deepseek_v4_flash
+      model: ds-v4-flash
+      provider:
+        base_url: https://ds-v4-flash-w8a8-vllm-ascend.openapi-sj.sii.edu.cn/v1
+        api_key: ${SNOWL_PROVIDER_API_KEY}
+      metadata:
+        model_family: DeepSeek
+        country: CN
+        source_type: open_source
+
+    - id: glm5_1
+      model: glm5.1-w4a8-4maas
+      provider:
+        base_url: https://cbpecq8oomh5cpbbk9gm5ck85cbpoaoe.openapi-sj.sii.edu.cn/v1
+        api_key: ${SNOWL_PROVIDER_API_KEY}
+      metadata:
+        model_family: GLM
+        country: CN
+        source_type: open_source
+        disable_thinking: true
+
+    - id: kimi_k26
+      model: kimi-k2.6-w4a8
+      provider:
+        base_url: https://jqdmppbopbaacp9ajcaqem88gqobcd9m.openapi-sj.sii.edu.cn/v1
+        api_key: ${SNOWL_KIMI_API_KEY}
+      metadata:
+        model_family: Moonshot
+        country: CN
+        source_type: open_source
+
+    - id: qwen35_397b
+      model: Qwen3.5-397B-A17B-w4a8-mtp
+      provider:
+        base_url: https://poa8q9p9be88cde9kaggb5occdmgcdam.openapi-sj.sii.edu.cn/v1
+        api_key: ${SNOWL_PROVIDER_API_KEY}
+      metadata:
+        model_family: Qwen
+        country: CN
+        source_type: open_source
+        disable_thinking: true
+
+    - id: minimax_m27
+      model: MiniMax-M2.7-w8a8
+      provider:
+        base_url: https://hqdaoabjb89cc5gkkp59me9h9e5dpkhm.openapi-sj.sii.edu.cn/v1
+        api_key: ${SNOWL_MINIMAX_API_KEY}
+      metadata:
+        model_family: MiniMax
+        country: CN
+        source_type: open_source
+
+eval:
+  benchmark: agentharm
+  code:
+    base_dir: .
+    task_module: ./task.py
+    agent_module: ./agent.py
+    scorer_module: ./scorer.py
+  split: test_public
+
+benchmarks:
+  agentharm: {}
+  agentdojo:
+    suite: banking
+    with_injections: true
+  toolemu:
+    output_dir: outputs
+    run_stamp: ""
+
+runtime:
+  max_running_trials: 8
+  max_container_slots: 0
+  max_builds: 1
+  max_scoring_tasks: 8

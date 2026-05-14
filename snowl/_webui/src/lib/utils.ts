@@ -20,6 +20,43 @@ export function formatDateTime(tsMs: number | null | undefined): string {
   return `${d.toLocaleDateString()} ${d.toLocaleTimeString()}`;
 }
 
+export function formatRelativeFromNow(tsMs: number | null | undefined): string {
+  if (!tsMs) {
+    return "-";
+  }
+  const delta = Date.now() - tsMs;
+  if (!Number.isFinite(delta)) {
+    return "-";
+  }
+  const abs = Math.abs(delta);
+  if (abs < 1_000) {
+    return "just now";
+  }
+  if (abs < 60_000) {
+    return `${Math.round(abs / 1_000)}s ${delta >= 0 ? "ago" : "from now"}`;
+  }
+  if (abs < 3_600_000) {
+    return `${Math.round(abs / 60_000)}m ${delta >= 0 ? "ago" : "from now"}`;
+  }
+  if (abs < 86_400_000) {
+    return `${Math.round(abs / 3_600_000)}h ${delta >= 0 ? "ago" : "from now"}`;
+  }
+  return `${Math.round(abs / 86_400_000)}d ${delta >= 0 ? "ago" : "from now"}`;
+}
+
+export function truncateMiddle(value: string | null | undefined, maxLen = 42, head = 18, tail = 14): string {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "-";
+  }
+  if (raw.length <= maxLen) {
+    return raw;
+  }
+  const prefix = raw.slice(0, Math.max(3, head));
+  const suffix = raw.slice(-Math.max(3, tail));
+  return `${prefix}…${suffix}`;
+}
+
 export function makeTrialKey(input: {
   task_id?: string | null;
   agent_id?: string | null;

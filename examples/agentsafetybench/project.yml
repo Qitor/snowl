@@ -1,0 +1,35 @@
+project:
+  name: agentsafetybench
+  root_dir: .
+
+provider:
+  id: inf
+  kind: openai_compatible
+  base_url: ${OPENAI_BASE_URL}
+  api_key: ${OPENAI_API_KEY}
+  timeout: 120
+  max_retries: 2
+
+agent_matrix:
+  models:
+    - id: default
+      model: ${OPENAI_MODEL}
+      metadata:
+        company: zhipu
+        source_type: open_source
+
+eval:
+  benchmark: agentsafetybench
+  split: official
+  code:
+    base_dir: .
+    task_module: ./task.py
+    agent_module: ./agent.py
+    scorer_module: ./scorer.py
+  limit: 5
+
+runtime:
+  max_running_trials: 1
+  max_scoring_tasks: 1
+  provider_budgets:
+    inf: 10

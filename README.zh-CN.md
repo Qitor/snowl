@@ -48,6 +48,9 @@ Snowl 现在已经支持：
 - 面向 operator 的 Next.js Web monitor
 - 前台 plain CLI + 后台 Web sidecar 的默认运行模式
 - resume 与 rerun-failed
+- AIMD 自适应 provider 流量控制：429 自动降并发、成功后逐步恢复
+- Per-endpoint provider budget：不同模型端点拥有独立并发池
+- Suite 模式：多 benchmark 一条命令串行执行
 
 当前部署目标仍然是：本地单机评测。
 
@@ -265,6 +268,62 @@ Snowl 正在从粗粒度 semaphore 走向显式的 phase-aware scheduler。
 - scoring 不再默认占用 agent execution 的同一个 slot
 
 因此 QA 任务和 container-heavy benchmark 可以共用一套 scheduler，只是资源消耗不同。
+
+## 自适应 Provider 流量控制
+
+当模型端点返回 HTTP 429 时，调度器自动降低该端点的并发（乘性减少），并在请求持续成功后逐步恢复（加性增加）。算法参考 TCP 拥塞控制：
+
+- **收到 429**：`current_limit = max(min_limit, floor(current_limit * 0.5))`
+- **连续成功 N 次**：`current_limit = min(max_limit, current_limit + 1)`
+
+调度器同时解析 `Retry-After` 响应头，将其作为退避下界。
+
+这套机制消除了手动调 `provider_budgets` 的需要。
+
+## Per-Endpoint Provider Budget
+
+当 `agent_matrix.models` 中的模型条目通过 `provider` 指定了不同的 `base_url` 时，Snowl 自动为该端点生成唯一的 `provider_id`，从而获得独立的并发池：
+
+```yaml
+agent_matrix:
+  models:
+    - id: model_a
+      model: model-a
+      provider:
+        base_url: https://endpoint-a.example.com/v1
+        api_key: key-a
+    - id: model_b
+      model: model-b
+      provider:
+        base_url: https://endpoint-b.example.com/v1
+        api_key: key-b
+```
+
+在 6 模型 × 3 benchmark 的实测中，独立端点预算带来了 **2.2× 吞吐提升**（6.1 → 13.6 trials/min）。
+
+## Suite 模式
+
+通过 `suite.yml` 将多个 benchmark 组合成一次可复现的评测运行：
+
+```yaml
+suite:
+  name: agent-safety-sweep
+  project: ./project.yml
+  benchmarks:
+    - name: agentharm
+      split: test_public
+    - name: agentdojo
+      split: official
+    - name: toolemu
+      split: official
+runtime:
+  max_running_trials: 8
+  max_scoring_tasks: 8
+```
+
+```bash
+snowl suite run suite.yml
+```
 
 ## 产物与可观测性
 

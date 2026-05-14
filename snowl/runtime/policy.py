@@ -190,6 +190,12 @@ class RuntimePolicy:
         provider_budget_map = dict(provider_budgets or {})
         if project_config is not None and project_config.provider.id not in provider_budget_map:
             provider_budget_map[project_config.provider.id] = max(max_running_trials, max_scoring_tasks)
+        # Add per-endpoint budgets for models with distinct provider_ids
+        if project_config is not None:
+            for model_entry in project_config.agent_matrix:
+                pid = model_entry.config.provider_id
+                if pid not in provider_budget_map:
+                    provider_budget_map[pid] = max(max_running_trials, max_scoring_tasks)
         if not provider_budget_map:
             provider_budget_map["default"] = max(max_running_trials, max_scoring_tasks)
 

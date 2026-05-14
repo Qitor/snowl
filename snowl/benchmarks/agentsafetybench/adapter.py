@@ -10,15 +10,19 @@ Runtime/usage wiring:
 
 Change guardrails:
 - Preserve deterministic sample identity and metadata contract; scorer/runtime layers depend on it.
+- Must not import from the Agent-SafetyBench Python package.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
+from snowl.benchmarks.base import BenchmarkInfo
 from snowl.benchmarks.base_adapter import BaseBenchmarkAdapter
-from snowl.benchmarks.utils import default_reference_path, read_json_array
+from snowl.benchmarks.utils import default_reference_path, read_json_array, stable_benchmark_id
 from snowl.core import EnvSpec
 from snowl.errors import SnowlValidationError
 
@@ -32,12 +36,44 @@ def _default_dataset_path() -> str:
     )
 
 
+def _default_env_dir() -> Path:
+    return Path(__file__).resolve().parents[3] / "references" / "Agent-SafetyBench" / "environments"
+
+
+@lru_cache(maxsize=512)
+def _cached_load_tool_schemas(env_name: str, tool_names_key: str, env_dir: str) -> list[dict[str, Any]]:
+    """Cache tool schema loading to avoid re-reading .json files for shared environments."""
+    from snowl.benchmarks.agentsafetybench.env_loader import load_tool_schemas
+    tool_names = tool_names_key.split(",") if tool_names_key else None
+    return load_tool_schemas(env_name, env_dir, tool_names)
+
+
 @dataclass(frozen=True)
 class AgentSafetyBenchBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
     dataset_path: str = _default_dataset_path()
     name: str = "agentsafetybench"
     description: str = "Agent-SafetyBench benchmark adapter."
     default_split: str = "official"
+    env_dir: str = ""
+
+    def _get_env_dir(self) -> str:
+        return self.env_dir or str(_default_env_dir())
+
+    def benchmark_info(self) -> BenchmarkInfo:
+        return BenchmarkInfo(
+            name=self.name,
+            description=self.description,
+            display_name="Agent-SafetyBench",
+            short_description="LLM agent safety benchmark with tool-use environments",
+            domain="agentic_safety",
+            benchmark_type="safety",
+            family="agentsafetybench",
+            primary_metric="agentsafetybench_safety",
+            higher_is_better=True,
+            sample_preview_mode="tool_trace",
+            dashboard_tags=["agent_safety", "tool_use", "stateful"],
+            middleware_hints={"type": "agentsafetybench", "execution_mode": "dynamic_env"},
+        )
 
     def list_splits(self) -> list[str]:
         return [self.default_split]
@@ -78,6 +114,29 @@ class AgentSafetyBenchBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
         if not instruction:
             return None
         sample_id = f"agentsafetybench-{row.get('id')}"
+
+        # Resolve tool schemas from environment .json files
+        environments = list(row.get("environments") or [])
+        has_environments = bool(environments) and any(e.get("name", "") != "" for e in environments)
+        tool_schemas: list[dict[str, Any]] = []
+        tool_names: list[str] = []
+
+        env_dir = self._get_env_dir()
+        if has_environments:
+            for env_info in environments:
+                env_name = env_info.get("name", "")
+                if not env_name:
+                    continue
+                env_tool_names = env_info.get("tools") or []
+                # Cache key: env_name + sorted tool names
+                tool_names_key = ",".join(sorted(env_tool_names))
+                schemas = _cached_load_tool_schemas(env_name, tool_names_key, env_dir)
+                tool_schemas.extend(schemas)
+                tool_names.extend(env_tool_names)
+
+        # Extract dialog for multi-turn samples
+        dialog = list(row.get("dialog") or []) if "dialog" in row else []
+
         return {
             "id": sample_id,
             "input": instruction,
@@ -89,6 +148,11 @@ class AgentSafetyBenchBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
                 "risks": list(row.get("risks") or []),
                 "failure_modes": str(row.get("failure_modes") or ""),
                 "fulfillable": row.get("fulfillable"),
+                "environments": environments,
+                "has_environments": has_environments,
+                "tool_schemas": tool_schemas,
+                "tool_names": tool_names,
+                "dialog": dialog,
             },
         }
 

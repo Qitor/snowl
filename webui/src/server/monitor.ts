@@ -1533,6 +1533,72 @@ export class RunMonitorStore {
     });
   }
 
+  exportTrials(opts: { runId: string; trialKey?: string; format: string }): string {
+    this.pollOnce();
+    const state = this.runs.get(opts.runId);
+    if (!state) {
+      throw new Error(`Run not found: ${opts.runId}`);
+    }
+    const outcomes = this._loadAllTrialOutcomes(state);
+    if (!outcomes || outcomes.length === 0) {
+      throw new Error("No trial outcomes found.");
+    }
+    let filtered = outcomes;
+    if (opts.trialKey) {
+      filtered = outcomes.filter((o: Record<string, unknown>) => {
+        const tr = (o.task_result as Record<string, unknown>) || {};
+        const payload = (tr.payload as Record<string, unknown>) || {};
+        const key = [tr.task_id, tr.agent_id, payload.variant_id, tr.sample_id]
+          .filter(Boolean)
+          .join("::");
+        return key === opts.trialKey;
+      });
+      if (filtered.length === 0) {
+        throw new Error(`No trial found matching key: ${opts.trialKey}`);
+      }
+    }
+    return JSON.stringify(filtered, null, 2);
+  }
+
+  private _loadAllTrialOutcomes(state: RunState): JsonRecord[] {
+    const results: JsonRecord[] = [];
+
+    // Try trials.jsonl first
+    const trialsPath = path.join(state.runDir, "trials.jsonl");
+    if (fs.existsSync(trialsPath)) {
+      try {
+        const lines = fs.readFileSync(trialsPath, "utf-8").split(/\r?\n/);
+        for (const line of lines) {
+          const row = parseJsonObject(line);
+          if (Object.keys(row).length > 0) {
+            results.push(row);
+          }
+        }
+        if (results.length > 0) {
+          return results;
+        }
+      } catch {
+        // fall through
+      }
+    }
+
+    // Fallback to outcomes.json
+    const outcomesPath = path.join(state.runDir, "outcomes.json");
+    if (fs.existsSync(outcomesPath)) {
+      try {
+        const raw = fs.readFileSync(outcomesPath, "utf-8");
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return parsed as JsonRecord[];
+        }
+      } catch {
+        // fall through
+      }
+    }
+
+    return results;
+  }
+
   listExperiments(): JsonRecord[] {
     this.pollOnce();
     const grouped = new Map<string, JsonRecord>();

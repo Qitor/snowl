@@ -117,6 +117,8 @@ class OpenAICompatibleChatClient:
     _global_model_call_semaphore: asyncio.Semaphore | None = None
     _global_model_call_slot_factory: Callable[[], Any] | None = None
     _global_model_call_slot_resolver: Callable[[OpenAICompatibleConfig], Any] | None = None
+    _global_429_reporter: Callable[[str], None] | None = None
+    _global_success_reporter: Callable[[str], None] | None = None
 
     def __init__(
         self,
@@ -163,6 +165,23 @@ class OpenAICompatibleChatClient:
         cls._global_model_call_slot_factory = None
         cls._global_model_call_limit = None
         cls._global_model_call_semaphore = None
+
+    @classmethod
+    def set_global_429_reporter(cls, reporter: Callable[[str], None] | None) -> None:
+        """Install a callback invoked when a 429 response is received.
+
+        The callback receives the ``provider_id`` string and is called
+        *before* the retry backoff sleep.
+        """
+        cls._global_429_reporter = reporter
+
+    @classmethod
+    def set_global_success_reporter(cls, reporter: Callable[[str], None] | None) -> None:
+        """Install a callback invoked after a successful model response.
+
+        The callback receives the ``provider_id`` string.
+        """
+        cls._global_success_reporter = reporter
 
     async def _acquire_model_slot(self):
         if self.__class__._global_model_call_slot_resolver is not None:
@@ -216,16 +235,27 @@ class OpenAICompatibleChatClient:
                         response.raise_for_status()
                     data = response.json()
                     ended_at = int(time.time() * 1000)
+                    if self.__class__._global_success_reporter is not None:
+                        self.__class__._global_success_reporter(self._config.provider_id)
                     return self._normalize_response(data, started_at, ended_at)
                 except (httpx.HTTPError, httpx.TimeoutException) as exc:
                     detail = self._format_exception(exc)
                     retryable = self._is_retryable_error(exc)
+                    is_429 = isinstance(exc, httpx.HTTPStatusError) and getattr(exc.response, "status_code", 0) == 429
+                    if is_429 and self.__class__._global_429_reporter is not None:
+                        self.__class__._global_429_reporter(self._config.provider_id)
                     if (not retryable) or attempt >= self._config.max_retries:
                         raise SnowlValidationError(
                             f"OpenAI-compatible generate failed after {attempt + 1} attempt(s): {detail}"
                         ) from exc
 
-                    await asyncio.sleep(self._retry_backoff_seconds * (2**attempt))
+                    backoff = self._retry_backoff_seconds * (2**attempt)
+                    # Respect Retry-After header from 429 responses
+                    if is_429 and isinstance(exc, httpx.HTTPStatusError):
+                        retry_after = self._parse_retry_after(exc.response)
+                        if retry_after is not None:
+                            backoff = max(backoff, retry_after)
+                    await asyncio.sleep(backoff)
                     attempt += 1
 
     @staticmethod
@@ -272,6 +302,32 @@ class OpenAICompatibleChatClient:
         if isinstance(exc, httpx.RequestError):
             return True
         return False
+
+    @staticmethod
+    def _parse_retry_after(response: httpx.Response) -> float | None:
+        """Parse ``Retry-After`` header into seconds.
+
+        Supports both integer (seconds) and HTTP-date formats.
+        Returns ``None`` if the header is absent or unparseable.
+        """
+        raw = response.headers.get("retry-after")
+        if raw is None:
+            return None
+        raw = raw.strip()
+        # Integer seconds
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            pass
+        # HTTP-date format
+        from email.utils import parsedate_to_datetime
+        try:
+            from datetime import datetime, timezone
+            target = parsedate_to_datetime(raw)
+            delta = (target - datetime.now(timezone.utc)).total_seconds()
+            return max(0.0, delta)
+        except Exception:
+            return None
 
     def _normalize_response(
         self,

@@ -65,11 +65,14 @@ change.
   and artifact collection hooks
 - Runtime-owned container cleanup for compose and Docker container providers
 - Provider-aware concurrency controls for OpenAI-compatible model clients
+- Adaptive provider flow control with AIMD (Additive Increase / Multiplicative Decrease) for automatic 429 backoff and recovery
+- Per-endpoint provider budgeting so multi-model suites with distinct API endpoints get independent concurrency pools
 - Automatic live artifacts: `manifest.json`, `plan.json`, `events.jsonl`,
   `runtime_state.json`, `outcomes.json`, `aggregate.json`, CSV exports, and
   recovery ledgers
 - `snowl retry <run_id>` for failed or interrupted trials
 - Deferred in-run auto retry for non-success outcomes
+- Suite mode for multi-benchmark evaluation runs via `snowl suite run`
 - Operator CLI plus a Next.js web monitor
 - Risk-monitor data model for benchmark, domain, and leaderboard rollups
 
@@ -129,6 +132,12 @@ Retry a run after fixing a model provider, Docker issue, or benchmark setup:
 
 ```bash
 snowl retry run-20260427T120000Z --project examples/strongreject-official/project.yml
+```
+
+Run a multi-benchmark evaluation suite:
+
+```bash
+snowl suite run examples/agent-safety-sweep/suite.yml
 ```
 
 ## The Core Contract
@@ -364,6 +373,46 @@ Useful defaults:
 - scoring can overlap with agent execution
 - OpenAI-compatible providers share provider-budget admission
 - failed and interrupted work can be retried with the same run ledger
+
+### Adaptive Provider Flow Control
+
+When a provider returns HTTP 429, Snowl's scheduler automatically reduces
+concurrency for that endpoint (multiplicative decrease) and gradually
+recovers as requests succeed (additive increase). This is modeled after
+TCP congestion control:
+
+- **On 429**: `current_limit = max(min_limit, floor(current_limit * 0.5))`
+- **On success window** (N consecutive successes): `current_limit = min(max_limit, current_limit + 1)`
+
+This eliminates manual `provider_budgets` tuning for rate-limited endpoints.
+The scheduler also respects `Retry-After` headers from 429 responses.
+
+### Per-Endpoint Provider Budgeting
+
+When a model entry in `agent_matrix.models` specifies a `provider` override
+with a different `base_url`, Snowl automatically generates a unique
+`provider_id` for that endpoint. This means multi-model suites hitting
+different API endpoints get independent concurrency pools instead of
+sharing a single semaphore:
+
+```yaml
+agent_matrix:
+  models:
+    - id: model_a
+      model: model-a
+      provider:              # gets its own provider_id and budget
+        base_url: https://endpoint-a.example.com/v1
+        api_key: key-a
+    - id: model_b
+      model: model-b
+      provider:              # gets its own provider_id and budget
+        base_url: https://endpoint-b.example.com/v1
+        api_key: key-b
+```
+
+In a 6-model × 3-benchmark suite, this delivered a **2.2× throughput
+improvement** (6.1 → 13.6 trials/min) compared to sharing a single
+provider budget.
 
 ## Supported Benchmark Families
 

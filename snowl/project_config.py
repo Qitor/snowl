@@ -228,16 +228,24 @@ def load_project_config(path: str | Path) -> ProjectConfig:
         # Use per-model provider override if provided, otherwise use global provider
         model_base_url = provider.base_url
         model_api_key = provider.api_key
+        has_provider_override = False
         if provider_override:
             model_base_url = provider_override.get("base_url", provider.base_url)
             model_api_key = provider_override.get("api_key", provider.api_key)
+            has_provider_override = model_base_url != provider.base_url
+
+        # Generate per-endpoint provider_id when model uses a different endpoint
+        # so that the scheduler can budget each endpoint independently.
+        model_provider_id = provider.id
+        if has_provider_override:
+            model_provider_id = _derive_endpoint_provider_id(provider.id, model_base_url)
 
         models.append(
             ProjectModelEntry(
                 id=model_id,
                 model=model_name,
                 config=OpenAICompatibleConfig(
-                    provider_id=provider.id,
+                    provider_id=model_provider_id,
                     base_url=model_base_url,
                     api_key=model_api_key,
                     model=model_name,
@@ -349,6 +357,28 @@ def _require_mapping(value: Any, *, label: str, path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise SnowlValidationError(f"{label} must be a mapping in {path}")
     return dict(value)
+
+
+def _derive_endpoint_provider_id(parent_id: str, base_url: str) -> str:
+    """Derive a unique provider_id from the base_url for per-endpoint budgeting.
+
+    Format: ``{parent_id}__{slug}`` where slug is derived from the hostname.
+    Example: ``inf__o8kjqm58o8ogcm5ek8aggddkb5ggk8dp``
+    """
+    import re
+
+    from urllib.parse import urlparse
+
+    parsed = urlparse(base_url)
+    host = (parsed.hostname or "").lower()
+    # Take the first subdomain segment as a slug (e.g. "o8kjqm58o8ogcm5ek8aggddkb5ggk8dp")
+    parts = host.split(".")
+    slug = parts[0] if parts else host
+    # Clean to alphanumeric + dash only
+    slug = re.sub(r"[^a-z0-9-]", "", slug)
+    if not slug:
+        slug = "custom"
+    return f"{parent_id}__{slug}"
 
 
 def _require_non_empty_str(value: Any, *, label: str, path: Path) -> str:

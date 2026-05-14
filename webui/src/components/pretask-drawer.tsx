@@ -43,14 +43,14 @@ export function PretaskDrawer({
           </div>
           <Button size="sm" variant="outline" onClick={onClose}>
             <X className="mr-1 h-3.5 w-3.5" />
-            关闭
+            Close
           </Button>
         </div>
 
         <div className="h-[calc(100%-82px)] overflow-auto px-5 py-4">
-          {loading ? <div className="text-base text-muted-foreground">加载中...</div> : null}
+          {loading ? <div className="text-base text-muted-foreground">Loading...</div> : null}
           {!loading && items.length === 0 ? (
-            <div className="rounded-md border border-dashed p-4 text-base text-muted-foreground">暂无 pretask 事件。</div>
+            <div className="rounded-md border border-dashed p-4 text-base text-muted-foreground">No pretask events.</div>
           ) : null}
 
           <div className="space-y-4">

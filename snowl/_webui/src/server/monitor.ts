@@ -333,6 +333,44 @@ export class RunMonitorStore {
 
       CREATE INDEX IF NOT EXISTS idx_events_run_event_id ON events(run_id, event_id);
       CREATE INDEX IF NOT EXISTS idx_events_run_trial ON events(run_id, trial_key);
+
+      CREATE TABLE IF NOT EXISTS domain_rows (
+        domain TEXT PRIMARY KEY,
+        capability_score REAL,
+        safety_score REAL,
+        risk_index REAL,
+        benchmark_count INTEGER,
+        model_count INTEGER,
+        updated_at_ms INTEGER,
+        overview_json TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS benchmark_rows (
+        benchmark TEXT,
+        domain TEXT,
+        run_id TEXT,
+        agent_id TEXT,
+        variant_id TEXT,
+        model TEXT,
+        primary_metric REAL,
+        metric_means_json TEXT,
+        sample_count INTEGER,
+        model_metadata_json TEXT,
+        updated_at_ms INTEGER,
+        PRIMARY KEY (benchmark, run_id, agent_id, variant_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS leaderboard_rows (
+        model TEXT,
+        domain TEXT,
+        benchmark_type TEXT,
+        primary_metric_mean REAL,
+        rank INTEGER,
+        benchmarks_evaluated INTEGER,
+        metadata_json TEXT,
+        updated_at_ms INTEGER,
+        PRIMARY KEY (model, domain, benchmark_type)
+      );
     `);
   }
 
@@ -569,6 +607,7 @@ export class RunMonitorStore {
     state.runnerAlive = inferred.runnerAlive;
     state.observerStale = inferred.observerStale;
     this.upsertRunRow(state, manifest);
+    this.ingestV2Artifacts(state);
   }
 
   private computeRunUpdatedAt(state: RunState): number {
@@ -1494,6 +1533,72 @@ export class RunMonitorStore {
     });
   }
 
+  exportTrials(opts: { runId: string; trialKey?: string; format: string }): string {
+    this.pollOnce();
+    const state = this.runs.get(opts.runId);
+    if (!state) {
+      throw new Error(`Run not found: ${opts.runId}`);
+    }
+    const outcomes = this._loadAllTrialOutcomes(state);
+    if (!outcomes || outcomes.length === 0) {
+      throw new Error("No trial outcomes found.");
+    }
+    let filtered = outcomes;
+    if (opts.trialKey) {
+      filtered = outcomes.filter((o: Record<string, unknown>) => {
+        const tr = (o.task_result as Record<string, unknown>) || {};
+        const payload = (tr.payload as Record<string, unknown>) || {};
+        const key = [tr.task_id, tr.agent_id, payload.variant_id, tr.sample_id]
+          .filter(Boolean)
+          .join("::");
+        return key === opts.trialKey;
+      });
+      if (filtered.length === 0) {
+        throw new Error(`No trial found matching key: ${opts.trialKey}`);
+      }
+    }
+    return JSON.stringify(filtered, null, 2);
+  }
+
+  private _loadAllTrialOutcomes(state: RunState): JsonRecord[] {
+    const results: JsonRecord[] = [];
+
+    // Try trials.jsonl first
+    const trialsPath = path.join(state.runDir, "trials.jsonl");
+    if (fs.existsSync(trialsPath)) {
+      try {
+        const lines = fs.readFileSync(trialsPath, "utf-8").split(/\r?\n/);
+        for (const line of lines) {
+          const row = parseJsonObject(line);
+          if (Object.keys(row).length > 0) {
+            results.push(row);
+          }
+        }
+        if (results.length > 0) {
+          return results;
+        }
+      } catch {
+        // fall through
+      }
+    }
+
+    // Fallback to outcomes.json
+    const outcomesPath = path.join(state.runDir, "outcomes.json");
+    if (fs.existsSync(outcomesPath)) {
+      try {
+        const raw = fs.readFileSync(outcomesPath, "utf-8");
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return parsed as JsonRecord[];
+        }
+      } catch {
+        // fall through
+      }
+    }
+
+    return results;
+  }
+
   listExperiments(): JsonRecord[] {
     this.pollOnce();
     const grouped = new Map<string, JsonRecord>();
@@ -1883,6 +1988,8 @@ export class RunMonitorStore {
     let startEvent: JsonRecord | null = null;
     let finishEvent: JsonRecord | null = null;
     let errorEvent: JsonRecord | null = null;
+    const agentStepEvents: JsonRecord[] = [];
+    const modelIoEvents: JsonRecord[] = [];
 
     for (const row of rows) {
       const parsed = parseJsonObject(row.event_json);
@@ -1895,6 +2002,10 @@ export class RunMonitorStore {
         finishEvent = parsed;
       } else if (row.event_name === "runtime.trial.error") {
         errorEvent = parsed;
+      } else if (row.event_name === "runtime.agent.step") {
+        agentStepEvents.push(parsed);
+      } else if (row.event_name === "runtime.model.io") {
+        modelIoEvents.push(parsed);
       }
     }
 
@@ -1923,6 +2034,8 @@ export class RunMonitorStore {
       start_event: startEvent,
       finish_event: finishEvent,
       error_event: errorEvent,
+      agent_step_events: agentStepEvents,
+      model_io_events: modelIoEvents,
       attempt_history: attemptHistory,
       attempt_id: outcome?.attempt_id || null,
       attempt_no: outcome?.attempt_no || null,
@@ -2077,6 +2190,266 @@ export class RunMonitorStore {
           status: state.status,
           updated_at_ms: state.updatedAtMs,
         })),
+    };
+  }
+
+  private ingestV2Artifacts(state: RunState): void {
+    const ts = nowMs();
+
+    // --- benchmark_summary.json ---
+    const benchmarkSummaryPath = path.join(state.runDir, "benchmark_summary.json");
+    try {
+      if (fs.existsSync(benchmarkSummaryPath)) {
+        const raw = fs.readFileSync(benchmarkSummaryPath, "utf-8");
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          const summary = parsed as JsonRecord;
+          const benchmark = String(summary.benchmark || state.benchmark || "").trim();
+          const domain = String(summary.domain || "").trim();
+          if (benchmark) {
+            const rows = Array.isArray(summary.rows) ? summary.rows : [];
+            const stmt = this.db.prepare(`
+              INSERT INTO benchmark_rows(benchmark, domain, run_id, agent_id, variant_id, model, primary_metric, metric_means_json, sample_count, model_metadata_json, updated_at_ms)
+              VALUES(@benchmark, @domain, @run_id, @agent_id, @variant_id, @model, @primary_metric, @metric_means_json, @sample_count, @model_metadata_json, @updated_at_ms)
+              ON CONFLICT(benchmark, run_id, agent_id, variant_id) DO UPDATE SET
+                domain=excluded.domain,
+                model=excluded.model,
+                primary_metric=excluded.primary_metric,
+                metric_means_json=excluded.metric_means_json,
+                sample_count=excluded.sample_count,
+                model_metadata_json=excluded.model_metadata_json,
+                updated_at_ms=excluded.updated_at_ms
+            `);
+            for (const row of rows) {
+              if (!row || typeof row !== "object" || Array.isArray(row)) {
+                continue;
+              }
+              const r = row as JsonRecord;
+              stmt.run({
+                benchmark,
+                domain: domain || String(r.domain || ""),
+                run_id: String(r.run_id || state.runId || ""),
+                agent_id: String(r.agent_id || ""),
+                variant_id: String(r.variant_id || "default"),
+                model: String(r.model || ""),
+                primary_metric: typeof r.primary_metric === "number" && Number.isFinite(r.primary_metric) ? r.primary_metric : null,
+                metric_means_json: r.metric_means ? JSON.stringify(r.metric_means) : null,
+                sample_count: typeof r.sample_count === "number" && Number.isFinite(r.sample_count) ? Math.trunc(r.sample_count) : null,
+                model_metadata_json: r.model_metadata ? JSON.stringify(r.model_metadata) : null,
+                updated_at_ms: ts,
+              });
+            }
+          }
+        }
+      }
+    } catch {
+      // gracefully ignore missing or malformed benchmark_summary.json
+    }
+
+    // --- domain_summary.json ---
+    const domainSummaryPath = path.join(state.runDir, "domain_summary.json");
+    try {
+      if (fs.existsSync(domainSummaryPath)) {
+        const raw = fs.readFileSync(domainSummaryPath, "utf-8");
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          const summary = parsed as JsonRecord;
+          const domain = String(summary.domain || "").trim();
+          if (domain) {
+            const stmt = this.db.prepare(`
+              INSERT INTO domain_rows(domain, capability_score, safety_score, risk_index, benchmark_count, model_count, updated_at_ms, overview_json)
+              VALUES(@domain, @capability_score, @safety_score, @risk_index, @benchmark_count, @model_count, @updated_at_ms, @overview_json)
+              ON CONFLICT(domain) DO UPDATE SET
+                capability_score=excluded.capability_score,
+                safety_score=excluded.safety_score,
+                risk_index=excluded.risk_index,
+                benchmark_count=excluded.benchmark_count,
+                model_count=excluded.model_count,
+                updated_at_ms=excluded.updated_at_ms,
+                overview_json=excluded.overview_json
+            `);
+            stmt.run({
+              domain,
+              capability_score: typeof summary.capability_score === "number" && Number.isFinite(summary.capability_score) ? summary.capability_score : null,
+              safety_score: typeof summary.safety_score === "number" && Number.isFinite(summary.safety_score) ? summary.safety_score : null,
+              risk_index: typeof summary.risk_index === "number" && Number.isFinite(summary.risk_index) ? summary.risk_index : null,
+              benchmark_count: typeof summary.benchmark_count === "number" && Number.isFinite(summary.benchmark_count) ? Math.trunc(summary.benchmark_count) : null,
+              model_count: typeof summary.model_count === "number" && Number.isFinite(summary.model_count) ? Math.trunc(summary.model_count) : null,
+              updated_at_ms: ts,
+              overview_json: JSON.stringify(summary),
+            });
+          }
+        }
+      }
+    } catch {
+      // gracefully ignore missing or malformed domain_summary.json
+    }
+
+    // --- leaderboard_rows.jsonl ---
+    const leaderboardPath = path.join(state.runDir, "leaderboard_rows.jsonl");
+    try {
+      if (fs.existsSync(leaderboardPath)) {
+        const raw = fs.readFileSync(leaderboardPath, "utf-8");
+        const lines = raw.split(/\r?\n/);
+        const stmt = this.db.prepare(`
+          INSERT INTO leaderboard_rows(model, domain, benchmark_type, primary_metric_mean, rank, benchmarks_evaluated, metadata_json, updated_at_ms)
+          VALUES(@model, @domain, @benchmark_type, @primary_metric_mean, @rank, @benchmarks_evaluated, @metadata_json, @updated_at_ms)
+          ON CONFLICT(model, domain, benchmark_type) DO UPDATE SET
+            primary_metric_mean=excluded.primary_metric_mean,
+            rank=excluded.rank,
+            benchmarks_evaluated=excluded.benchmarks_evaluated,
+            metadata_json=excluded.metadata_json,
+            updated_at_ms=excluded.updated_at_ms
+        `);
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) {
+            continue;
+          }
+          let row: JsonRecord;
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+              continue;
+            }
+            row = parsed as JsonRecord;
+          } catch {
+            continue;
+          }
+          const model = String(row.model || "").trim();
+          const domain = String(row.domain || "").trim();
+          const benchmarkType = String(row.benchmark_type || "").trim();
+          if (!model || !domain || !benchmarkType) {
+            continue;
+          }
+          stmt.run({
+            model,
+            domain,
+            benchmark_type: benchmarkType,
+            primary_metric_mean: typeof row.primary_metric_mean === "number" && Number.isFinite(row.primary_metric_mean) ? row.primary_metric_mean : null,
+            rank: typeof row.rank === "number" && Number.isFinite(row.rank) ? Math.trunc(row.rank) : null,
+            benchmarks_evaluated: typeof row.benchmarks_evaluated === "number" && Number.isFinite(row.benchmarks_evaluated) ? Math.trunc(row.benchmarks_evaluated) : null,
+            metadata_json: row.model_metadata || row.metadata ? JSON.stringify(row.model_metadata || row.metadata) : null,
+            updated_at_ms: ts,
+          });
+        }
+      }
+    } catch {
+      // gracefully ignore missing or malformed leaderboard_rows.jsonl
+    }
+  }
+
+  listDomains(): JsonRecord[] {
+    const rows = this.db
+      .prepare("SELECT domain, capability_score, safety_score, risk_index, benchmark_count, model_count, updated_at_ms FROM domain_rows ORDER BY domain ASC")
+      .all() as JsonRecord[];
+    return rows;
+  }
+
+  domainOverview(domain: string): JsonRecord | null {
+    const domainRow = this.db
+      .prepare("SELECT domain, capability_score, safety_score, risk_index, benchmark_count, model_count, updated_at_ms, overview_json FROM domain_rows WHERE domain = ?")
+      .get(domain) as (JsonRecord & { overview_json?: string }) | undefined;
+    if (!domainRow) {
+      return null;
+    }
+    const benchmarkRows = this.db
+      .prepare("SELECT benchmark, domain, run_id, agent_id, variant_id, model, primary_metric, metric_means_json, sample_count, model_metadata_json, updated_at_ms FROM benchmark_rows WHERE domain = ? ORDER BY benchmark ASC")
+      .all(domain) as JsonRecord[];
+    const overview: JsonRecord = { ...domainRow };
+    try {
+      if (domainRow.overview_json) {
+        Object.assign(overview, JSON.parse(domainRow.overview_json));
+      }
+    } catch {
+      // no-op
+    }
+    delete overview.overview_json;
+    overview.benchmarks = benchmarkRows.map((row) => {
+      const result: JsonRecord = { ...row };
+      try {
+        if (row.metric_means_json) {
+          result.metric_means = JSON.parse(row.metric_means_json as string);
+        }
+      } catch {
+        // no-op
+      }
+      try {
+        if (row.model_metadata_json) {
+          result.model_metadata = JSON.parse(row.model_metadata_json as string);
+        }
+      } catch {
+        // no-op
+      }
+      delete result.metric_means_json;
+      delete result.model_metadata_json;
+      return result;
+    });
+    return overview;
+  }
+
+  domainLeaderboard(domain: string, benchmarkType?: string): JsonRecord[] {
+    let rows: JsonRecord[];
+    if (benchmarkType) {
+      rows = this.db
+        .prepare("SELECT model, domain, benchmark_type, primary_metric_mean, rank, benchmarks_evaluated, metadata_json, updated_at_ms FROM leaderboard_rows WHERE domain = ? AND benchmark_type = ? ORDER BY rank ASC, model ASC")
+        .all(domain, benchmarkType) as JsonRecord[];
+    } else {
+      rows = this.db
+        .prepare("SELECT model, domain, benchmark_type, primary_metric_mean, rank, benchmarks_evaluated, metadata_json, updated_at_ms FROM leaderboard_rows WHERE domain = ? ORDER BY benchmark_type ASC, rank ASC, model ASC")
+        .all(domain) as JsonRecord[];
+    }
+    return rows.map((row) => {
+      const result: JsonRecord = { ...row };
+      try {
+        if (row.metadata_json) {
+          result.model_metadata = JSON.parse(row.metadata_json as string);
+        }
+      } catch {
+        // no-op
+      }
+      delete result.metadata_json;
+      return result;
+    });
+  }
+
+  listBenchmarks(): JsonRecord[] {
+    const rows = this.db
+      .prepare("SELECT DISTINCT benchmark, domain FROM benchmark_rows ORDER BY benchmark ASC")
+      .all() as JsonRecord[];
+    return rows;
+  }
+
+  benchmarkDetail(benchmarkName: string): JsonRecord | null {
+    const rows = this.db
+      .prepare("SELECT benchmark, domain, run_id, agent_id, variant_id, model, primary_metric, metric_means_json, sample_count, model_metadata_json, updated_at_ms FROM benchmark_rows WHERE benchmark = ? ORDER BY model ASC, run_id DESC")
+      .all(benchmarkName) as JsonRecord[];
+    if (rows.length === 0) {
+      return null;
+    }
+    return {
+      benchmark: benchmarkName,
+      domain: rows[0].domain || null,
+      rows: rows.map((row) => {
+        const result: JsonRecord = { ...row };
+        try {
+          if (row.metric_means_json) {
+            result.metric_means = JSON.parse(row.metric_means_json as string);
+          }
+        } catch {
+          // no-op
+        }
+        try {
+          if (row.model_metadata_json) {
+            result.model_metadata = JSON.parse(row.model_metadata_json as string);
+          }
+        } catch {
+          // no-op
+        }
+        delete result.metric_means_json;
+        delete result.model_metadata_json;
+        return result;
+      }),
     };
   }
 }

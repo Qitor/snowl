@@ -100,3 +100,11 @@ refactor_plan/
 docs.zip
 .playwright-cli/
 .playwright/
+
+# -----------------------------
+# Test screenshots / local scripts
+# -----------------------------
+webui/*.png
+run_toolemu_emulation.sh
+.claude/
+webui-test-main.png

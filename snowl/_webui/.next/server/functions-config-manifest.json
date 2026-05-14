@@ -1,1 +1,0 @@
-{"version":1,"functions":{"/api/experiments":{},"/api/experiments/[experimentId]/summary":{},"/api/health":{},"/api/runs/[runId]/pretask":{},"/api/runs/[runId]/summary":{},"/api/runs/[runId]/snapshot":{},"/api/runs/[runId]/trial":{},"/api/runs":{},"/api/runs/[runId]/events/stream":{},"/api/runs/[runId]/retry":{}}}

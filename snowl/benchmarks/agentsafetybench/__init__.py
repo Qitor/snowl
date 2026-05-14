@@ -8,28 +8,27 @@ Runtime/usage wiring:
 
 Change guardrails:
 - Keep benchmark-specific logic scoped to this package; shared runtime contracts should remain generic.
+- Must not export symbols that depend on the reference Agent-SafetyBench Python package.
 """
 
 from snowl.benchmarks.agentsafetybench.adapter import AgentSafetyBenchBenchmarkAdapter
+from snowl.benchmarks.agentsafetybench.agent import AgentSafetyBenchAgent
+from snowl.benchmarks.agentsafetybench.executor import AgentSafetyBenchExecutor
 from snowl.benchmarks.agentsafetybench.runtime import (
     agentsafetybench_root,
-    build_openai_agent_api,
-    execute_agentsafetybench_case,
     persist_agentsafetybench_scores,
     persist_agentsafetybench_trajectory,
     resolve_agentsafetybench_output_dir,
-    score_agentsafetybench_output,
 )
 from snowl.benchmarks.agentsafetybench.scorer import AgentSafetyBenchScorer
 
 __all__ = [
+    "AgentSafetyBenchAgent",
     "AgentSafetyBenchBenchmarkAdapter",
+    "AgentSafetyBenchExecutor",
     "AgentSafetyBenchScorer",
     "agentsafetybench_root",
-    "build_openai_agent_api",
-    "execute_agentsafetybench_case",
     "persist_agentsafetybench_scores",
     "persist_agentsafetybench_trajectory",
     "resolve_agentsafetybench_output_dir",
-    "score_agentsafetybench_output",
 ]

@@ -1330,6 +1330,107 @@ def _cmd_rescore(
         return 1
 
 
+def _cmd_export(
+    run_id: str,
+    *,
+    project: str,
+    format: str,
+    output: str | None,
+    trial_key: str | None,
+) -> int:
+    """Export trial trace data in portable formats."""
+    import json as json_mod
+    import sys
+
+    from snowl.export.openai_trace import outcome_to_openai_conversation
+
+    try:
+        run_dir = _resolve_run_dir(run_id, project)
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}")
+        return 1
+
+    # Load outcomes
+    outcomes = _load_outcomes(run_dir)
+    if not outcomes:
+        print("No trial outcomes found.")
+        return 1
+
+    # Filter by trial key if specified
+    if trial_key:
+        filtered = []
+        for outcome in outcomes:
+            tr = outcome.get("task_result", {}) or {}
+            task_id = str(tr.get("task_id", ""))
+            agent_id = str(tr.get("agent_id", ""))
+            sample_id = str(tr.get("sample_id", ""))
+            payload = tr.get("payload", {}) or {}
+            variant_id = str(payload.get("variant_id", "")) if isinstance(payload, dict) else ""
+            key = "::".join(part for part in [task_id, agent_id, variant_id, sample_id] if part)
+            if key == trial_key:
+                filtered.append(outcome)
+        outcomes = filtered
+        if not outcomes:
+            print(f"No trial found matching key: {trial_key}")
+            return 1
+
+    # Format output
+    if format == "openai":
+        exported = [outcome_to_openai_conversation(o) for o in outcomes]
+        text = json_mod.dumps(exported, indent=2, ensure_ascii=False)
+    elif format == "json":
+        text = json_mod.dumps(outcomes, indent=2, ensure_ascii=False)
+    elif format == "jsonl":
+        lines = [json_mod.dumps(o, ensure_ascii=False) for o in outcomes]
+        text = "\n".join(lines)
+    else:
+        print(f"Unsupported format: {format}")
+        return 1
+
+    # Write output
+    if output:
+        Path(output).write_text(text, encoding="utf-8")
+        print(f"Exported {len(outcomes)} trial(s) to {output}")
+    else:
+        sys.stdout.write(text)
+        if not text.endswith("\n"):
+            sys.stdout.write("\n")
+
+    return 0
+
+
+def _load_outcomes(run_dir: Path) -> list[dict[str, Any]]:
+    """Load trial outcomes from a run directory."""
+    import json as json_mod
+
+    # Try trials.jsonl first
+    trials_jsonl = run_dir / "trials.jsonl"
+    if trials_jsonl.is_file():
+        outcomes = []
+        for line in trials_jsonl.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                outcomes.append(json_mod.loads(line))
+            except json_mod.JSONDecodeError:
+                continue
+        if outcomes:
+            return outcomes
+
+    # Fallback to outcomes.json
+    outcomes_json = run_dir / "outcomes.json"
+    if outcomes_json.is_file():
+        try:
+            data = json_mod.loads(outcomes_json.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                return data
+        except json_mod.JSONDecodeError:
+            pass
+
+    return []
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="snowl")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1654,6 +1755,13 @@ def build_parser() -> argparse.ArgumentParser:
     rescore_parser.add_argument("--project", default=".", help="Project root path.")
     rescore_parser.add_argument("--scorer", default=None, help="Scorer id selector (csv). Only re-score with these scorers.")
 
+    export_parser = sub.add_parser("export", help="Export trial trace data in portable formats.")
+    export_parser.add_argument("run_id", nargs="?", default="latest", help="Run id or 'latest'.")
+    export_parser.add_argument("--project", "-p", default=".", help="Project root path.")
+    export_parser.add_argument("--format", choices=["openai", "json", "jsonl"], default="openai", help="Export format (default: openai).")
+    export_parser.add_argument("--output", "-o", default=None, help="Output file path (default: stdout).")
+    export_parser.add_argument("--trial-key", default=None, help="Export a specific trial only.")
+
     return parser
 
 
@@ -1808,6 +1916,15 @@ def main(argv: list[str] | None = None) -> int:
             args.run_id,
             project=str(Path(args.project)),
             scorer=args.scorer,
+        )
+
+    if args.command == "export":
+        return _cmd_export(
+            args.run_id,
+            project=str(Path(args.project)),
+            format=args.format,
+            output=args.output,
+            trial_key=args.trial_key,
         )
 
     parser.print_help()

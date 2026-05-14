@@ -192,7 +192,7 @@ export function MatrixBarChart({ matrix, matrixByMetric, metricOrder, rowLabel, 
       ) : null}
       {payload.rows.length === 0 ? (
         <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
-          暂无矩阵数据。等待至少一个已打分 trial 后，这里会显示按 {seriesLabel} 分组的柱状图。
+          No chart data yet. Data appears after the first scored trial.
         </div>
       ) : null}
       <div ref={rootRef} className="h-[360px] w-full" />

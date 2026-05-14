@@ -57,16 +57,16 @@ export function ComparePage() {
 
   return (
     <main className="mx-auto max-w-[1880px] px-5 py-6 md:px-10 md:py-8">
-      <header className="mb-6 rounded-[28px] border bg-gradient-to-r from-emerald-50/95 via-cyan-50/95 to-sky-100/90 p-7 shadow">
+      <header className="mb-6 rounded-[12px] border border-[#dfdfdf] bg-white p-7">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="space-y-3">
-            <Link href="/" className={cn(buttonVariants({ variant: "outline" }), "h-11 px-4")}>
+            <Link href="/" className={cn(buttonVariants({ variant: "outline" }), "h-11 rounded-[6px] px-4")}>
               <ArrowLeft className="mr-2 h-4 w-4" />
-              返回 Runs
+              Back to Runs
             </Link>
             <div>
               <h1 className="text-4xl font-semibold tracking-tight md:text-5xl">Historical Compare</h1>
-              <p className="mt-2 text-xl text-muted-foreground">这里专门用来看 experiment / 多次 run 的历史对比，不打断主流程。</p>
+              <p className="mt-2 text-xl text-muted-foreground">Compare results across experiments and multiple runs.</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -87,7 +87,7 @@ export function ComparePage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-2xl">Experiments</CardTitle>
-            <CardDescription>选择一个 experiment，查看它里面多次 runs 的整体表现。</CardDescription>
+            <CardDescription>Select an experiment to view aggregated run performance.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
             <div className="max-h-[720px] space-y-2 overflow-auto pr-1">
@@ -97,7 +97,7 @@ export function ComparePage() {
                   <button
                     key={row.experiment_id}
                     className={cn(
-                      "w-full rounded-2xl border p-4 text-left transition",
+                      "w-full rounded-[8px] border border-[#ededed] bg-white p-4 text-left transition",
                       active ? "border-primary bg-primary/10" : "hover:bg-muted/70",
                     )}
                     onClick={() => setSelectedExperiment(row.experiment_id)}
@@ -120,30 +120,30 @@ export function ComparePage() {
           <Card>
             <CardHeader>
               <CardTitle className="text-2xl">Experiment Summary</CardTitle>
-              <CardDescription>{selectedExperiment || "请选择一个 experiment"}</CardDescription>
+              <CardDescription>{selectedExperiment || "Select an experiment"}</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid gap-3 md:grid-cols-5">
-                <div className="rounded-2xl border bg-background/70 p-3">
+                <div className="rounded-[8px] border border-[#ededed] bg-white p-3">
                   <div className="text-base text-muted-foreground">Overall Progress</div>
                   <div className="mt-2 text-3xl font-semibold">{formatPercent(completionRate)}</div>
                   <div className="mt-1 text-sm text-muted-foreground">
                     {summary?.global_progress.done || 0}/{summary?.global_progress.total || 0}
                   </div>
                 </div>
-                <div className="rounded-2xl border bg-background/70 p-3">
+                <div className="rounded-[8px] border border-[#ededed] bg-white p-3">
                   <div className="text-base text-muted-foreground">Running</div>
                   <div className="mt-2 text-3xl font-semibold text-warning">{summary?.global_progress.running || 0}</div>
                 </div>
-                <div className="rounded-2xl border bg-background/70 p-3">
+                <div className="rounded-[8px] border border-[#ededed] bg-white p-3">
                   <div className="text-base text-muted-foreground">Completed</div>
                   <div className="mt-2 text-3xl font-semibold text-success">{summary?.global_progress.completed || 0}</div>
                 </div>
-                <div className="rounded-2xl border bg-background/70 p-3">
+                <div className="rounded-[8px] border border-[#ededed] bg-white p-3">
                   <div className="text-base text-muted-foreground">Failed</div>
                   <div className="mt-2 text-3xl font-semibold text-danger">{summary?.global_progress.failed || 0}</div>
                 </div>
-                <div className="rounded-2xl border bg-background/70 p-3">
+                <div className="rounded-[8px] border border-[#ededed] bg-white p-3">
                   <div className="text-base text-muted-foreground">Run Count</div>
                   <div className="mt-2 text-3xl font-semibold">{summary?.run_count || 0}</div>
                 </div>
@@ -157,14 +157,14 @@ export function ComparePage() {
                 <FlaskConical className="h-4 w-4 text-primary" />
                 <CardTitle className="text-2xl">Model Ranking</CardTitle>
               </div>
-              <CardDescription>按 variant / model 聚合 experiment 内的历史表现。</CardDescription>
+              <CardDescription>Historical performance aggregated by variant and model.</CardDescription>
             </CardHeader>
             <CardContent className="grid gap-2 md:grid-cols-2">
               {topAgents.length === 0 ? (
-                <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">暂无 ranking 数据。</div>
+                <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">No ranking data yet.</div>
               ) : (
                 topAgents.map((agent) => (
-                  <div key={`${agent.display_id}-${agent.model || "-"}`} className="rounded-2xl border p-3">
+                  <div key={`${agent.display_id}-${agent.model || "-"}`} className="rounded-[8px] border border-[#ededed] bg-white p-3">
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="font-[family-name:var(--font-mono)] text-base break-all">{agent.display_id}</div>
                       {agent.model ? <Badge variant="outline">{agent.model}</Badge> : null}
@@ -182,7 +182,7 @@ export function ComparePage() {
           <Card>
             <CardHeader>
               <CardTitle className="text-2xl">Compare Matrix</CardTitle>
-              <CardDescription>查看这个 experiment 里不同 benchmark 或不同模型的聚合对比。</CardDescription>
+              <CardDescription>Aggregated comparison across benchmarks and models.</CardDescription>
             </CardHeader>
             <CardContent>
               <MatrixHeatmap

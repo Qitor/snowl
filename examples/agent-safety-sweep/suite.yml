@@ -1,0 +1,18 @@
+suite:
+  name: agent-safety-6model
+  project: ./project.yml
+  split: official
+  benchmarks:
+    - name: agentharm
+      split: test_public
+    - name: agentdojo
+      split: official
+      adapter_args:
+        suite: banking
+        with_injections: true
+    - name: toolemu
+      split: official
+
+runtime:
+  max_running_trials: 8
+  max_scoring_tasks: 8

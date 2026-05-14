@@ -508,6 +508,12 @@ async def run_eval_with_components(
     OpenAICompatibleChatClient.set_global_model_call_slot_resolver(
         lambda config: scheduler.provider_slot(getattr(config, "provider_id", "default"))
     )
+    OpenAICompatibleChatClient.set_global_429_reporter(
+        lambda provider_id: scheduler.report_429(provider_id)
+    )
+    OpenAICompatibleChatClient.set_global_success_reporter(
+        lambda provider_id: scheduler.report_success(provider_id)
+    )
 
     run_started = int(datetime.now(timezone.utc).timestamp() * 1000)
     retry_mode = retry_run_id is not None

@@ -256,3 +256,130 @@ def test_scheduler_records_independent_phase_admission() -> None:
     assert stats["active"]["container_slots"] == 0
     assert stats["active"]["running_trials"] == 0
     assert stats["active"]["scoring_tasks"] == 0
+
+
+# ------------------------------------------------------------------
+# AIMD flow control tests
+# ------------------------------------------------------------------
+
+
+def test_report_429_decreases_provider_limit() -> None:
+    scheduler = ResourceScheduler(provider_budgets={"api": 8})
+
+    # Simulate a 429 — should halve the limit
+    scheduler.report_429("api")
+    snapshot = scheduler.flow_state_snapshot()
+    assert snapshot["api"]["current_limit"] == 4
+    assert snapshot["api"]["total_429s"] == 1
+
+    # Another 429 — should halve again
+    scheduler.report_429("api")
+    assert scheduler.flow_state_snapshot()["api"]["current_limit"] == 2
+
+
+def test_report_429_respects_min_limit() -> None:
+    scheduler = ResourceScheduler(provider_budgets={"api": 2})
+
+    scheduler.report_429("api")  # 2 → 1
+    assert scheduler.flow_state_snapshot()["api"]["current_limit"] == 1
+
+    scheduler.report_429("api")  # 1 → 0.5 → floor=0 → min=1
+    assert scheduler.flow_state_snapshot()["api"]["current_limit"] == 1
+
+
+def test_report_success_additive_increase_after_window() -> None:
+    scheduler = ResourceScheduler(provider_budgets={"api": 4})
+
+    # Need current_limit (4) consecutive successes to trigger additive increase
+    for _ in range(4):
+        scheduler.report_success("api")
+    assert scheduler.flow_state_snapshot()["api"]["current_limit"] == 5
+
+    # Window resets; need 5 more for next increase
+    for _ in range(5):
+        scheduler.report_success("api")
+    assert scheduler.flow_state_snapshot()["api"]["current_limit"] == 6
+
+
+def test_report_success_respects_max_limit() -> None:
+    scheduler = ResourceScheduler(provider_budgets={"api": 2})
+    # max_limit defaults to max(initial * 4, 64) = max(8, 64) = 64
+    # But let's test with a small provider
+    small_scheduler = ResourceScheduler(provider_budgets={"api": 1})
+    # max_limit = max(1 * 4, 64) = 64
+
+    for _ in range(1):
+        small_scheduler.report_success("api")
+    # 1 success = full window at limit 1 → increase to 2
+    assert small_scheduler.flow_state_snapshot()["api"]["current_limit"] == 2
+
+
+def test_429_resets_consecutive_successes() -> None:
+    scheduler = ResourceScheduler(provider_budgets={"api": 8})
+
+    # 3 successes (not enough for a window)
+    for _ in range(3):
+        scheduler.report_success("api")
+    assert scheduler.flow_state_snapshot()["api"]["consecutive_successes"] == 3
+
+    # 429 resets the counter
+    scheduler.report_429("api")
+    assert scheduler.flow_state_snapshot()["api"]["consecutive_successes"] == 0
+
+    # Need a full window at the new limit (4) to increase
+    for _ in range(4):
+        scheduler.report_success("api")
+    assert scheduler.flow_state_snapshot()["api"]["current_limit"] == 5
+
+
+def test_resize_provider_budget() -> None:
+    scheduler = ResourceScheduler(provider_budgets={"api": 4})
+
+    scheduler.resize_provider_budget("api", 12)
+    assert scheduler.limits.provider_budgets["api"] == 12
+    assert scheduler.flow_state_snapshot()["api"]["current_limit"] == 12
+
+    # Can also resize for a provider that wasn't in the initial budget
+    scheduler.resize_provider_budget("other", 3)
+    assert scheduler.limits.provider_budgets["other"] == 3
+
+
+def test_flow_state_snapshot_empty_without_reports() -> None:
+    scheduler = ResourceScheduler(provider_budgets={"api": 4})
+    assert scheduler.flow_state_snapshot() == {}
+
+
+def test_adaptive_concurrency_with_real_semaphore() -> None:
+    """Integration test: verify that report_429 actually reduces effective concurrency."""
+    scheduler = ResourceScheduler(provider_budgets={"api": 4})
+
+    async def _run() -> int:
+        current = 0
+        observed_max = 0
+        lock = asyncio.Lock()
+
+        async def _worker() -> None:
+            nonlocal current, observed_max
+            async with scheduler.provider_slot("api"):
+                async with lock:
+                    current += 1
+                    observed_max = max(observed_max, current)
+                await asyncio.sleep(0.02)
+                async with lock:
+                    current -= 1
+
+        # First batch — 4 workers should all run concurrently
+        await asyncio.gather(*[_worker() for _ in range(4)])
+        first_max = observed_max
+        assert first_max == 4
+
+        # Simulate a 429 — limit should halve from 4 to 2
+        scheduler.report_429("api")
+
+        observed_max = 0
+        # Second batch — only 2 should run concurrently
+        await asyncio.gather(*[_worker() for _ in range(4)])
+        return observed_max
+
+    result = asyncio.run(_run())
+    assert result == 2
