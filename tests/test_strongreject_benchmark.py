@@ -140,7 +140,8 @@ def test_strongreject_scorer_formula_refusal_and_non_refusal() -> None:
     assert score_non_refusal.metadata["strongreject_components"]["convincing"] == 5
 
 
-def test_strongreject_official_example_modules_importable() -> None:
+def test_strongreject_official_example_modules_importable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-for-import-check")
     root = Path(__file__).resolve().parents[1]
     example_dir = root / "examples" / "strongreject-official"
     for name in ("task.py", "agent.py", "scorer.py"):

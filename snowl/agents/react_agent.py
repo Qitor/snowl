@@ -21,7 +21,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from snowl.core.agent import Action, AgentContext, AgentState, Observation, StopReason
 from snowl.core.tool import ToolSpec, resolve_tool_spec
-from snowl.model import OpenAICompatibleChatClient
+from snowl.model.base import ChatModelClient
 from snowl.tools.middleware import MiddlewareChain
 
 
@@ -63,7 +63,7 @@ The controller will execute the tool and provide the Observation back.
 class ReActAgent:
     """ReAct loop with tool-schema injection and dual execution modes."""
 
-    model_client: OpenAICompatibleChatClient
+    model_client: ChatModelClient
     agent_id: str = "react_agent"
     max_steps: int = 8
     temperature: float = 0.2
@@ -91,6 +91,10 @@ class ReActAgent:
             start_ms = int(time.time() * 1000)
             request_messages = [dict(m) for m in messages]
             request_kwargs = dict(kwargs)
+            # Observability attributes — may not exist on all ChatModelClient implementations
+            _model_name = getattr(self.model_client, "model", "")
+            _base_url = getattr(self.model_client, "base_url", "")
+            _provider_id = getattr(self.model_client, "provider_id", "")
             if callable(emit):
                 emit(
                     {
@@ -103,9 +107,9 @@ class ReActAgent:
                         "mode": mode_name,
                         "direction": "input",
                         "message": "model input captured before provider call",
-                        "model": self.model_client.model,
-                        "base_url": self.model_client.base_url,
-                        "provider_id": self.model_client.provider_id,
+                        "model": _model_name,
+                        "base_url": _base_url,
+                        "provider_id": _provider_id,
                         "model_input": {
                             "messages": request_messages,
                             "generation_kwargs": request_kwargs,
@@ -126,9 +130,9 @@ class ReActAgent:
                         "step": step,
                         "mode": mode_name,
                         "message": "waiting for provider response",
-                        "model": self.model_client.model,
-                        "base_url": self.model_client.base_url,
-                        "provider_id": self.model_client.provider_id,
+                        "model": _model_name,
+                        "base_url": _base_url,
+                        "provider_id": _provider_id,
                     }
                 )
             try:
@@ -146,9 +150,9 @@ class ReActAgent:
                             "mode": mode_name,
                             "message": str(exc),
                             "error_type": exc.__class__.__name__,
-                            "model": self.model_client.model,
-                            "base_url": self.model_client.base_url,
-                            "provider_id": self.model_client.provider_id,
+                            "model": _model_name,
+                            "base_url": _base_url,
+                            "provider_id": _provider_id,
                         }
                     )
                 raise
@@ -164,9 +168,9 @@ class ReActAgent:
                         "input_tokens": response.usage.input_tokens,
                         "output_tokens": response.usage.output_tokens,
                         "total_tokens": response.usage.total_tokens,
-                        "model": self.model_client.model,
-                        "base_url": self.model_client.base_url,
-                        "provider_id": self.model_client.provider_id,
+                        "model": _model_name,
+                        "base_url": _base_url,
+                        "provider_id": _provider_id,
                     }
                 )
                 emit(
@@ -180,9 +184,9 @@ class ReActAgent:
                         "mode": mode_name,
                         "direction": "output",
                         "message": "model output captured after provider response",
-                        "model": self.model_client.model,
-                        "base_url": self.model_client.base_url,
-                        "provider_id": self.model_client.provider_id,
+                        "model": _model_name,
+                        "base_url": _base_url,
+                        "provider_id": _provider_id,
                         "model_output": dict(response.message),
                         "response": {
                             "message": dict(response.message),

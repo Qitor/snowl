@@ -462,14 +462,10 @@ pytest -q tests/test_benchmark_registry_and_cli.py tests/test_terminalbench_benc
 
 Project orientation:
 
-- [START_HERE.md](./START_HERE.md)
-- [docs/project_map.md](./docs/project_map.md)
-- [docs/current_state.md](./docs/current_state.md)
-- [docs/architecture/runtime_and_scheduler.md](./docs/architecture/runtime_and_scheduler.md)
-- [docs/benchmark_onboarding_playbook.md](./docs/benchmark_onboarding_playbook.md)
-- [docs/third_party_benchmark_adapter.md](./docs/third_party_benchmark_adapter.md)
-- [docs/risk_monitor_data_model.md](./docs/risk_monitor_data_model.md)
-- [PLANS.md](./PLANS.md)
+- [ARCHITECTURE.md](./ARCHITECTURE.md)
+- [docs/architecture/runtime-and-scheduler.md](./docs/architecture/runtime-and-scheduler.md)
+- [docs/how-to/custom-benchmark-adapter.md](./docs/how-to/custom-benchmark-adapter.md)
+- [docs/governance.md](./docs/governance.md)
 
 ## Roadmap
 

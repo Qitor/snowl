@@ -19,14 +19,14 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 from snowl.core.agent import AgentContext, AgentState, Observation, StopReason
-from snowl.model import OpenAICompatibleChatClient
+from snowl.model.base import ChatModelClient
 
 
 @dataclass
 class ChatAgent:
     """Single-call baseline agent using an OpenAI-compatible chat endpoint."""
 
-    model_client: OpenAICompatibleChatClient
+    model_client: ChatModelClient
     agent_id: str = "chat_agent"
     default_generation_kwargs: dict[str, Any] = field(default_factory=dict)
 

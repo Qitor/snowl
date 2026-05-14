@@ -6,7 +6,7 @@ provider:
   id: siliconflow
   kind: openai_compatible
   base_url: https://api.siliconflow.cn/v1
-  api_key: sk-irodedqyvgqjdilarnwmrixfwigoxvaenmcfnjmfvbaxrkxm
+  api_key: ${OPENAI_API_KEY}
   timeout: 30
   max_retries: 2
 

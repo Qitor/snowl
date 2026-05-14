@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from snowl.core.tool import ToolSpec
-from snowl.model.openai_compatible import OpenAICompatibleChatClient
+from snowl.model.base import ChatModelClient
 from snowl.tools.middleware import ToolMiddleware
 
 # ---------------------------------------------------------------------------
@@ -490,8 +490,8 @@ class EmulatedToolWrapper:
     def __init__(
         self,
         *,
-        emulator_client: OpenAICompatibleChatClient,
-        critiquer_client: OpenAICompatibleChatClient | None = None,
+        emulator_client: ChatModelClient,
+        critiquer_client: ChatModelClient | None = None,
         simulator_type: str = "std_thought",
         scheduler: Any | None = None,
         tool_schemas: dict[str, dict[str, Any]] | None = None,
