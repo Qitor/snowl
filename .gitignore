@@ -82,3 +82,21 @@ model.yaml
 # -----------------------------
 references/
 api_info.md
+
+# -----------------------------
+# Internal planning / dev-only
+# -----------------------------
+PLANS.md
+next_version.md
+AGENTS.md
+START_HERE.md
+DESIGN.md
+next_level/
+refactor_plan/
+
+# -----------------------------
+# Artifacts / crawl data
+# -----------------------------
+docs.zip
+.playwright-cli/
+.playwright/
