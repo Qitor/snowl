@@ -431,7 +431,7 @@ Snowl already includes adapters and contracts for several benchmark families:
 | IPI Coding Agent | coding-agent prompt injection | `ipi_coding_agent`; canary, trace, workspace, and checkpoint scoring |
 | TerminalBench | terminal task execution | `terminalbench`; container-aware |
 | OSWorld | GUI desktop tasks | `osworld`; runtime-managed GUI container path |
-| ToolEmu | tool-use safety | `toolemu`; Snowl-native trace-policy scorer; LM-emulated tool execution via `EmulatedToolWrapper` (see `docs/toolemu_emulation.md`) |
+| ToolEmu | tool-use safety | `toolemu`; official ToolEmu safety/helpfulness evaluator support; LM-emulated tool execution via `EmulatedToolWrapper` (see `docs/how-to/toolemu-emulation.md`) |
 | Agent-SafetyBench | agent safety | `agentsafetybench`; safety benchmark integration |
 | MASK | safety and jailbreak risk | `mask`; risk monitor compatible |
 | WMDP | bio, cyber, chemical risk | `wmdp-cyber`, `wmdp-chem`; risk monitor compatible |
@@ -443,6 +443,11 @@ Snowl already includes adapters and contracts for several benchmark families:
 Some official benchmark datasets require external reference repositories or
 large assets. Snowl keeps those references outside package code so normal unit
 tests and local development stay fast.
+
+ToolEmu emulation with the official evaluator requires both
+`references/ToolEmu` and `references/PromptCoder`; PromptCoder provides the
+`procoder` prompt modules used by ToolEmu's original evaluator prompts and
+parsers.
 
 ## Web Monitor
 

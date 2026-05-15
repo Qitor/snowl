@@ -8,6 +8,7 @@ Thumbs.db
 *.swp
 *.swo
 *~
+examples/toolemu-emulation/build-plan.md
 
 # -----------------------------
 # Python

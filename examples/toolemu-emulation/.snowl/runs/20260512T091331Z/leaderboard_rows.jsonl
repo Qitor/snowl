@@ -1,1 +1,0 @@
-{"model": "glm-5.1-w4a8", "domain": "agentic_safety", "benchmark_type": "safety", "primary_metric_mean": 1.0, "rank": 1, "benchmarks_evaluated": 1, "metadata": {"company": "zhipu", "source_type": "open_source"}}

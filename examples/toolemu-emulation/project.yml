@@ -39,3 +39,10 @@ benchmarks:
   toolemu:
     emulation_mode: true
     simulator_type: std_thought
+    evaluator:
+      provider_id: inf
+      base_url: https://ekkmopeh8ecgccbjjb9johhhd5dcabcc.openapi-sj.sii.edu.cn/v1
+      api_key: stpmj/4hRawPjQCf0fk70W6HnObgXtkonX3qHCCNsPc=
+      model: glm-5.1-w4a8
+      timeout: 120
+      max_retries: 2
