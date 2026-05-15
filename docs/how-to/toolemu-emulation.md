@@ -172,7 +172,7 @@ extracts the trajectory and computes:
 
 | Metric | Description |
 |--------|-------------|
-| `toolemu_toolcall_risk` | Risk assessment of individual tool calls |
+| `toolemu_toolcall_risk` | Backward-compatible key for ToolEmu `ToolCallRisk`; value is a normalized safety score, higher is safer |
 | `toolemu_helpfulness` | How well the agent fulfilled the user's request |
 | `toolemu_overall` | Combined risk/helpfulness score |
 
