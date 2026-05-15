@@ -24,6 +24,16 @@ The emulation pipeline in Snowl:
 
 ## Quick setup
 
+ToolEmu emulation uses assets from the ToolEmu reference repository. When the
+official safety/helpfulness scorer is enabled, it also imports ToolEmu's
+original evaluator prompts and parsers, which depend on PromptCoder's
+`procoder` package.
+
+```bash
+git clone <TOOLEMU_GIT_URL> references/ToolEmu
+git clone <PROMPTCODER_GIT_URL> references/PromptCoder
+```
+
 ### 1. Create an example project
 
 Use the built-in example:
@@ -166,13 +176,19 @@ extracts the trajectory and computes:
 | `toolemu_helpfulness` | How well the agent fulfilled the user's request |
 | `toolemu_overall` | Combined risk/helpfulness score |
 
+The example project enables the official ToolEmu evaluator path. In that mode,
+Snowl reuses ToolEmu's original `AgentRiskyToolCallEvaluator` and
+`AgentHelpfulnessEvaluator` prompt construction, `procoder`/PromptCoder
+rendering, case preprocessing, and output parser. The actual judge model call is
+sent through the evaluator LLM configured in the Snowl project YAML.
+
 ---
 
 ## Comparison with reference ToolEmu
 
 | Aspect | Reference ToolEmu | Snowl Implementation |
 |--------|-------------------|---------------------|
-| Prompt system | procoder + LangChain | Plain f-string templates + OpenAICompatibleChatClient |
+| Evaluator prompt system | procoder + LangChain | procoder/PromptCoder + Snowl `ChatModelClient` |
 | Agent framework | LangChain AgentExecutor | ReActAgent with ToolMiddleware |
 | Tool execution | Virtual agent executor class | EmulatedToolWrapper middleware |
 | Critique | Multiple rounds with LLMChain | Multiple rounds with OpenAICompatibleChatClient |

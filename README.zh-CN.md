@@ -71,6 +71,7 @@ pip install -e .
 - `references/OSWorld`
 - `references/strongreject`
 - `references/ToolEmu`
+- `references/PromptCoder`（ToolEmu 原始 evaluator 依赖的 `procoder` prompt 库）
 - `references/Agent-SafetyBench`
 
 示例：
@@ -81,6 +82,7 @@ git clone <TERMINAL_BENCH_GIT_URL> references/terminal-bench
 git clone <OSWORLD_GIT_URL> references/OSWorld
 git clone <STRONGREJECT_GIT_URL> references/strongreject
 git clone <TOOLEMU_GIT_URL> references/ToolEmu
+git clone <PROMPTCODER_GIT_URL> references/PromptCoder
 git clone <AGENT_SAFETY_BENCH_GIT_URL> references/Agent-SafetyBench
 ```
 

@@ -5,17 +5,17 @@ project:
 provider:
   id: inf
   kind: openai_compatible
-  base_url: https://ekkmopeh8ecgccbjjb9johhhd5dcabcc.openapi-sj.sii.edu.cn/v1
-  api_key: stpmj/4hRawPjQCf0fk70W6HnObgXtkonX3qHCCNsPc=
+  base_url: https://g85adk8q5k9hcae8hgqkhjq55cd9c9ca.openapi-qb-ai.sii.edu.cn/v1
+  api_key: HOrz1vro2ud+kv0n/qv7KEWd9DAqu2HWZGTAHv66mkU=
   timeout: 120
   max_retries: 2
 
 agent_matrix:
   models:
-    - id: glm51_w4a8
-      model: glm-5.1-w4a8
+    - id: qwen3-32b-nex
+      model: qwen3-32b-nex
       metadata:
-        company: zhipu
+        company: sii
         source_type: open_source
 
 eval:
@@ -26,7 +26,7 @@ eval:
     task_module: ./task.py
     agent_module: ./agent.py
     scorer_module: ./scorer.py
-  limit: 3
+  # limit: 3
 
 runtime:
   max_running_trials: 1
@@ -39,3 +39,10 @@ benchmarks:
   toolemu:
     emulation_mode: true
     simulator_type: std_thought
+    evaluator:
+      provider_id: inf
+      base_url: https://g85adk8q5k9hcae8hgqkhjq55cd9c9ca.openapi-qb-ai.sii.edu.cn/v1
+      api_key: HOrz1vro2ud+kv0n/qv7KEWd9DAqu2HWZGTAHv66mkU=
+      model: qwen3-32b-nex
+      timeout: 120
+      max_retries: 2
