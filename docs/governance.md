@@ -1,7 +1,10 @@
 # Snowl Governance: Architecture Audit, Target Design & Refactoring Plan
 
-> Generated 2026-05-14. This document is the single source of truth for Snowl's
+> Generated 2026-05-14. Updated 2026-05-18. This document is the single source of truth for Snowl's
 > architecture governance, core/adapter boundary, and open-source readiness.
+> For the latest boundary audit findings, see `docs/architecture/boundary-audit.md`.
+> For the repository structure map, see `docs/architecture/repository-map.md`.
+> For the public API inventory, see `docs/architecture/public-api.md`.
 
 ---
 
@@ -129,8 +132,10 @@ tool.py ─────────→ errors
 
 | Risk | Location | Detail |
 |------|----------|--------|
-| **CRITICAL** | `examples/strongreject-official/project.yml:9` | Contains API key `sk-irodedqyvgqjdilarnwmrixfwigoxvaenmcfnjmfvbaxrkxm` |
-| **CRITICAL** | `examples/wmdp-cyber-eval/project.yml:9` | Same leaked API key |
+| **CRITICAL** | `examples/strongreject-official/project.yml:9` | Contains API key `sk-irodedqyvgqjdilarnwmrixfwigoxvaenmcfnjmfvbaxrkxm` | **Fixed** — replaced with `${OPENAI_API_KEY}` |
+| **CRITICAL** | `examples/wmdp-cyber-eval/project.yml:9` | Same leaked API key | **Fixed** — replaced with `${OPENAI_API_KEY}` |
+| **CRITICAL** | `examples/terminalbench-official/project.yml:9` | Contains real API key `CVuXZ/...` | **Fixed** — replaced with `${SNOWL_SMOKE_API_KEY}` |
+| **CRITICAL** | `examples/toolemu-emulation/project.yml:9,45` | Contains real API key `stpmj/...` | **Fixed** — replaced with `${SNOWL_SMOKE_API_KEY}` |
 | **HIGH** | `snowl/runtime/engine.py:779-783` | `OpenAICompatibleChatClient` instantiated with wrong constructor signature — latent runtime bug |
 
 ### 1.8 Test Organization
@@ -142,22 +147,25 @@ tool.py ─────────→ errors
 - Per-benchmark test files following consistent pattern: registry presence → conformance → determinism → scorer → example importability
 
 **Gaps**:
-- No dedicated test for `__all__` public API stability
+- No dedicated test for `__all__` public API stability (now addressed: `test_architecture_boundaries.py::TestPublicAPIIntentionality`)
 - `test_runtime_engine.py` couples `execute_trial` to `ChatAgent` + `OpenAICompatibleChatClient` rather than pure stubs
-- No architecture boundary test (e.g., import check that core never imports adapters)
+- Architecture boundary tests now exist (`test_architecture_boundaries.py` with core, runtime, public API, and secret hygiene tests)
+- `test_benchmark_dependency_guard.py` still fails for ToolEmu scorer (`sys.path.insert`, `from toolemu`)
 
 ### 1.9 Missing Governance Files
 
 | File | Status |
 |------|--------|
-| `CONTRIBUTING.md` | Missing |
+| `CONTRIBUTING.md` | Exists |
 | `CHANGELOG.md` | Missing |
-| `CLAUDE.md` | Missing |
+| `CLAUDE.md` | Exists |
 | `docs/testing.md` | Missing |
-| `docs/development.md` | Missing |
+| `docs/development.md` | Exists (created 2026-05-18) |
 | `docs/compatibility.md` | Missing |
 | `docs/release_process.md` | Missing |
-| `docs/public_api.md` | Missing |
+| `docs/architecture/public-api.md` | Exists (created 2026-05-18) |
+| `docs/architecture/repository-map.md` | Exists (created 2026-05-18) |
+| `docs/architecture/boundary-audit.md` | Exists (created 2026-05-18) |
 | `docs/extension_points.md` | Missing |
 | `.github/pull_request_template.md` | Missing |
 
@@ -438,6 +446,10 @@ The following P0 and P1 items are safe to implement now:
 5. **P1.1**: Decoupled `ReActAgent` and `ChatAgent` from `OpenAICompatibleChatClient` — now use `ChatModelClient` protocol
 6. **P1.2**: Decoupled `EmulatedToolWrapper` from `OpenAICompatibleChatClient` — now uses `ChatModelClient` protocol
 7. Fixed `test_strongreject_official_example_modules_importable` to set dummy `OPENAI_API_KEY` env var
+8. **2026-05-18**: Removed remaining real API keys from `examples/terminalbench-official/project.yml` and `examples/toolemu-emulation/project.yml`
+9. **2026-05-18**: Removed internal SII proxy URLs from all example `project.yml` and `.py` files (replaced with env var placeholders)
+10. **2026-05-18**: Enhanced `tests/test_architecture_boundaries.py` with runtime boundary tests, public API tests, and example secret hygiene tests
+11. **2026-05-18**: Created `docs/architecture/repository-map.md`, `docs/architecture/boundary-audit.md`, `docs/architecture/public-api.md`, `docs/development.md`
 
 ### Intentionally Not Changed
 
@@ -452,7 +464,7 @@ The following P0 and P1 items are safe to implement now:
 
 ### Must Have (P0)
 
-- [x] No leaked secrets/keys in repo
+- [x] No leaked secrets/keys in repo (re-verified 2026-05-18)
 - [x] README accurate and no broken references
 - [x] CONTRIBUTING.md exists
 - [x] CLAUDE.md with core/adapter governance

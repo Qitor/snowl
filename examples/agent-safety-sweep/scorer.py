@@ -6,6 +6,7 @@ benchmark name in task metadata.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -19,12 +20,12 @@ from snowl.model import OpenAICompatibleChatClient, OpenAICompatibleConfig
 def _judge_client_factory(model_name: str) -> OpenAICompatibleChatClient:
     return OpenAICompatibleChatClient(
         OpenAICompatibleConfig(
-            provider_id="inf",
-            base_url="https://ds-v4-flash-w8a8-vllm-ascend.openapi-sj.sii.edu.cn/v1",
-            api_key="stpmj/4hRawPjQCf0fk70W6HnObgXtkonX3qHCCNsPc=",
+            provider_id=os.environ.get("SNOWL_JUDGE_PROVIDER_ID", "inf"),
+            base_url=os.environ["SNOWL_JUDGE_BASE_URL"],
+            api_key=os.environ["SNOWL_PROVIDER_API_KEY"],
             model=model_name,
-            timeout=120,
-            max_retries=2,
+            timeout=int(os.environ.get("SNOWL_JUDGE_TIMEOUT", "120")),
+            max_retries=int(os.environ.get("SNOWL_JUDGE_MAX_RETRIES", "2")),
         )
     )
 

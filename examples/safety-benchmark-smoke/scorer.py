@@ -37,7 +37,7 @@ def _judge_model() -> str:
 
 
 def _judge_base_url() -> str:
-    return os.getenv("SNOWL_SMOKE_JUDGE_BASE_URL", "http://dsv3.sii.edu.cn/v1").strip()
+    return os.getenv("SNOWL_SMOKE_JUDGE_BASE_URL", "").strip()
 
 
 def _judge_models() -> list[str]:

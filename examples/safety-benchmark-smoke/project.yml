@@ -7,7 +7,7 @@ provider:
   kind: openai_compatible
   # The example agent/scorer read real credentials from SNOWL_SMOKE_API_KEY
   # or INF_API_KEY. This placeholder keeps project.yml free of secrets.
-  base_url: http://dsv3.sii.edu.cn/v1
+  base_url: https://api.example.com/v1
   api_key: unused-env-read-by-example-code
   timeout: 120
   max_retries: 1
@@ -17,17 +17,14 @@ agent_matrix:
     - id: glm5
       model: glm-5
       metadata:
-        base_url: https://ekcddpc99eqac9mehabob59bphmbmdpe.openapi-sj.sii.edu.cn/v1
         model_family: GLM
     - id: glm51
       model: glm-5.1-w4a8
       metadata:
-        base_url: https://ekkmopeh8ecgccbjjb9johhhd5dcabcc.openapi-sj.sii.edu.cn/v1
         model_family: GLM
     - id: deepseek_v3_ep
       model: deepseek-v3-ep
       metadata:
-        base_url: http://dsv3.sii.edu.cn/v1
         model_family: DeepSeek
 
 eval:

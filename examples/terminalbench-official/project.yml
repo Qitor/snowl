@@ -5,8 +5,8 @@ project:
 provider:
   id: siliconflow
   kind: openai_compatible
-  base_url: https://kimi-k25-fyh-128k.openapi-qb-ai.sii.edu.cn/v1
-  api_key: CVuXZ/EHsJQMV2peuex0chkH+99/QaKq089fciMtqHo=
+  base_url: https://api.example.com/v1
+  api_key: sk-...
   timeout: 200
   max_retries: 2
 
