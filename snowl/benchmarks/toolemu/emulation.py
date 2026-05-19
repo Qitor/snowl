@@ -140,6 +140,7 @@ class ToolEmuEmulator:
         agent = ReActAgent(
             model_client=self.agent_llm,
             max_steps=self.max_steps,
+            temperature=0.0,
             middlewares=[wrapper],
         )
 

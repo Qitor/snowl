@@ -252,6 +252,36 @@ def test_execute_trial_artifacts_passthrough() -> None:
     asyncio.run(_run())
 
 
+def test_execute_trial_agentdojo_state_passthrough() -> None:
+    class AgentDojoStateAgent:
+        agent_id = "agentdojo-state-agent"
+
+        async def run(self, state, context, tools=None):
+            from snowl.core import StopReason
+
+            state.output = {
+                "message": {"role": "assistant", "content": "ok"},
+                "agentdojo_post_state": {"account": {"balance": 10}},
+                "agentdojo_state_diff": [{"path": "account.balance", "op": "unchanged"}],
+            }
+            state.stop_reason = StopReason.COMPLETED
+            return state
+
+    req = TrialRequest(
+        task=_task(),
+        agent=AgentDojoStateAgent(),
+        scorer=PassScorer(),
+        sample={"id": "s1", "input": "hello"},
+    )
+
+    async def _run() -> None:
+        out = await execute_trial(req)
+        assert out.task_result.payload["agentdojo_post_state"] == {"account": {"balance": 10}}
+        assert out.trace["agentdojo_state_diff"] == [{"path": "account.balance", "op": "unchanged"}]
+
+    asyncio.run(_run())
+
+
 def test_execute_trial_artifacts_preserved_when_incorrect() -> None:
     class ArtifactAgent:
         agent_id = "artifact-agent"

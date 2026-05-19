@@ -541,9 +541,9 @@ class EmulatedToolWrapper:
         provider_id = getattr(self.emulator_client, "provider_id", "default")
         if self.scheduler is not None:
             async with self.scheduler.provider_admission(provider_id):
-                response = await self.emulator_client.generate(messages)
+                response = await self.emulator_client.generate(messages, temperature=0.0)
         else:
-            response = await self.emulator_client.generate(messages)
+            response = await self.emulator_client.generate(messages, temperature=0.0)
 
         response_text = str(response.message.get("content", ""))
 

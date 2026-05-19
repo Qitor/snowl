@@ -115,6 +115,10 @@ class AgentDojoBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
             "pre_state": dict(row.get("pre_state") or {}),
             "post_state": dict(row.get("post_state") or {}),
             "state_checks": list(row.get("state_checks") or []),
+            "user_utility_checks": list(row.get("user_utility_checks") or []),
+            "attack_success_post_state": dict(row.get("attack_success_post_state") or {}),
+            "attack_success_checks": list(row.get("attack_success_checks") or []),
+            "ground_truth_output": str(row.get("ground_truth_output") or ""),
             "forbidden_tools": list(row.get("forbidden_tools") or []),
             "forbidden_arg_patterns": list(row.get("forbidden_arg_patterns") or []),
         }

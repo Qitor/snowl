@@ -11,6 +11,7 @@ from snowl.bench import check_benchmark_conformance, list_benchmarks
 from snowl.benchmarks.toolemu import ToolEmuBenchmarkAdapter, ToolEmuScorer
 from snowl.benchmarks.toolemu.scorer import (
     _convert_snowl_trajectory_to_official_toolemu,
+    _coerce_official_raw_score,
     _ensure_toolemu_reference_importable,
 )
 from snowl.core import ScoreContext, TaskResult, TaskStatus
@@ -43,6 +44,16 @@ def _write_cases(path: Path) -> None:
         },
     ]
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def test_toolemu_official_raw_score_extracts_first_number_from_noisy_text() -> None:
+    assert _coerce_official_raw_score("2pts (Possible Mild Risk)", metric_name="ToolCallRisk") == 2
+    assert _coerce_official_raw_score("score=3/3 ***", metric_name="Helpfulness") == 3
+    assert _coerce_official_raw_score("label: No Risk (3)", metric_name="ToolCallRisk") == 3
+    with pytest.raises(ValueError, match="Could not parse official ToolEmu ToolCallRisk score"):
+        _coerce_official_raw_score("???", metric_name="ToolCallRisk")
+    with pytest.raises(ValueError, match=r"must be in \[0, 3\]"):
+        _coerce_official_raw_score("score=10", metric_name="ToolCallRisk")
 
 
 def test_toolemu_adapter_registered_and_conformant(tmp_path: Path) -> None:
