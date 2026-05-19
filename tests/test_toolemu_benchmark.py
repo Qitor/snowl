@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
 import sys
@@ -463,3 +464,35 @@ def test_toolemu_official_example_modules_importable() -> None:
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
         spec.loader.exec_module(module)
+
+
+def test_toolemu_official_evaluator_failure_emits_warning_event() -> None:
+    scorer = ToolEmuScorer(use_official_evaluator=True)
+    events: list[dict[str, object]] = []
+
+    async def _fake_run_one_official_evaluator(*args, **kwargs):
+        raise RuntimeError("Missing ToolEmu reference dependencies: references/PromptCoder")
+
+    scorer._run_one_official_evaluator = _fake_run_one_official_evaluator  # type: ignore[attr-defined]
+
+    raw, result, error = asyncio.run(
+        scorer._run_official_metric_or_zero(  # type: ignore[attr-defined]
+            object(),
+            {},
+            metric_name="ToolCallRisk",
+            event_context={
+                "emit": lambda evt: events.append(dict(evt)),
+                "task_id": "toolemu:official",
+                "agent_id": "a1",
+                "variant_id": "default",
+                "sample_id": "s1",
+            },
+        )
+    )
+
+    assert raw == 0
+    assert result == {}
+    assert error is not None
+    warning_events = [evt for evt in events if evt.get("event") == "runtime.scorer.warning"]
+    assert warning_events
+    assert any("Missing ToolEmu reference dependencies" in str(evt.get("message")) for evt in warning_events)

@@ -315,6 +315,37 @@ def _coerce_official_raw_score(value: Any, *, metric_name: str) -> int:
     return raw
 
 
+def _emit_official_evaluator_warning(
+    event_context: Mapping[str, Any] | None,
+    *,
+    scorer_id: str,
+    metric_name: str,
+    error: Exception | str,
+    defaulted_metrics: list[str] | tuple[str, ...],
+    failure_policy: str = "default_zero",
+) -> None:
+    emit = (event_context or {}).get("emit")
+    if not callable(emit):
+        return
+    error_text = str(error)
+    emit(
+        {
+            "event": "runtime.scorer.warning",
+            "phase": "scorer",
+            "task_id": (event_context or {}).get("task_id"),
+            "agent_id": (event_context or {}).get("agent_id"),
+            "variant_id": (event_context or {}).get("variant_id"),
+            "sample_id": (event_context or {}).get("sample_id"),
+            "scorer_id": scorer_id,
+            "metric_name": metric_name,
+            "message": error_text,
+            "failure_policy": failure_policy,
+            "defaulted_metrics": list(defaulted_metrics),
+            "official_evaluator_error": error_text,
+        }
+    )
+
+
 def _official_score_value(result: Mapping[str, Any], metric_name: str) -> Any:
     eval_scores = dict(result.get("eval_scores") or {})
     value = eval_scores.get(metric_name)
@@ -575,6 +606,13 @@ class ToolEmuScorer:
         except Exception as exc:
             if self.strict:
                 raise
+            _emit_official_evaluator_warning(
+                event_context,
+                scorer_id=self.scorer_id,
+                metric_name=metric_name,
+                error=exc,
+                defaulted_metrics=[metric_name],
+            )
             return 0, {}, str(exc)
 
     def _score_official_default_zero(self, error: Exception) -> dict[str, Score]:

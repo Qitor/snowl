@@ -419,6 +419,74 @@ agent = A()
     assert effective_rows and effective_rows[0]["status"] == "success"
 
 
+def test_cli_retry_replays_recovery_scorer_warning_to_terminal(tmp_path: Path, capsys) -> None:
+    (tmp_path / "task.py").write_text(
+        """
+from snowl.core import EnvSpec, Task
+task = Task(task_id="t1", env_spec=EnvSpec(env_type="local"), sample_iter_factory=lambda: iter([{"id":"s1","input":"x"}]))
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "agent.py").write_text(
+        """
+from snowl.core import StopReason
+class A:
+    agent_id = "a1"
+    async def run(self, state, context, tools=None):
+        _ = (context, tools)
+        state.output = {"message":{"role":"assistant","content":"ok"}, "usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}, "trace_events":[]}
+        state.stop_reason = StopReason.COMPLETED
+        return state
+agent = A()
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "scorer.py").write_text(
+        """
+from snowl.core import Score
+class S:
+    scorer_id = "s1"
+    def score(self, task_result, trace, context):
+        _ = (task_result, trace, context)
+        return {"accuracy": Score(value=1.0)}
+scorer = S()
+""",
+        encoding="utf-8",
+    )
+    _write_project_yml(tmp_path)
+
+    rc = main(["eval", str(tmp_path / "project.yml"), "--no-ui", "--no-web-monitor"])
+    assert rc == 0
+    run_dir = _latest_run_dir(tmp_path)
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    run_id = manifest["run_id"]
+
+    recovery_path = run_dir / "recovery.json"
+    recovery = json.loads(recovery_path.read_text(encoding="utf-8"))
+    trial_key = "t1::a1::default::s1"
+    attempt_row = recovery["attempts_by_trial"][trial_key][0]
+    attempt_row["scores"]["toolemu_overall"] = {
+        "value": 0.0,
+        "explanation": None,
+        "metadata": {
+            "official_evaluator_error": "Missing ToolEmu reference dependencies: references/PromptCoder",
+            "official_evaluator_errors": {
+                "official": "Missing ToolEmu reference dependencies: references/PromptCoder"
+            },
+            "official_evaluator_defaulted_metrics": ["ToolCallRisk", "Helpfulness"],
+            "official_evaluator_failure_policy": "default_zero",
+        },
+    }
+    recovery_path.write_text(json.dumps(recovery, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    rc = main(["retry", run_id, "--project", str(tmp_path / "project.yml"), "--no-web-monitor"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "[scorer] warning" in out
+    assert "Missing ToolEmu reference dependencies" in out
+    assert "failure_policy: default_zero" in out
+
+
 def test_eval_auto_retry_recovers_within_same_run(tmp_path: Path) -> None:
     (tmp_path / "task.py").write_text(
         """

@@ -429,6 +429,36 @@ class ConsoleRenderer:
                 for k, v in sorted(metrics.items()):
                     self._emit(f"    {k}: {v:.3f}" if isinstance(v, (int, float)) else f"    {k}: {v}")
 
+    def _format_scorer_warning(self, event: dict[str, Any]) -> None:
+        theme = self.streaming_theme
+        metric_name = self._pick(event, "metric_name") or "unknown"
+        message = self._clip_text(self._pick(event, "message") or "", limit=240)
+        failure_policy = self._pick(event, "failure_policy")
+        defaulted_metrics = self._pick(event, "defaulted_metrics")
+        try:
+            from rich.text import Text
+
+            t = Text()
+            t.append("  [scorer] ", style=theme.scorer_metric)
+            t.append("warning ", style=theme.scorer_value)
+            t.append(str(metric_name), style=theme.detail_value)
+            if message:
+                t.append(f"  {message}", style=theme.scorer_value)
+            self._emit(t)
+            if failure_policy is not None:
+                self._emit(Text(f"    failure_policy: {failure_policy}", style=theme.detail_value))
+            if defaulted_metrics:
+                self._emit(Text(f"    defaulted_metrics: {defaulted_metrics}", style=theme.detail_value))
+        except Exception:
+            line = f"  [scorer] warning {metric_name}"
+            if message:
+                line += f"  {message}"
+            self._emit(line)
+            if failure_policy is not None:
+                self._emit(f"    failure_policy: {failure_policy}")
+            if defaulted_metrics:
+                self._emit(f"    defaulted_metrics: {defaulted_metrics}")
+
     def _format_model_error(self, event: dict[str, Any]) -> None:
         theme = self.streaming_theme
         model = self._pick(event, "model") or "?"
@@ -829,6 +859,9 @@ class ConsoleRenderer:
             return
         if name == "runtime.scorer.finish":
             self._format_scorer_finish(event)
+            return
+        if name == "runtime.scorer.warning":
+            self._format_scorer_warning(event)
             return
 
         self._format_generic_event(event)
