@@ -1,7 +1,7 @@
 {
-  "project_dir": "/Users/jcy/Documents/Phd/sii/other/summer-26/snowl/examples/toolemu-emulation",
+  "project_dir": "/Users/jcy/Documents/Phd/sii/other/summer-26/snowl/examples/agentdojo",
   "poll_interval_sec": 0.5,
-  "cache_key": "0.1.0-459caf2412c2-5a5f46ca6867",
+  "cache_key": "0.1.0-459caf2412c2-b92480a29e5d",
   "source_dir": "/Users/jcy/Documents/Phd/sii/other/summer-26/snowl/webui",
   "source_mode": "repo"
 }

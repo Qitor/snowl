@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+from pathlib import Path
 
 import pytest
 
@@ -196,14 +197,30 @@ TRAVEL_STATE = {
         {"name": "Grand Hotel", "city": "Paris", "price_min": 100, "price_max": 300, "address": "1 Rue de Paris", "rating": 4.5, "reviews": ["Great!"]},
     ]},
     "restaurants": {"restaurant_list": [
-        {"name": "Le Bistro", "city": "Paris", "address": "2 Rue de Food", "rating": 4.0, "reviews": ["Delicious"], "cuisine_type": "French", "price_per_person": 50.0, "operating_hours": "9-22"},
+        {"name": "Le Bistro", "city": "Paris", "address": "2 Rue de Food", "rating": 4.0, "reviews": ["Delicious"], "contact_information": "Phone: +33 1", "cuisine_type": "French", "dietary_restrictions": "Vegan available", "price_per_person": 50.0, "operating_hours": "9-22"},
     ]},
     "car_rental": {"company_list": [
-        {"name": "RentACar", "city": "Paris", "car_types_available": ["Sedan", "SUV"], "price_per_day": 75.0},
+        {"name": "RentACar", "city": "Paris", "address": "3 Rue Cars", "rating": 4.6, "reviews": ["Clean cars"], "car_types_available": ["Sedan", "SUV"], "fuel_options": ["Regular", "Electric"], "price_per_day": 75.0},
     ]},
     "flights": {"flight_list": [
         {"airline": "AirFrance", "flight_number": "AF123", "departure_city": "NYC", "arrival_city": "Paris", "price": 500.0},
     ]},
+    "calendar": {
+        "current_day": "2024-05-15",
+        "account_email": "john@example.com",
+        "initial_events": [],
+        "events": {},
+    },
+    "inbox": {
+        "account_email": "john@example.com",
+        "initial_emails": [],
+        "emails": {},
+        "contact_list": [],
+        "trash": {},
+        "received": [],
+        "sent": [],
+        "drafts": [],
+    },
     "reservation": {},
 }
 
@@ -224,6 +241,57 @@ def test_travel_get_flight_information() -> None:
     result = TRAVEL_TOOLS["get_flight_information"](copy.deepcopy(TRAVEL_STATE), departure_city="NYC", arrival_city="Paris")
     assert len(result["flights"]) == 1
     assert result["flights"][0]["airline"] == "AirFrance"
+
+
+def test_travel_schema_tools_have_executor_implementations() -> None:
+    tools = json.loads(Path("references/AgentDojo/assets/travel_tools.json").read_text())
+    schema_names = {tool["function"]["name"] for tool in tools}
+    assert schema_names <= set(TRAVEL_TOOLS)
+
+
+def test_travel_create_calendar_event_updates_calendar_and_inbox() -> None:
+    state = copy.deepcopy(TRAVEL_STATE)
+    result = TRAVEL_TOOLS["create_calendar_event"](
+        state,
+        title="Dinner at Le Bistro",
+        start_time="2024-10-15 18:00",
+        end_time="2024-10-15 19:00",
+        description="Book a table.",
+        location="2 Rue de Food",
+    )
+
+    assert result["id_"] == "0"
+    assert state["calendar"]["events"]["0"]["title"] == "Dinner at Le Bistro"
+    assert state["calendar"]["events"]["0"]["participants"] == ["john@example.com"]
+    assert state["inbox"]["emails"]["0"]["subject"] == "Invitation: Dinner at Le Bistro"
+    assert state["inbox"]["sent"][0]["attachments"][0]["id_"] == "0"
+
+
+def test_travel_send_email_updates_sent_views() -> None:
+    state = copy.deepcopy(TRAVEL_STATE)
+    result = TRAVEL_TOOLS["send_email"](
+        state,
+        recipients=["jane@example.com"],
+        subject="Hotel: Grand Hotel",
+        body="Stay at Grand Hotel.",
+    )
+
+    assert result["id_"] == "0"
+    assert state["inbox"]["emails"]["0"]["recipients"] == ["jane@example.com"]
+    assert state["inbox"]["sent"] == [state["inbox"]["emails"]["0"]]
+
+
+def test_travel_missing_lookup_tools_return_data() -> None:
+    state = copy.deepcopy(TRAVEL_STATE)
+    assert TRAVEL_TOOLS["get_dietary_restrictions_for_all_restaurants"](state, restaurant_names=["Le Bistro"]) == {
+        "Le Bistro": "Vegan available"
+    }
+    assert TRAVEL_TOOLS["get_contact_information_for_restaurants"](state, restaurant_names=["Le Bistro"]) == {
+        "Le Bistro": "Phone: +33 1"
+    }
+    assert "Rating: 4.6" in TRAVEL_TOOLS["get_rating_reviews_for_car_rental"](state, company_name=["RentACar"])["RentACar"]
+    assert TRAVEL_TOOLS["get_car_rental_address"](state, company_name=["RentACar"]) == {"RentACar": "3 Rue Cars"}
+    assert TRAVEL_TOOLS["get_car_fuel_options"](state, company_name=["RentACar"]) == {"RentACar": ["Regular", "Electric"]}
 
 
 # ---------------------------------------------------------------------------

@@ -80,6 +80,7 @@ class AgentDojoAgent:
             model_client=self.model_client,
             agent_id=self.agent_id,
             max_steps=self.max_steps,
+            temperature=0.0,
             middlewares=[executor],
         )
 

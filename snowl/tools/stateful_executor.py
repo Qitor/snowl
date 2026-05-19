@@ -22,6 +22,7 @@ Change guardrails:
 from __future__ import annotations
 
 import copy
+import datetime
 import json
 from typing import Any, Callable
 
@@ -149,7 +150,16 @@ def _banking_update_scheduled_transaction(
     return {"message": f"Transaction with ID {id} updated."}
 
 
-def _banking_read_file(state: dict[str, Any], *, filename: str, **kwargs: Any) -> dict[str, Any]:
+def _banking_read_file(
+    state: dict[str, Any],
+    *,
+    file_path: str | None = None,
+    filename: str | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    filename = file_path if file_path is not None else filename
+    if filename is None:
+        return {"error": "Missing file_path."}
     fs = state.get("filesystem", {})
     files = fs.get("files", {})
     if filename in files:
@@ -270,6 +280,29 @@ def _travel_get_rating_reviews_for_restaurants(
     }
 
 
+def _travel_get_dietary_restrictions_for_all_restaurants(
+    state: dict[str, Any], *, restaurant_names: list[str], **kwargs: Any
+) -> dict[str, Any]:
+    restaurants = state.get("restaurants", {}).get("restaurant_list", [])
+    restaurant_names_text = ", ".join(restaurant_names)
+    return {
+        r["name"]: r.get("dietary_restrictions", "")
+        for r in restaurants
+        if r["name"] in restaurant_names_text
+    }
+
+
+def _travel_get_contact_information_for_restaurants(
+    state: dict[str, Any], *, restaurant_names: list[str], **kwargs: Any
+) -> dict[str, Any]:
+    restaurants = state.get("restaurants", {}).get("restaurant_list", [])
+    return {
+        r["name"]: r.get("contact_information", "")
+        for r in restaurants
+        if r["name"] in restaurant_names
+    }
+
+
 def _travel_get_cuisine_type_for_restaurants(
     state: dict[str, Any], *, restaurant_names: list[str], **kwargs: Any
 ) -> dict[str, Any]:
@@ -306,11 +339,183 @@ def _travel_get_car_types_available(
     return {c["name"]: c.get("car_types_available", []) for c in companies if c["name"] in company_name}
 
 
+def _travel_get_rating_reviews_for_car_rental(
+    state: dict[str, Any], *, company_name: list[str], **kwargs: Any
+) -> dict[str, Any]:
+    companies = state.get("car_rental", {}).get("company_list", [])
+    return {
+        c["name"]: f"Rating: {c['rating']}\nReviews: " + "\n".join(c.get("reviews", []))
+        for c in companies
+        if c["name"] in company_name
+    }
+
+
+def _travel_get_car_rental_address(
+    state: dict[str, Any], *, company_name: list[str], **kwargs: Any
+) -> dict[str, Any]:
+    companies = state.get("car_rental", {}).get("company_list", [])
+    return {c["name"]: c.get("address", "") for c in companies if c["name"] in company_name}
+
+
+def _travel_get_car_fuel_options(
+    state: dict[str, Any], *, company_name: list[str], **kwargs: Any
+) -> dict[str, Any]:
+    companies = state.get("car_rental", {}).get("company_list", [])
+    return {c["name"]: c.get("fuel_options", []) for c in companies if c["name"] in company_name}
+
+
 def _travel_get_car_price_per_day(
     state: dict[str, Any], *, company_name: list[str], **kwargs: Any
 ) -> dict[str, Any]:
     companies = state.get("car_rental", {}).get("company_list", [])
     return {c["name"]: c.get("price_per_day", 0) for c in companies if c["name"] in company_name}
+
+
+def _parse_calendar_datetime(value: str) -> datetime.datetime:
+    return datetime.datetime.strptime(value, "%Y-%m-%d %H:%M")
+
+
+def _iso_calendar_datetime(value: datetime.datetime) -> str:
+    return value.isoformat(timespec="seconds")
+
+
+def _next_mapping_id(items: dict[str, Any]) -> str:
+    ids: list[int] = []
+    for key in items:
+        try:
+            ids.append(int(key))
+        except (TypeError, ValueError):
+            continue
+    return str(max(ids, default=-1) + 1)
+
+
+def _refresh_inbox_views(inbox: dict[str, Any]) -> None:
+    emails = list(inbox.get("emails", {}).values())
+    inbox["received"] = [email for email in emails if email.get("status") == "received"]
+    inbox["sent"] = [email for email in emails if email.get("status") == "sent"]
+    inbox["drafts"] = [email for email in emails if email.get("status") == "draft"]
+
+
+def _travel_send_email(
+    state: dict[str, Any],
+    *,
+    recipients: list[str],
+    subject: str,
+    body: str,
+    attachments: list[dict[str, Any]] | None = None,
+    cc: list[str] | None = None,
+    bcc: list[str] | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    inbox = state.setdefault("inbox", {})
+    emails = inbox.setdefault("emails", {})
+    email_id = _next_mapping_id(emails)
+    email = {
+        "id_": email_id,
+        "sender": inbox.get("account_email", ""),
+        "recipients": recipients,
+        "cc": cc or [],
+        "bcc": bcc or [],
+        "subject": subject,
+        "body": body,
+        "status": "sent",
+        "read": True,
+        "timestamp": datetime.datetime.now().isoformat(),
+        "attachments": attachments or [],
+    }
+    emails[email_id] = email
+    _refresh_inbox_views(inbox)
+    return email
+
+
+def _travel_create_calendar_event(
+    state: dict[str, Any],
+    *,
+    title: str,
+    start_time: str,
+    end_time: str,
+    description: str = "",
+    participants: list[str] | None = None,
+    location: str | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    calendar = state.setdefault("calendar", {})
+    events = calendar.setdefault("events", {})
+    event_id = _next_mapping_id(events)
+    participants = list(participants or [])
+    account_email = calendar.get("account_email")
+    if account_email is not None:
+        participants.append(account_email)
+    participants = list(set(participants))
+    event = {
+        "id_": event_id,
+        "title": title,
+        "description": description,
+        "start_time": _iso_calendar_datetime(_parse_calendar_datetime(start_time)),
+        "end_time": _iso_calendar_datetime(_parse_calendar_datetime(end_time)),
+        "location": location,
+        "participants": participants,
+        "all_day": False,
+        "status": "confirmed",
+    }
+    events[event_id] = event
+    _travel_send_email(
+        state,
+        recipients=participants,
+        subject=f"Invitation: {title}",
+        body=description,
+        attachments=[event],
+    )
+    return event
+
+
+def _event_date(event: dict[str, Any]) -> datetime.date:
+    return datetime.datetime.fromisoformat(str(event.get("start_time"))).date()
+
+
+def _travel_get_day_calendar_events(
+    state: dict[str, Any], *, day: str, **kwargs: Any
+) -> list[dict[str, Any]]:
+    target = datetime.datetime.strptime(day, "%Y-%m-%d").date()
+    events = state.get("calendar", {}).get("events", {}).values()
+    return [event for event in events if _event_date(event) == target]
+
+
+def _travel_search_calendar_events(
+    state: dict[str, Any], *, query: str, date: str | None = None, **kwargs: Any
+) -> list[dict[str, Any]]:
+    if date is not None:
+        events = _travel_get_day_calendar_events(state, day=date)
+    else:
+        events = list(state.get("calendar", {}).get("events", {}).values())
+    query_lower = query.lower()
+    matches = [
+        event
+        for event in events
+        if query_lower in str(event.get("title", "")).lower()
+        or query_lower in str(event.get("description", "")).lower()
+    ]
+    if not matches:
+        raise ValueError("No events found. Try with a different query.")
+    return matches
+
+
+def _travel_cancel_calendar_event(
+    state: dict[str, Any], *, event_id: str, **kwargs: Any
+) -> str:
+    events = state.get("calendar", {}).get("events", {})
+    if event_id not in events:
+        raise ValueError(f"Event with ID '{event_id}' not found.")
+    event = events[event_id]
+    event["status"] = "canceled"
+    _travel_send_email(
+        state,
+        recipients=list(event.get("participants", [])),
+        subject=f"Canceled: '{event.get('title', '')}'",
+        body="The event has been canceled.",
+        attachments=[event],
+    )
+    return f"Event with ID {event_id} has been canceled and participants have been notified."
 
 
 def _travel_reserve_hotel(
@@ -389,16 +594,26 @@ TRAVEL_TOOLS: dict[str, Callable] = {
     "get_all_restaurants_in_city": _travel_get_all_restaurants_in_city,
     "get_restaurants_address": _travel_get_restaurants_address,
     "get_rating_reviews_for_restaurants": _travel_get_rating_reviews_for_restaurants,
+    "get_dietary_restrictions_for_all_restaurants": _travel_get_dietary_restrictions_for_all_restaurants,
+    "get_contact_information_for_restaurants": _travel_get_contact_information_for_restaurants,
     "get_cuisine_type_for_restaurants": _travel_get_cuisine_type_for_restaurants,
     "get_price_for_restaurants": _travel_get_price_for_restaurants,
     "check_restaurant_opening_hours": _travel_check_restaurant_opening_hours,
     "get_all_car_rental_companies_in_city": _travel_get_all_car_rental_companies_in_city,
     "get_car_types_available": _travel_get_car_types_available,
+    "get_rating_reviews_for_car_rental": _travel_get_rating_reviews_for_car_rental,
+    "get_car_rental_address": _travel_get_car_rental_address,
+    "get_car_fuel_options": _travel_get_car_fuel_options,
     "get_car_price_per_day": _travel_get_car_price_per_day,
+    "create_calendar_event": _travel_create_calendar_event,
+    "search_calendar_events": _travel_search_calendar_events,
+    "get_day_calendar_events": _travel_get_day_calendar_events,
+    "cancel_calendar_event": _travel_cancel_calendar_event,
     "reserve_hotel": _travel_reserve_hotel,
     "reserve_restaurant": _travel_reserve_restaurant,
     "reserve_car_rental": _travel_reserve_car_rental,
     "get_flight_information": _travel_get_flight_information,
+    "send_email": _travel_send_email,
 }
 
 

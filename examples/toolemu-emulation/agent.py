@@ -44,7 +44,7 @@ def _build_emulation_agent(
         emulator_llm=emulator_client,
         simulator_type=SIMULATOR_TYPE,
         toolkit_data=TOOLKIT_DATA,
-        max_steps=10,
+        max_steps=15,
     )
 
 

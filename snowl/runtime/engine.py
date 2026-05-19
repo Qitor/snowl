@@ -958,6 +958,9 @@ async def execute_agent_phase(prepared: PreparedTrial | TrialRequest) -> Partial
     variant_params = getattr(request.agent, "params", None)
     if isinstance(variant_params, dict) and "model_metadata" in variant_params:
         payload["model_metadata"] = variant_params["model_metadata"]
+    for _agentdojo_key in ("agentdojo_post_state", "agentdojo_state_diff"):
+        if output.get(_agentdojo_key) is not None:
+            payload[_agentdojo_key] = output[_agentdojo_key]
     if output.get("osworld_score") is not None:
         payload["osworld_score"] = output["osworld_score"]
     if prepared.prepared_sandbox is not None:
@@ -1007,6 +1010,9 @@ async def execute_agent_phase(prepared: PreparedTrial | TrialRequest) -> Partial
         ],
         "stop_reason": state.stop_reason.value if state.stop_reason else None,
     }
+    for _agentdojo_key in ("agentdojo_post_state", "agentdojo_state_diff"):
+        if output.get(_agentdojo_key) is not None:
+            trace[_agentdojo_key] = output[_agentdojo_key]
     if prepared.prepared_sandbox is not None:
         trace["sandbox"] = {
             "sandbox_id": prepared.prepared_sandbox.sandbox_id,
@@ -1091,10 +1097,23 @@ async def score_trial_phase(prepared: PreparedTrial | TrialRequest, partial: Par
                     "scorer_id": scorer_id,
                 }
             )
+            scorer_context = score_context
+            if scorer_id == "toolemu" and getattr(scorer, "use_official_evaluator", False):
+                scorer_context = ScoreContext(
+                    task_id=score_context.task_id,
+                    agent_id=score_context.agent_id,
+                    sample_id=score_context.sample_id,
+                    task_metadata=score_context.task_metadata,
+                    sample_metadata={
+                        **score_context.sample_metadata,
+                        "__snowl_emit_event": emit,
+                        "__snowl_variant_id": variant_id,
+                    },
+                )
             if hasattr(scorer, "ascore") and callable(scorer.ascore):
-                scores = await scorer.ascore(task_result, trace, score_context)
+                scores = await scorer.ascore(task_result, trace, scorer_context)
             else:
-                scores = await asyncio.to_thread(scorer.score, task_result, trace, score_context)
+                scores = await asyncio.to_thread(scorer.score, task_result, trace, scorer_context)
             validate_scores(scores)
             all_scores.update(scores)
             emit(

@@ -220,6 +220,7 @@ def build_dataset(
 
             post_dict = _env_to_dict(env)
             state_checks = _compute_state_checks(pre_dict, post_dict)
+            ground_truth_output = str(getattr(user_task, "GROUND_TRUTH_OUTPUT", "") or "")
 
             prompt = user_task.PROMPT
             rows.append({
@@ -238,6 +239,9 @@ def build_dataset(
                 "pre_state": pre_dict,
                 "post_state": post_dict,
                 "state_checks": state_checks,
+                "user_utility_checks": state_checks,
+                "attack_success_checks": [],
+                "ground_truth_output": ground_truth_output,
                 "forbidden_tools": [],
                 "forbidden_arg_patterns": [],
             })
@@ -270,21 +274,25 @@ def build_dataset(
 
                     pre_dict = _env_to_dict(copy.deepcopy(env))
 
-                    # Compute post_state from injection ground truth
+                    # Compute user utility post_state from the user-task ground truth.
+                    user_env = copy.deepcopy(env)
                     try:
-                        gt_calls = injection_task.ground_truth(env)
-                        _run_ground_truth(env, gt_calls, suite.tools)
+                        gt_calls = user_task.ground_truth(user_env)
+                        _run_ground_truth(user_env, gt_calls, suite.tools)
                     except Exception:
                         pass
+                    user_post_dict = _env_to_dict(user_env)
+                    user_utility_checks = _compute_state_checks(pre_dict, user_post_dict)
 
-                    post_dict = _env_to_dict(env)
-
-                    # State checks: compare clean env vs post-injection env
-                    clean_env = suite.load_and_inject_default_environment(vector_defaults)
-                    if hasattr(user_task, "init_environment"):
-                        clean_env = user_task.init_environment(clean_env)
-                    clean_dict = _env_to_dict(clean_env)
-                    state_checks = _compute_state_checks(clean_dict, post_dict)
+                    # Compute attack-success checks separately from user utility.
+                    attack_env = copy.deepcopy(env)
+                    try:
+                        gt_calls = injection_task.ground_truth(attack_env)
+                        _run_ground_truth(attack_env, gt_calls, suite.tools)
+                    except Exception:
+                        pass
+                    attack_post_dict = _env_to_dict(attack_env)
+                    attack_success_checks = _compute_state_checks(pre_dict, attack_post_dict)
 
                     # Extract forbidden info from injection ground truth
                     ref_env = suite.load_and_inject_default_environment(vector_defaults)
@@ -295,6 +303,7 @@ def build_dataset(
                     )
 
                     prompt = user_task.PROMPT
+                    ground_truth_output = str(getattr(user_task, "GROUND_TRUTH_OUTPUT", "") or "")
                     rows.append({
                         "prompt": prompt,
                         "input": prompt,
@@ -310,8 +319,12 @@ def build_dataset(
                         "tool_schemas": tool_schemas,
                         "tool_names": tool_names,
                         "pre_state": pre_dict,
-                        "post_state": post_dict,
-                        "state_checks": state_checks,
+                        "post_state": user_post_dict,
+                        "state_checks": user_utility_checks,
+                        "user_utility_checks": user_utility_checks,
+                        "attack_success_post_state": attack_post_dict,
+                        "attack_success_checks": attack_success_checks,
+                        "ground_truth_output": ground_truth_output,
                         "forbidden_tools": forbidden_tools,
                         "forbidden_arg_patterns": forbidden_arg_patterns,
                     })

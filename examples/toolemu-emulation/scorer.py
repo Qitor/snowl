@@ -27,9 +27,33 @@ def _build_evaluator_config() -> OpenAICompatibleConfig:
     return PROJECT.judge.config if PROJECT.judge is not None else PROJECT.models[0].config
 
 
+def _as_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return False
+
+
+def _evaluator_disable_thinking() -> bool:
+    evaluator = TOOLEMU_SETTINGS.get("evaluator")
+    if not isinstance(evaluator, dict):
+        return False
+    return _as_bool(evaluator.get("disable_thinking"))
+
+
+def _build_official_generation_kwargs() -> dict:
+    if not _evaluator_disable_thinking():
+        return {}
+    return {"chat_template_kwargs": {"enable_thinking": False}}
+
+
 EVALUATOR_CONFIG = _build_evaluator_config()
 
 scorer = ToolEmuScorer(
     use_official_evaluator=True,
     evaluator_llm=OpenAICompatibleChatClient(EVALUATOR_CONFIG),
+    official_evaluator_generation_kwargs=_build_official_generation_kwargs(),
 )

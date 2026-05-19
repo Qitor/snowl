@@ -26,7 +26,7 @@ def _build_agentdojo_agent(
 
     return AgentDojoAgent(
         model_client=agent_client,
-        max_steps=10,
+        max_steps=15,
     )
 
 
