@@ -54,6 +54,13 @@ def test_strongreject_benchmark_registered_and_conformant(tmp_path: Path) -> Non
     assert report["ok"] is True
 
 
+def test_strongreject_default_packaged_smoke_is_conformant() -> None:
+    report = check_benchmark_conformance("strongreject")
+    assert report["ok"] is True
+    adapter = StrongRejectBenchmarkAdapter()
+    assert "strongreject_smoke.csv" in adapter.dataset_path or Path(adapter.dataset_path).exists()
+
+
 def test_strongreject_adapter_deterministic_ids_and_filters(tmp_path: Path) -> None:
     dataset = tmp_path / "strongreject.csv"
     _write_dataset(dataset)

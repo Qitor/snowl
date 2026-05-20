@@ -1,0 +1,27 @@
+project:
+  name: sandbox-coding-smoke-docker
+  root_dir: .
+
+provider:
+  id: local
+  kind: openai_compatible
+  base_url: http://127.0.0.1:9/v1
+  api_key: unused
+
+agent_matrix:
+  models:
+    - id: local
+      model: local/no-model
+
+eval:
+  benchmark: sandbox_coding_smoke
+  code:
+    base_dir: .
+    task_module: ./docker_task.py
+    agent_module: ./agent.py
+    scorer_module: ./scorer.py
+
+runtime:
+  max_running_trials: 1
+  max_container_slots: 1
+  max_scoring_tasks: 1
