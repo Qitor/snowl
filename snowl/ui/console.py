@@ -432,7 +432,7 @@ class ConsoleRenderer:
     def _format_scorer_warning(self, event: dict[str, Any]) -> None:
         theme = self.streaming_theme
         metric_name = self._pick(event, "metric_name") or "unknown"
-        message = self._clip_text(self._pick(event, "message") or "", limit=240)
+        message = str(self._pick(event, "message") or "").strip()
         failure_policy = self._pick(event, "failure_policy")
         defaulted_metrics = self._pick(event, "defaulted_metrics")
         try:

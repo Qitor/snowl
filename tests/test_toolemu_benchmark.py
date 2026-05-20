@@ -466,6 +466,33 @@ def test_toolemu_official_example_modules_importable() -> None:
         spec.loader.exec_module(module)
 
 
+def test_toolemu_reference_import_reports_missing_paths_and_langchain(monkeypatch, tmp_path: Path) -> None:
+    import builtins
+
+    from snowl.benchmarks import toolemu as toolemu_pkg
+
+    def _fake_reference_path(_file: str, name: str) -> str:
+        return str(tmp_path / name)
+
+    orig_import = builtins.__import__
+
+    def _fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name.startswith("langchain"):
+            raise ModuleNotFoundError("No module named 'langchain'")
+        return orig_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(toolemu_pkg.scorer, "default_reference_path", _fake_reference_path)
+    monkeypatch.setattr(builtins, "__import__", _fake_import)
+
+    with pytest.raises(ImportError) as excinfo:
+        _ensure_toolemu_reference_importable()
+
+    text = str(excinfo.value)
+    assert "Missing ToolEmu reference dependencies:" in text
+    assert str((tmp_path / "PromptCoder").resolve()) in text
+    assert "langchain import failed: No module named 'langchain'" in text
+
+
 def test_toolemu_official_evaluator_failure_emits_warning_event() -> None:
     scorer = ToolEmuScorer(use_official_evaluator=True)
     events: list[dict[str, object]] = []
