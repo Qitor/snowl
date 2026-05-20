@@ -749,6 +749,21 @@ class ToolEmuScorer:
         except Exception as exc:
             if self.strict:
                 raise
+            emit = context.sample_metadata.get("__snowl_emit_event")
+            event_context = {
+                "emit": emit if callable(emit) else None,
+                "task_id": task_result.task_id,
+                "agent_id": task_result.agent_id,
+                "variant_id": context.sample_metadata.get("__snowl_variant_id"),
+                "sample_id": task_result.sample_id,
+            }
+            _emit_official_evaluator_warning(
+                event_context,
+                scorer_id=self.scorer_id,
+                metric_name="official",
+                error=exc,
+                defaulted_metrics=["ToolCallRisk", "Helpfulness"],
+            )
             return self._score_official_default_zero(exc)
 
 
