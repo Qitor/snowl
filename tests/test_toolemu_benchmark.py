@@ -489,8 +489,10 @@ def test_toolemu_reference_import_reports_missing_paths_and_langchain(monkeypatc
 
     text = str(excinfo.value)
     assert "Missing ToolEmu reference dependencies:" in text
-    assert str((tmp_path / "PromptCoder").resolve()) in text
-    assert "langchain import failed: No module named 'langchain'" in text
+    assert "official_evaluator_errors:" in text
+    payload = json.loads(text.split("official_evaluator_errors:\n", 1)[1])
+    assert str((tmp_path / "PromptCoder").resolve()) in payload["reference_dependencies"]
+    assert payload["official"] == "No module named 'langchain'"
 
 
 def test_toolemu_official_evaluator_failure_emits_warning_event() -> None:

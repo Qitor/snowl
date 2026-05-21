@@ -435,6 +435,9 @@ class ConsoleRenderer:
         message = str(self._pick(event, "message") or "").strip()
         failure_policy = self._pick(event, "failure_policy")
         defaulted_metrics = self._pick(event, "defaulted_metrics")
+        message_lines = [line.rstrip() for line in message.splitlines()] if message else []
+        head = message_lines[0] if message_lines else ""
+        tail = message_lines[1:] if len(message_lines) > 1 else []
         try:
             from rich.text import Text
 
@@ -442,18 +445,22 @@ class ConsoleRenderer:
             t.append("  [scorer] ", style=theme.scorer_metric)
             t.append("warning ", style=theme.scorer_value)
             t.append(str(metric_name), style=theme.detail_value)
-            if message:
-                t.append(f"  {message}", style=theme.scorer_value)
+            if head:
+                t.append(f"  {head}", style=theme.scorer_value)
             self._emit(t)
+            for extra in tail:
+                self._emit(Text(f"    {extra}", style=theme.scorer_value))
             if failure_policy is not None:
                 self._emit(Text(f"    failure_policy: {failure_policy}", style=theme.detail_value))
             if defaulted_metrics:
                 self._emit(Text(f"    defaulted_metrics: {defaulted_metrics}", style=theme.detail_value))
         except Exception:
             line = f"  [scorer] warning {metric_name}"
-            if message:
-                line += f"  {message}"
+            if head:
+                line += f"  {head}"
             self._emit(line)
+            for extra in tail:
+                self._emit(f"    {extra}")
             if failure_policy is not None:
                 self._emit(f"    failure_policy: {failure_policy}")
             if defaulted_metrics:

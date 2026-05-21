@@ -217,17 +217,19 @@ def _ensure_toolemu_reference_importable() -> None:
         Path(default_reference_path(__file__, "PromptCoder")),
         Path(default_reference_path(__file__, "ToolEmu")),
     ]
-    errors: list[str] = []
+    errors: dict[str, str] = {}
     missing = [str(path.resolve()) for path in references if not path.exists()]
     if missing:
-        errors.append("Missing ToolEmu reference dependencies: " + ", ".join(missing))
+        errors["reference_dependencies"] = "Missing ToolEmu reference dependencies: " + ", ".join(missing)
     try:
         from langchain.chat_models.base import BaseChatModel  # noqa: F401
         from langchain.schema import BaseMessage, ChatResult, Generation, LLMResult  # noqa: F401
     except Exception as exc:
-        errors.append(f"langchain import failed: {exc}")
+        errors["official"] = str(exc)
     if errors:
-        raise ImportError(" | ".join(errors))
+        if len(errors) == 1:
+            raise ImportError(f"official_evaluator_error: {next(iter(errors.values()))}")
+        raise ImportError("official_evaluator_errors:\n" + json.dumps(errors, ensure_ascii=False, indent=2))
     for path in reversed(references):
         path_text = str(path)
         if path_text not in sys.path:
