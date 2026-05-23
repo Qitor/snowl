@@ -10,8 +10,9 @@ Change guardrails:
 - Keep re-exports aligned with registry defaults and benchmark docs.
 """
 
-from snowl.benchmarks.base import BenchmarkAdapter, BenchmarkInfo, validate_benchmark_adapter
+from snowl.benchmarks.base import BenchmarkAdapter, BenchmarkInfo, RiskDomain, validate_benchmark_adapter
 from snowl.benchmarks.base_adapter import BaseBenchmarkAdapter
+from snowl.benchmarks.manifest import BenchmarkManifest, load_manifest
 from snowl.benchmarks.agentsafetybench import AgentSafetyBenchBenchmarkAdapter
 from snowl.benchmarks.conformance import ConformanceReport, run_conformance
 from snowl.benchmarks.csv_adapter import CsvBenchmarkAdapter
@@ -23,6 +24,7 @@ from snowl.benchmarks.toolemu import ToolEmuBenchmarkAdapter
 from snowl.benchmarks.registry import (
     BenchmarkRegistry,
     RegisteredBenchmark,
+    _lazy_factory,
     get_default_benchmark_registry,
     register_builtin_benchmarks,
 )
@@ -31,7 +33,9 @@ __all__ = [
     "BenchmarkAdapter",
     "BenchmarkInfo",
     "BaseBenchmarkAdapter",
+    "BenchmarkManifest",
     "BenchmarkRegistry",
+    "RiskDomain",
     "AgentSafetyBenchBenchmarkAdapter",
     "ConformanceReport",
     "CsvBenchmarkAdapter",
@@ -41,7 +45,9 @@ __all__ = [
     "StrongRejectBenchmarkAdapter",
     "TerminalBenchBenchmarkAdapter",
     "ToolEmuBenchmarkAdapter",
+    "_lazy_factory",
     "get_default_benchmark_registry",
+    "load_manifest",
     "register_builtin_benchmarks",
     "run_conformance",
     "validate_benchmark_adapter",

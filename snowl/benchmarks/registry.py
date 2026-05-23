@@ -44,6 +44,27 @@ from snowl.errors import SnowlValidationError
 AdapterFactory = Callable[..., BenchmarkAdapter]
 
 
+def _lazy_factory(module_path: str, class_name: str, **default_kwargs: Any) -> AdapterFactory:
+    """Create a lazy factory that defers adapter import until first use.
+
+    This is the recommended registration pattern for plugin-based adapters
+    (e.g. snowl-evals benchmarks) to avoid eager imports of heavy dependencies.
+
+    Parameters:
+        module_path: Dotted module path (e.g. "snowl_evals.strongreject.adapter").
+        class_name: Name of the adapter class in the module.
+        **default_kwargs: Keyword arguments forwarded to the adapter constructor.
+    """
+    def factory(**kwargs: Any) -> BenchmarkAdapter:
+        import importlib
+        merged = {**default_kwargs, **kwargs}
+        module = importlib.import_module(module_path)
+        cls = getattr(module, class_name)
+        return cls(**merged)
+    factory.__qualname__ = f"_lazy_factory({module_path}:{class_name})"
+    return factory
+
+
 @dataclass(frozen=True)
 class RegisteredBenchmark:
     info: BenchmarkInfo

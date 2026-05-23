@@ -48,6 +48,23 @@ class BenchmarkConcurrencyProfile:
 
 
 @dataclass(frozen=True)
+class RiskDomain:
+    """Risk domain descriptor for benchmark classification.
+
+    Used by snowl-evals to tag benchmarks with the type of risk they evaluate.
+
+    Attributes:
+        domain_id: Machine-readable identifier (e.g. "unsafe_compliance").
+        display_name: Human-readable name (e.g. "Unsafe Compliance").
+        description: One-line explanation of the risk domain.
+    """
+
+    domain_id: str
+    display_name: str = ""
+    description: str = ""
+
+
+@dataclass(frozen=True)
 class BenchmarkInfo:
     name: str
     description: str
@@ -62,6 +79,7 @@ class BenchmarkInfo:
     dashboard_tags: list[str] = field(default_factory=list)
     concurrency_profile: BenchmarkConcurrencyProfile | None = None
     middleware_hints: dict[str, Any] = field(default_factory=dict)
+    risk_domains: tuple[RiskDomain, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.display_name:
