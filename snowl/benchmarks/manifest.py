@@ -60,6 +60,7 @@ class BenchmarkManifest:
     scoring: dict[str, Any] = field(default_factory=dict)
     reproducibility: dict[str, Any] = field(default_factory=dict)
     maintainers: list[dict[str, Any]] = field(default_factory=list)
+    migration: dict[str, Any] = field(default_factory=dict)
     _raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
     @classmethod
@@ -82,6 +83,7 @@ class BenchmarkManifest:
             scoring=dict(data.get("scoring") or {}),
             reproducibility=dict(data.get("reproducibility") or {}),
             maintainers=list(data.get("maintainers") or []),
+            migration=dict(data.get("migration") or {}),
             _raw=data,
         )
 
@@ -103,6 +105,7 @@ class BenchmarkManifest:
             "scoring": self.scoring,
             "reproducibility": self.reproducibility,
             "maintainers": self.maintainers,
+            "migration": self.migration,
         }
 
 

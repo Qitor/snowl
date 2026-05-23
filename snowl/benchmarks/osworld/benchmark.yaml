@@ -1,0 +1,55 @@
+schema_version: snowl.benchmark_manifest.v1
+name: osworld
+display_name: OSWorld
+family: osworld
+domain: cyber_offense
+benchmark_type: capability
+primary_metric: success_rate
+higher_is_better: true
+status: experimental
+
+source:
+  paper: null
+  code: null
+  dataset: null
+  homepage: null
+  citation: null
+  license: null
+
+adapter:
+  entrypoint: snowl.benchmarks.osworld:OSWorldBenchmarkAdapter
+  min_snowl_version: "0.1.0"
+
+runtime:
+  env_type: gui
+  requires_network: false
+  requires_docker: true
+  requires_browser: false
+  requires_gui: true
+  expected_minutes_per_100_samples: 180
+  api_call_amplification: 20.0
+
+data:
+  included: false
+  download_required: true
+  local_path_env: null
+  checksum: null
+
+scoring:
+  method: environment_check
+  judge_model_required: false
+  notes: "GUI desktop task execution"
+
+reproducibility:
+  deterministic: false
+  seed_supported: false
+  known_caveats: ["Non-deterministic GUI interaction"]
+
+migration:
+  target: snowl-evals
+  phase: phase_3_heavy
+  priority: low
+
+maintainers:
+  - name: Qitor
+    contact: null

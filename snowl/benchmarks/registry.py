@@ -82,17 +82,18 @@ def _lazy_factory(module_path: str, class_name: str, **extra_kwargs: Any) -> Ada
 class RegisteredBenchmark:
     info: BenchmarkInfo
     factory: AdapterFactory
+    source: str = "built-in"
 
 
 class BenchmarkRegistry:
     def __init__(self) -> None:
         self._entries: dict[str, RegisteredBenchmark] = {}
 
-    def register(self, name: str, info: BenchmarkInfo, factory: AdapterFactory) -> None:
+    def register(self, name: str, info: BenchmarkInfo, factory: AdapterFactory, *, source: str = "built-in") -> None:
         key = name.strip()
         if not key:
             raise SnowlValidationError("Benchmark name must be non-empty.")
-        self._entries[key] = RegisteredBenchmark(info=info, factory=factory)
+        self._entries[key] = RegisteredBenchmark(info=info, factory=factory, source=source)
 
     def list(self) -> list[RegisteredBenchmark]:
         return [self._entries[k] for k in sorted(self._entries.keys())]
@@ -117,11 +118,22 @@ class BenchmarkRegistry:
         - A callable that accepts this registry and registers adapters
         - A callable that returns a BenchmarkAdapter instance when called
 
+        Adapters registered through plugins are marked with ``source="plugin"``.
+
         Errors during plugin loading are emitted as warnings rather than
         raising, so a broken plugin does not block the framework.
         """
         import importlib.metadata
         import warnings
+
+        # Wrap register temporarily so plugin entries get source="plugin"
+        original_register = self.register
+
+        def _plugin_register(name, info, factory, **kwargs):
+            kwargs.setdefault("source", "plugin")
+            original_register(name, info, factory, **kwargs)
+
+        self.register = _plugin_register  # type: ignore[assignment]
 
         seen_names: set[str] = set()
         for group in ("snowl.benchmarks", "snowl.benchmark"):
@@ -148,12 +160,14 @@ class BenchmarkRegistry:
                             adapter = loaded()
                             if hasattr(adapter, "info") and hasattr(adapter, "load_tasks"):
                                 info = adapter.info
-                                self.register(ep.name, info=info, factory=lambda **kw: loaded())
+                                _plugin_register(ep.name, info=info, factory=lambda **kw: loaded())
                 except Exception as exc:
                     warnings.warn(
                         f"Failed to load benchmark plugin '{ep.name}': {exc}",
                         stacklevel=2,
                     )
+
+        self.register = original_register  # type: ignore[assignment]
 
 
 _DEFAULT_BENCHMARK_REGISTRY = BenchmarkRegistry()

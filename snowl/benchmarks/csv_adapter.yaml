@@ -1,7 +1,7 @@
 schema_version: snowl.benchmark_manifest.v1
-name: jsonl
-display_name: JSONL (Generic)
-family: jsonl
+name: csv
+display_name: CSV (Generic)
+family: csv
 domain: ""
 benchmark_type: other
 primary_metric: custom
@@ -17,7 +17,7 @@ source:
   license: null
 
 adapter:
-  entrypoint: snowl.benchmarks.jsonl_adapter:JsonlBenchmarkAdapter
+  entrypoint: snowl.benchmarks.csv_adapter:CsvBenchmarkAdapter
   min_snowl_version: null
 
 runtime:

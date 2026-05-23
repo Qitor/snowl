@@ -158,3 +158,69 @@ def test_jsonl_manifest_loads_and_matches_registry() -> None:
 
     registry = get_default_benchmark_registry()
     assert registry.has("jsonl")
+
+
+def test_all_builtin_benchmarks_have_manifests() -> None:
+    """Every registered benchmark must have a benchmark.yaml accessible by name or family."""
+    from snowl.benchmarks.registry import get_default_benchmark_registry
+
+    bench_root = Path(__file__).parent.parent / "snowl" / "benchmarks"
+    registry = get_default_benchmark_registry()
+
+    # Generic adapters exempt from requiring manifests
+    exempt = {"jsonl", "csv"}
+
+    missing = []
+    for entry in registry.list():
+        name = entry.info.name
+        if name in exempt:
+            continue
+        family = entry.info.family or name
+        # Check: <name>/benchmark.yaml, <family>/benchmark.yaml, or top-level yaml
+        candidates = [
+            bench_root / name / "benchmark.yaml",
+            bench_root / family / "benchmark.yaml",
+            bench_root / f"{name}_adapter.yaml",
+            bench_root / f"{family}_adapter.yaml",
+        ]
+        if not any(c.exists() for c in candidates):
+            missing.append(name)
+
+    assert not missing, f"Missing manifests for: {', '.join(sorted(missing))}"
+
+
+def test_all_builtin_manifests_load_and_validate() -> None:
+    """All benchmark.yaml files under snowl/benchmarks/ load and pass validation."""
+    bench_root = Path(__file__).parent.parent / "snowl" / "benchmarks"
+    yaml_files = list(bench_root.rglob("benchmark.yaml")) + list(bench_root.glob("*_adapter.yaml"))
+
+    errors = []
+    for yf in yaml_files:
+        try:
+            manifest = load_manifest(yf)
+            assert manifest.name, f"Empty name in {yf}"
+            assert manifest.migration.get("phase"), f"Missing migration.phase in {yf}"
+        except Exception as exc:
+            errors.append(f"{yf.relative_to(bench_root)}: {exc}")
+
+    assert not errors, f"Manifest validation errors:\n" + "\n".join(errors)
+
+
+def test_strongreject_import_emits_deprecation_warning() -> None:
+    """Importing from snowl.benchmarks.strongreject emits DeprecationWarning."""
+    import importlib
+    import sys
+    import warnings
+
+    # Remove cached module so re-import triggers the warning
+    mod_key = "snowl.benchmarks.strongreject"
+    cached = sys.modules.pop(mod_key, None)
+    try:
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            importlib.import_module(mod_key)
+            deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
+            assert any("snowl-evals" in str(x.message) for x in deprecation_warnings)
+    finally:
+        if cached is not None:
+            sys.modules[mod_key] = cached

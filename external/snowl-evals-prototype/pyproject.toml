@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "snowl-evals"
+version = "0.1.0"
+description = "Official benchmark adapter collection for the Snowl agent evaluation framework"
+readme = "README.md"
+license = { text = "SEE REPO" }
+requires-python = ">=3.10"
+dependencies = [
+    "snowl>=0.1.0",
+]
+
+[project.optional-dependencies]
+strongreject = []
+xstest = []
+wmdp = []
+sec_qa = []
+cybermetric = []
+dev = [
+    "pytest>=7",
+]
+
+[project.entry-points."snowl.benchmarks"]
+strongreject = "snowl_evals.strongreject:register"
+xstest = "snowl_evals.xstest:register"
+wmdp_cyber = "snowl_evals.wmdp:register_cyber"
+wmdp_chem = "snowl_evals.wmdp:register_chem"
+sec_qa_v1 = "snowl_evals.sec_qa:register_v1"
+sec_qa_v2 = "snowl_evals.sec_qa:register_v2"
+cybermetric_80 = "snowl_evals.cybermetric:register_80"
+cybermetric_500 = "snowl_evals.cybermetric:register_500"
+cybermetric_2000 = "snowl_evals.cybermetric:register_2000"
+cybermetric_10000 = "snowl_evals.cybermetric:register_10000"

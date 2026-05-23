@@ -834,9 +834,20 @@ def _print_summary(result) -> int:
 
 
 def _cmd_bench_list() -> int:
-    entries = list_benchmarks()
-    for item in entries:
-        print(f"{item['name']}: {item['description']}")
+    from snowl.benchmarks.registry import get_default_benchmark_registry
+
+    registry = get_default_benchmark_registry()
+    entries = registry.list()
+    # Header
+    print(f"{'Name':<24} {'Source':<10} {'Type':<12} {'Domain':<18} {'Primary Metric'}")
+    print("-" * 85)
+    for entry in entries:
+        info = entry.info
+        source = entry.source
+        print(
+            f"{info.name:<24} {source:<10} {info.benchmark_type:<12} "
+            f"{info.domain:<18} {info.primary_metric}"
+        )
     return 0
 
 
@@ -969,6 +980,118 @@ def _cmd_bench_scaffold(name: str, *, out: str) -> int:
     target = scaffold_benchmark(name, out_dir=out)
     print(f"created={target}")
     print(f"check=snowl bench check {name} --adapter {target / 'adapter.py'}:adapter --adapter-arg dataset_path={target / 'data.jsonl'}")
+    return 0
+
+
+def _cmd_bench_doctor() -> int:
+    """Run diagnostic checks on the snowl benchmark ecosystem."""
+    import importlib.metadata
+    from pathlib import Path
+
+    from snowl.benchmarks.manifest import load_manifest
+    from snowl.benchmarks.registry import get_default_benchmark_registry
+
+    issues: list[str] = []
+    ok_count = 0
+
+    # 1. Core import check
+    try:
+        import snowl  # noqa: F401
+        print("[OK]   core snowl import")
+        ok_count += 1
+    except Exception as exc:
+        print(f"[FAIL] core snowl import: {exc}")
+        issues.append("core import")
+
+    # 2. Registry load check
+    try:
+        registry = get_default_benchmark_registry()
+        entries = registry.list()
+        print(f"[OK]   registry load ({len(entries)} benchmarks)")
+        ok_count += 1
+    except Exception as exc:
+        print(f"[FAIL] registry load: {exc}")
+        issues.append("registry load")
+        return 1
+
+    # 3. Plugin discovery check
+    plugin_entries = [e for e in entries if e.source == "plugin"]
+    builtin_entries = [e for e in entries if e.source != "plugin"]
+    print(f"[OK]   plugin discovery ({len(plugin_entries)} plugin, {len(builtin_entries)} built-in)")
+    ok_count += 1
+
+    # 4. Broken entry points
+    broken = []
+    for group in ("snowl.benchmarks", "snowl.benchmark"):
+        try:
+            eps = importlib.metadata.entry_points(group=group)
+        except Exception:
+            continue
+        for ep in eps:
+            try:
+                ep.load()
+            except Exception as exc:
+                broken.append(f"{ep.name}: {exc}")
+    if broken:
+        print(f"[WARN] broken entry points: {'; '.join(broken)}")
+        issues.append("broken entry points")
+    else:
+        print("[OK]   no broken entry points")
+        ok_count += 1
+
+    # 5. Missing manifests
+    bench_root = Path(__file__).resolve().parent / "benchmarks"
+    missing_manifests = []
+    for entry in entries:
+        name = entry.info.name
+        family = entry.info.family or name
+        candidates = [
+            bench_root / name / "benchmark.yaml",
+            bench_root / family / "benchmark.yaml",
+            bench_root / f"{name}_adapter.yaml",
+            bench_root / f"{family}_adapter.yaml",
+        ]
+        if not any(c.exists() for c in candidates):
+            missing_manifests.append(name)
+    if missing_manifests:
+        print(f"[WARN] missing manifests: {', '.join(missing_manifests)}")
+        issues.append("missing manifests")
+    else:
+        print("[OK]   all benchmarks have manifests")
+        ok_count += 1
+
+    # 6. Manifest validation
+    manifest_errors = []
+    for yf in bench_root.rglob("benchmark.yaml"):
+        try:
+            load_manifest(yf)
+        except Exception as exc:
+            manifest_errors.append(f"{yf.name}: {exc}")
+    for yf in bench_root.glob("*_adapter.yaml"):
+        try:
+            load_manifest(yf)
+        except Exception as exc:
+            manifest_errors.append(f"{yf.name}: {exc}")
+    if manifest_errors:
+        print(f"[WARN] manifest validation errors: {'; '.join(manifest_errors)}")
+        issues.append("manifest errors")
+    else:
+        print("[OK]   all manifests validate")
+        ok_count += 1
+
+    # 7. Heavy runtime benchmarks
+    heavy = [e.info.name for e in entries if e.info.concurrency_profile and (e.info.concurrency_profile.recommended_max_running or 99) <= 5]
+    if heavy:
+        print(f"[INFO] heavy runtime benchmarks: {', '.join(heavy)}")
+    else:
+        print("[OK]   no heavy runtime benchmarks flagged")
+
+    # Summary
+    print()
+    if issues:
+        print(f"Doctor found {len(issues)} issue(s): {', '.join(issues)}")
+        return 1
+    print(f"Doctor OK ({ok_count} checks passed)")
     return 0
 
 
@@ -1712,6 +1835,8 @@ def build_parser() -> argparse.ArgumentParser:
     bench_scaffold.add_argument("name", help="Benchmark name for the scaffold.")
     bench_scaffold.add_argument("--out", required=True, help="Output directory for scaffold files.")
 
+    bench_doctor = bench_sub.add_parser("doctor", help="Run diagnostic checks on the benchmark ecosystem.")
+
     suite_parser = sub.add_parser("suite", help="Multi-benchmark suite commands.")
     suite_sub = suite_parser.add_subparsers(dest="suite_command", required=True)
     suite_check = suite_sub.add_parser("check", help="Validate a suite.yml file.")
@@ -1846,6 +1971,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_bench_check(args.benchmark, adapter=args.adapter, adapter_arg=args.adapter_arg)
         if args.bench_command == "scaffold":
             return _cmd_bench_scaffold(args.name, out=args.out)
+        if args.bench_command == "doctor":
+            return _cmd_bench_doctor()
 
     if args.command == "suite":
         if args.suite_command == "check":

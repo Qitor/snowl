@@ -17,7 +17,7 @@ source:
   license: MIT
 
 adapter:
-  entrypoint: snowl.benchmarks.strongreject.adapter:StrongRejectBenchmarkAdapter
+  entrypoint: snowl_evals.strongreject.adapter:StrongRejectBenchmarkAdapter
   min_snowl_version: null
 
 runtime:

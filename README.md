@@ -424,11 +424,17 @@ provider budget.
 
 ## Supported Benchmark Families
 
-Snowl already includes adapters and contracts for several benchmark families:
+Snowl includes adapters and contracts for several benchmark families. Some are
+built-in; others are available as plugins through the `snowl-evals` package:
+
+```bash
+snowl bench list    # shows built-in + plugin benchmarks
+snowl bench doctor  # diagnostic checks on the benchmark ecosystem
+```
 
 | Benchmark | Focus | Notes |
 | --- | --- | --- |
-| StrongReject | refusal and safety behavior | `strongreject`; lightweight and quick to run |
+| StrongReject | refusal and safety behavior | `strongreject`; also available via snowl-evals plugin |
 | XSTest | over-refusal and unsafe-compliance checks | `xstest`; pinned remote asset cache |
 | Coconot | compliance/noncompliance safety behavior | `coconot`; category-aware metrics |
 | FORTRESS | benign and adversarial safeguard behavior | `fortress_adversarial`, `fortress_benign` |

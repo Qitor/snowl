@@ -1,10 +1,10 @@
 schema_version: snowl.benchmark_manifest.v1
-name: jsonl
-display_name: JSONL (Generic)
-family: jsonl
-domain: ""
-benchmark_type: other
-primary_metric: custom
+name: sec_qa
+display_name: SecQA
+family: sec_qa
+domain: cyber_offense
+benchmark_type: capability
+primary_metric: accuracy
 higher_is_better: true
 status: stable
 
@@ -17,8 +17,8 @@ source:
   license: null
 
 adapter:
-  entrypoint: snowl.benchmarks.jsonl_adapter:JsonlBenchmarkAdapter
-  min_snowl_version: null
+  entrypoint: snowl_evals.sec_qa.adapter:SecQABenchmarkAdapter
+  min_snowl_version: "0.1.0"
 
 runtime:
   env_type: local
@@ -29,21 +29,25 @@ runtime:
 
 data:
   included: false
-  download_required: false
+  download_required: true
   local_path_env: null
   checksum: null
 
 scoring:
-  method: custom
+  method: exact_match
   judge_model_required: false
-  notes: "Scoring is user-defined; adapter only provides task/sample structure."
+  notes: "Multiple-choice cybersecurity benchmark"
 
 reproducibility:
   deterministic: true
-  seed_supported: false
+  seed_supported: true
   known_caveats: []
 
 migration:
-  target: keep_in_core
-  phase: keep_in_core
-  priority: keep
+  target: snowl-evals
+  phase: phase_2_simple
+  priority: high
+
+maintainers:
+  - name: Qitor
+    contact: null
