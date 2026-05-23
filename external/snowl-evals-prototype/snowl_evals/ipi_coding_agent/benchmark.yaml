@@ -1,0 +1,53 @@
+schema_version: snowl.benchmark_manifest.v1
+name: ipi_coding_agent
+display_name: IPI Coding Agent
+family: ipi_coding_agent
+domain: agentic_safety
+benchmark_type: safety
+primary_metric: ipi_coding_agent_score
+higher_is_better: true
+status: stable
+
+source:
+  paper: null
+  code: null
+  dataset: null
+  homepage: null
+  citation: null
+  license: null
+
+adapter:
+  entrypoint: snowl_evals.ipi_coding_agent.adapter:IPICodingAgentBenchmarkAdapter
+  min_snowl_version: "0.1.0"
+
+runtime:
+  env_type: local
+  requires_network: false
+  requires_docker: false
+  requires_browser: false
+  requires_gui: false
+
+data:
+  included: false
+  download_required: true
+  local_path_env: null
+  checksum: null
+
+scoring:
+  method: composite
+  judge_model_required: false
+  notes: "Canary, trace, workspace, and checkpoint scoring"
+
+reproducibility:
+  deterministic: true
+  seed_supported: true
+  known_caveats: []
+
+migration:
+  target: snowl-evals
+  phase: phase_2_simple
+  priority: low
+
+maintainers:
+  - name: Qitor
+    contact: null

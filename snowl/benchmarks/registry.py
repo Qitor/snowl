@@ -88,15 +88,32 @@ class RegisteredBenchmark:
 class BenchmarkRegistry:
     def __init__(self) -> None:
         self._entries: dict[str, RegisteredBenchmark] = {}
+        self._shadowed: dict[str, list[RegisteredBenchmark]] = {}
 
     def register(self, name: str, info: BenchmarkInfo, factory: AdapterFactory, *, source: str = "built-in") -> None:
         key = name.strip()
         if not key:
             raise SnowlValidationError("Benchmark name must be non-empty.")
-        self._entries[key] = RegisteredBenchmark(info=info, factory=factory, source=source)
+        new_entry = RegisteredBenchmark(info=info, factory=factory, source=source)
+        existing = self._entries.get(key)
+        if existing is not None and existing.source == "built-in" and source == "plugin":
+            # Built-in wins; shadow the plugin entry
+            self._shadowed.setdefault(key, []).append(new_entry)
+            import warnings
+            warnings.warn(
+                f"Plugin benchmark '{key}' is shadowed by built-in entry. "
+                f"Built-in source takes precedence during transition.",
+                stacklevel=2,
+            )
+        else:
+            self._entries[key] = new_entry
 
-    def list(self) -> list[RegisteredBenchmark]:
-        return [self._entries[k] for k in sorted(self._entries.keys())]
+    def list(self, *, include_shadowed: bool = False) -> list[RegisteredBenchmark]:
+        result = [self._entries[k] for k in sorted(self._entries.keys())]
+        if include_shadowed:
+            for key in sorted(self._shadowed.keys()):
+                result.extend(self._shadowed[key])
+        return result
 
     def create(self, name: str, **kwargs: Any) -> BenchmarkAdapter:
         entry = self._entries.get(name)

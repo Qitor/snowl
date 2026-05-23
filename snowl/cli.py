@@ -833,11 +833,11 @@ def _print_summary(result) -> int:
     return 0 if summary.error == 0 else 1
 
 
-def _cmd_bench_list() -> int:
+def _cmd_bench_list(*, include_shadowed: bool = False) -> int:
     from snowl.benchmarks.registry import get_default_benchmark_registry
 
     registry = get_default_benchmark_registry()
-    entries = registry.list()
+    entries = registry.list(include_shadowed=include_shadowed)
     # Header
     print(f"{'Name':<24} {'Source':<10} {'Type':<12} {'Domain':<18} {'Primary Metric'}")
     print("-" * 85)
@@ -1085,6 +1085,26 @@ def _cmd_bench_doctor() -> int:
         print(f"[INFO] heavy runtime benchmarks: {', '.join(heavy)}")
     else:
         print("[OK]   no heavy runtime benchmarks flagged")
+
+    # 8. Shadowed/duplicate plugin benchmarks
+    shadowed = registry._shadowed
+    if shadowed:
+        shadowed_names = ", ".join(sorted(shadowed.keys()))
+        print(f"[INFO] shadowed plugin benchmarks (built-in wins): {shadowed_names}")
+    else:
+        print("[OK]   no shadowed plugin benchmarks")
+
+    # 9. Migrated benchmarks still using built-in fallback
+    migrated_families = {
+        "strongreject", "xstest", "wmdp", "sec_qa", "cybermetric",
+        "coconot", "mask", "sevenllm", "fortress", "agentharm",
+        "agent_bench_os", "bfcl", "ipi_coding_agent",
+    }
+    builtin_migrated = [e.info.name for e in entries if e.source == "built-in" and (e.info.family in migrated_families or e.info.name in migrated_families)]
+    if builtin_migrated:
+        print(f"[INFO] migrated benchmarks with built-in fallback: {', '.join(builtin_migrated)}")
+    else:
+        print("[OK]   no migrated benchmarks on built-in fallback")
 
     # Summary
     print()
@@ -1727,6 +1747,7 @@ def build_parser() -> argparse.ArgumentParser:
     bench_sub = bench_parser.add_subparsers(dest="bench_command", required=True)
 
     bench_list = bench_sub.add_parser("list", help="List available benchmark adapters.")
+    bench_list.add_argument("--all", action="store_true", help="Include shadowed plugin benchmarks.")
 
     bench_run = bench_sub.add_parser("run", help="Run benchmark tasks with local agent/scorer.")
     bench_run.add_argument("benchmark", help="Benchmark adapter name.")
@@ -1931,7 +1952,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "bench":
         if args.bench_command == "list":
-            return _cmd_bench_list()
+            return _cmd_bench_list(include_shadowed=args.all)
         if args.bench_command == "run":
             return _cmd_bench_run(
                 args.benchmark,

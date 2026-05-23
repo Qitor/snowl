@@ -135,10 +135,28 @@ snowl bench run agentdojo --project project.yml
 | Container provider bridge breaks | Lazy import with try/except already in place; add deprecation path |
 | Performance regression from entry points | `_lazy_factory` already defers heavy imports; no change in latency |
 
-## Not Started
+## Phase 2 Status: COMPLETE
 
-The following items are deferred until `snowl-evals` repository creation:
-- Actual code migration
-- CI pipeline for `snowl-evals`
-- Package publishing workflow
-- Documentation cross-links
+All 13 phase_2_simple benchmarks are migrated into `external/snowl-evals-prototype/`:
+
+- strongreject, xstest, wmdp, sec_qa, cybermetric (Round 2)
+- coconot, mask, sevenllm, fortress, agentharm, agent_bench_os, bfcl, ipi_coding_agent (Round 3)
+
+Compatibility shims with `DeprecationWarning` are in place for all 13 benchmarks.
+Duplicate plugin handling is hardened: built-in wins, plugin shadowed, doctor reports.
+All tests pass: 670 snowl, 18 prototype.
+
+## Phase 3: Not Started
+
+Heavy/runtime benchmarks remain in core:
+- AgentDojo, ToolEmu, AgentSafetyBench, TerminalBench, OSWorld, ExploitBench
+
+These require container provider interface stabilization before migration.
+
+## Extraction Plan
+
+1. Copy `external/snowl-evals-prototype/` to `Qitor/snowl-evals` standalone repo
+2. Update `pyproject.toml` dependency from editable to released snowl version
+3. Activate CI (`.github/workflows/ci.yml` skeleton already exists)
+4. Publish to PyPI
+5. Remove built-in adapter code from snowl after 2 minor releases with deprecation warnings

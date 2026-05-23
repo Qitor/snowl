@@ -118,33 +118,29 @@ Date: 2026-05-23
 | Phase 3 | Migrate heavy environment benchmarks | AgentDojo, ToolEmu, AgentSafetyBench, TerminalBench, OSWorld, ExploitBench | Medium — containers, providers, custom agents |
 | Phase 4 | Remove deprecated adapters from core | All migrated | Low — with compatibility shims |
 
-## Manifest Migration TODO
+## Manifest Status
 
-| Benchmark | Manifest file | Status |
-|-----------|--------------|--------|
-| jsonl | `snowl/benchmarks/jsonl_adapter.yaml` | Done |
-| strongreject | `snowl/benchmarks/strongreject/benchmark.yaml` | Done |
-| agentdojo | — | TODO |
-| agentharm | — | TODO |
-| agentharm_benign | — | TODO |
-| agentsafetybench | — | TODO |
-| bfcl | — | TODO |
-| coconot | — | TODO |
-| csv | — | TODO |
-| cybermetric_* | — | TODO |
-| exploitbench | — | TODO |
-| fortress_adversarial | — | TODO |
-| fortress_benign | — | TODO |
-| ipi_coding_agent | — | TODO |
-| mask | — | TODO |
-| osworld | — | TODO |
-| sec_qa_v1 | — | TODO |
-| sec_qa_v2 | — | TODO |
-| sevenllm_mcq_en | — | TODO |
-| sevenllm_mcq_zh | — | TODO |
-| terminalbench | — | TODO |
-| toolemu | — | TODO |
-| wmdp-cyber | — | TODO |
-| wmdp-chem | — | TODO |
-| xstest | — | TODO |
-| agent_bench_os | — | TODO |
+All built-in benchmarks have manifests. All phase_2_simple benchmarks also have manifests in the `snowl-evals` prototype.
+
+| Benchmark | Manifest in snowl | Manifest in snowl-evals | Deprecated? |
+|-----------|------------------|------------------------|-------------|
+| jsonl | Done | N/A (keep in core) | No |
+| strongreject | Done | Done | Yes |
+| xstest | Done | Done | Yes |
+| wmdp | Done | Done | Yes |
+| sec_qa | Done | Done | Yes |
+| cybermetric | Done | Done | Yes |
+| coconot | Done | Done | Yes |
+| mask | Done | Done | Yes |
+| sevenllm | Done | Done | Yes |
+| fortress | Done | Done | Yes |
+| agentharm | Done | Done | Yes |
+| agent_bench_os | Done | Done | Yes |
+| bfcl | Done | Done | Yes |
+| ipi_coding_agent | Done | Done | Yes |
+| agentdojo | Done | N/A (phase_3_heavy) | No |
+| agentsafetybench | Done | N/A (phase_3_heavy) | No |
+| terminalbench | Done | N/A (phase_3_heavy) | No |
+| osworld | Done | N/A (phase_3_heavy) | No |
+| toolemu | Done | N/A (phase_3_heavy) | No |
+| exploitbench | Done | N/A (phase_3_heavy) | No |

@@ -1,0 +1,55 @@
+schema_version: snowl.benchmark_manifest.v1
+name: agentharm
+display_name: AgentHarm
+family: agentharm
+domain: agentic_safety
+benchmark_type: safety
+primary_metric: agentharm_safety
+higher_is_better: true
+status: stable
+
+source:
+  paper: null
+  code: null
+  dataset: null
+  homepage: null
+  citation: null
+  license: null
+
+adapter:
+  entrypoint: snowl_evals.agentharm.adapter:AgentHarmBenchmarkAdapter
+  min_snowl_version: "0.1.0"
+
+runtime:
+  env_type: local
+  requires_network: false
+  requires_docker: false
+  requires_browser: false
+  requires_gui: false
+  expected_minutes_per_100_samples: 20
+  api_call_amplification: 2.0
+
+data:
+  included: false
+  download_required: true
+  local_path_env: null
+  checksum: null
+
+scoring:
+  method: llm_judge
+  judge_model_required: true
+  notes: null
+
+reproducibility:
+  deterministic: false
+  seed_supported: false
+  known_caveats: []
+
+migration:
+  target: snowl-evals
+  phase: phase_2_simple
+  priority: medium
+
+maintainers:
+  - name: Qitor
+    contact: null
