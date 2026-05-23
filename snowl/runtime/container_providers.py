@@ -1,4 +1,4 @@
-"""Registry and concrete benchmark container providers (TerminalBench, OSWorld) used by runtime prepare/finalize paths.
+"""Registry and concrete container providers used by runtime prepare/finalize paths.
 
 Framework role:
 - Maps benchmark metadata into concrete env/container startup commands, per-trial isolation identifiers, and close behavior.
@@ -6,11 +6,13 @@ Framework role:
 
 Runtime/usage wiring:
 - Provider selection happens through benchmark keys from task metadata.
-- TerminalBench and OSWorld providers are the concrete bridge from shared runtime APIs to benchmark runtime realities.
-- Key top-level symbols in this file: `ContainerSession`, `ContainerProviderContext`, `ContainerProvider`, `ContainerProviderRegistry`, `TerminalBenchProvider`, `OSWorldProvider`.
+- Generic providers (ComposeTerminal, DockerContainer) live here.
+- Benchmark-specific providers (TerminalBench, OSWorld) register themselves from
+  their benchmark packages via ``register_container_provider()``.
 
 Change guardrails:
-- Keep benchmark-specific assumptions in this layer; do not leak them into global scheduler logic without contract changes.
+- Do not import benchmark-specific code from this module.
+- Benchmark-specific providers register themselves via ``register_container_provider``.
 """
 
 from __future__ import annotations
@@ -22,9 +24,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
-from snowl.benchmarks.osworld.container import OSWorldContainerLauncher
 from snowl.core import EnvSpec
-from snowl.envs import GuiEnv, TerminalEnv
+from snowl.envs import TerminalEnv
 from snowl.envs.substrate import CommandRunner, ContainerBackend
 from snowl.runtime.container_contract import RuntimeContainerSpec
 
@@ -132,197 +133,34 @@ class ContainerProviderRegistry:
             return None
         return self._providers.get(key)
 
+    def discover_plugins(self) -> None:
+        """Discover and register container providers from installed entry points.
 
-class TerminalBenchProvider:
-    name = "terminalbench"
+        Looks for ``snowl.container_provider`` entry points in installed packages.
+        Each entry point should resolve to a callable that accepts this
+        registry and registers its providers.
 
-    def describe_requirements(self, context: ContainerProviderContext) -> dict[str, Any]:
-        startup = dict(context.container_spec.startup)
-        compose_path = str(startup.get("compose_file") or "").strip()
-        compose_build = bool(startup.get("compose_build", True))
-        return {
-            "benchmark": "terminalbench",
-            "requires_container": bool(context.container_spec.requires_container),
-            "requires_build": compose_build and bool(compose_path and Path(compose_path).exists()),
-            "spec_hash": context.container_spec.spec_hash,
-            "prepare_provider_ids": (),
-            "estimated_prepare_cost": "heavy" if context.container_spec.requires_container else "none",
-            "startup": startup,
-        }
+        Errors during plugin loading are emitted as warnings rather than
+        raising, so a broken plugin does not block the framework.
+        """
+        import importlib.metadata
+        import warnings
 
-    async def prepare(self, context: ContainerProviderContext) -> ContainerSession:
-        startup = dict(context.container_spec.startup)
-        safe_task = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(startup.get("safe_task") or "task")).strip("-") or "task"
-        safe_sample = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(startup.get("safe_sample") or "sample")).strip("-") or "sample"
-        safe_variant = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(startup.get("safe_variant") or "default")).strip("-") or "default"
-        trial_name = str(startup.get("compose_project") or f"snowl-tb-{safe_task}-{safe_sample[:12]}-{safe_variant[:12]}")
-        workdir = startup.get("task_root") or str(Path.cwd())
-        workdir_path = Path(str(workdir)).resolve()
-        logs_root = Path(str(startup.get("task_logs_path") or (workdir_path / ".snowl_logs" / safe_sample / safe_variant))).resolve()
-        agent_logs_root = Path(
-            str(startup.get("task_agent_logs_path") or (workdir_path / ".snowl_agent_logs" / safe_sample / safe_variant))
-        ).resolve()
-        logs_root.mkdir(parents=True, exist_ok=True)
-        agent_logs_root.mkdir(parents=True, exist_ok=True)
-        docker_compose_path = str(startup.get("compose_file") or "").strip()
-        use_compose = bool(docker_compose_path and Path(docker_compose_path).exists())
-        compose_build = bool(startup.get("compose_build", True))
-        compose_env = {
-            "T_BENCH_TASK_DOCKER_CLIENT_CONTAINER_NAME": str(startup.get("client_container_name") or trial_name),
-            "T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME": str(
-                startup.get("client_image_name") or f"tb__{safe_task}__{safe_variant}__client"
-            ),
-            "T_BENCH_TASK_DOCKER_NAME_PREFIX": str(startup.get("compose_name_prefix") or f"tb__{safe_task}__{safe_variant}"),
-            "T_BENCH_CONTAINER_LOGS_PATH": "/var/log/tbench",
-            "T_BENCH_CONTAINER_AGENT_LOGS_PATH": "/agent-logs",
-            "T_BENCH_TEST_DIR": "/tests",
-            "T_BENCH_TASK_LOGS_PATH": str(logs_root),
-            "T_BENCH_TASK_AGENT_LOGS_PATH": str(agent_logs_root),
-            "TEST_DIR": "/tests",
-        }
-        env = TerminalEnv(
-            env_spec=EnvSpec(
-                env_type="terminal",
-                provided_ops=(
-                    "process.run",
-                    "terminal.exec",
-                    "terminal.send_keys",
-                    "terminal.capture",
-                    "terminal.wait",
-                ),
-            ),
-            workdir=str(workdir_path),
-            compose_file=(docker_compose_path if docker_compose_path else None),
-            use_docker_compose=use_compose,
-            compose_build=compose_build,
-            compose_project=trial_name,
-            compose_service=str(startup.get("compose_service") or "client"),
-            compose_env=compose_env,
-        )
+        try:
+            eps = importlib.metadata.entry_points(group="snowl.container_provider")
+        except Exception:
+            return
 
-        if env.use_docker_compose:
-            docker_path = context.ensure_docker_available(benchmark="terminalbench")
-            context.emit_event(
-                {
-                    "event": "terminalbench.container.config",
-                    "phase": "env",
-                    "compose_file": env.compose_file,
-                    "project": env.compose_project,
-                    "service": env.compose_service,
-                    "docker_path": docker_path,
-                    "compose_build": env.compose_build,
-                    "env_injected": {
-                        "client_container": env.compose_env.get("T_BENCH_TASK_DOCKER_CLIENT_CONTAINER_NAME"),
-                        "client_image": env.compose_env.get("T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME"),
-                        "test_dir": env.compose_env.get("T_BENCH_TEST_DIR"),
-                        "task_logs": env.compose_env.get("T_BENCH_TASK_LOGS_PATH"),
-                        "agent_logs": env.compose_env.get("T_BENCH_TASK_AGENT_LOGS_PATH"),
-                    },
-                }
-            )
-            context.emit_event(
-                {
-                    "event": "terminalbench.container.starting",
-                    "phase": "env",
-                    "compose_file": env.compose_file,
-                    "project": env.compose_project,
-                }
-            )
-            up_out = await asyncio.to_thread(
-                env.compose_up,
-                on_event=lambda evt: context.emit_env_stream(
-                    evt,
-                    project=env.compose_project,
-                    compose_file=env.compose_file,
-                ),
-            )
-            build_out = up_out.get("build")
-            if isinstance(build_out, Mapping):
-                context.emit_event(
-                    {
-                        "event": "terminalbench.container.build",
-                        "phase": "env",
-                        "project": env.compose_project,
-                        "exit_code": build_out.get("exit_code"),
-                        "duration_ms": build_out.get("duration_ms"),
-                        "command_text": " ".join(build_out.get("command", []))
-                        if isinstance(build_out.get("command"), list)
-                        else build_out.get("command"),
-                        "stdout_tail": str(build_out.get("stdout", ""))[-240:],
-                        "stderr_tail": str(build_out.get("stderr", ""))[-240:],
-                    }
+        for ep in eps:
+            try:
+                register_fn = ep.load()
+                if callable(register_fn):
+                    register_fn(self)
+            except Exception as exc:
+                warnings.warn(
+                    f"Failed to load container_provider plugin '{ep.name}': {exc}",
+                    stacklevel=2,
                 )
-            context.emit_event(
-                {
-                    "event": "terminalbench.container.started",
-                    "phase": "env",
-                    "project": env.compose_project,
-                    "exit_code": up_out.get("exit_code"),
-                    "duration_ms": up_out.get("duration_ms"),
-                    "command_text": " ".join(up_out.get("command", []))
-                    if isinstance(up_out.get("command"), list)
-                    else up_out.get("command"),
-                    "stdout_tail": str(up_out.get("stdout", ""))[-240:],
-                    "stderr_tail": str(up_out.get("stderr", ""))[-240:],
-                }
-            )
-            if up_out.get("exit_code", 1) != 0:
-                raise RuntimeError(
-                    "terminalbench docker compose up failed: "
-                    + str((up_out.get("stderr") or up_out.get("stdout") or "").strip())
-                )
-        else:
-            context.emit_event(
-                {
-                    "event": "terminalbench.container.disabled",
-                    "phase": "env",
-                    "reason": "compose_file_not_found",
-                    "docker_compose_path": docker_compose_path,
-                }
-            )
-
-        return ContainerSession(
-            kind="terminal_compose",
-            env=env,
-            benchmark="terminalbench",
-            metadata={
-                "project": env.compose_project,
-                "compose_file": env.compose_file,
-                "compose_service": env.compose_service,
-                "spec_hash": self.describe_requirements(context).get("spec_hash"),
-            },
-        )
-
-    async def close(
-        self,
-        context: ContainerProviderContext,
-        session: ContainerSession,
-    ) -> dict[str, Any] | None:
-        env = session.env
-        project = getattr(env, "compose_project", None)
-        context.emit_event({"event": "terminalbench.container.stopping", "phase": "env", "project": project})
-        down_out = await asyncio.to_thread(
-            env.compose_down,
-            on_event=lambda evt: context.emit_env_stream(
-                evt,
-                project=project,
-                compose_file=getattr(env, "compose_file", None),
-            ),
-        )
-        payload = {"event": "terminalbench.container.stopped", "phase": "env", "project": project}
-        payload.update(
-            {
-                "exit_code": down_out.get("exit_code"),
-                "duration_ms": down_out.get("duration_ms"),
-                "command_text": " ".join(down_out.get("command", []))
-                if isinstance(down_out.get("command"), list)
-                else down_out.get("command"),
-                "stdout_tail": str(down_out.get("stdout", ""))[-240:],
-                "stderr_tail": str(down_out.get("stderr", ""))[-240:],
-            }
-        )
-        context.emit_event(payload)
-        return down_out
 
 
 class ComposeTerminalProvider:
@@ -651,59 +489,6 @@ class DockerContainerProvider:
         return out
 
 
-class OSWorldProvider:
-    name = "osworld"
-
-    def describe_requirements(self, context: ContainerProviderContext) -> dict[str, Any]:
-        return {
-            "benchmark": "osworld",
-            "requires_container": bool(context.container_spec.requires_container),
-            "requires_build": False,
-            "spec_hash": context.container_spec.spec_hash,
-            "prepare_provider_ids": (),
-            "estimated_prepare_cost": "heavy",
-            "startup": dict(context.container_spec.startup),
-        }
-
-    async def prepare(self, context: ContainerProviderContext) -> ContainerSession:
-        docker_path = context.ensure_docker_available(benchmark="osworld")
-        launcher = OSWorldContainerLauncher(
-            repo_root=Path(__file__).resolve().parents[2],
-            emit=context.emit_event,
-            settings=context.container_spec.startup,
-        )
-        prepared = await asyncio.to_thread(launcher.prepare, docker_path=docker_path)
-        return ContainerSession(
-            kind="gui_container",
-            env=prepared.env,
-            benchmark="osworld",
-            metadata={
-                **dict(prepared.metadata),
-                "spec_hash": self.describe_requirements(context).get("spec_hash"),
-            },
-        )
-
-    async def close(
-        self,
-        context: ContainerProviderContext,
-        session: ContainerSession,
-    ) -> dict[str, Any] | None:
-        env: GuiEnv = session.env
-        context.emit_event({"event": "osworld.container.stopping", "phase": "env"})
-        stop_evt = await asyncio.to_thread(
-            env.stop_container,
-            on_event=lambda evt: context.emit_env_stream(evt),
-        )
-        context.emit_event(
-            {
-                "event": "osworld.container.stopped",
-                "phase": "env",
-                "exit_code": stop_evt.get("exit_code"),
-            }
-        )
-        return stop_evt
-
-
 _DEFAULT_PROVIDER_REGISTRY: ContainerProviderRegistry | None = None
 
 
@@ -711,9 +496,36 @@ def default_container_provider_registry() -> ContainerProviderRegistry:
     global _DEFAULT_PROVIDER_REGISTRY
     if _DEFAULT_PROVIDER_REGISTRY is None:
         registry = ContainerProviderRegistry()
-        registry.register("terminalbench", TerminalBenchProvider())
-        registry.register("osworld", OSWorldProvider())
+        # Generic providers (no benchmark-specific dependencies)
         registry.register("compose_terminal", ComposeTerminalProvider())
         registry.register("docker_container", DockerContainerProvider())
+        # Benchmark-specific providers register themselves
+        _register_benchmark_providers(registry)
+        # Third-party plugins via entry_points
+        registry.discover_plugins()
         _DEFAULT_PROVIDER_REGISTRY = registry
     return _DEFAULT_PROVIDER_REGISTRY
+
+
+def _register_benchmark_providers(registry: ContainerProviderRegistry) -> None:
+    """Load benchmark-specific container providers via lazy imports.
+
+    Benchmark packages register their own providers through
+    ``register_container_provider()`` functions.  Using lazy imports
+    avoids a hard dependency from runtime → benchmarks.
+    """
+    try:
+        from snowl.benchmarks.osworld.provider import register_container_provider as _reg_osw
+        _reg_osw(registry)
+    except ImportError:
+        pass
+    try:
+        from snowl.benchmarks.terminalbench.provider import register_container_provider as _reg_tb
+        _reg_tb(registry)
+    except ImportError:
+        pass
+    try:
+        from snowl.benchmarks.exploitbench.provider import register_container_provider as _reg_eb
+        _reg_eb(registry)
+    except ImportError:
+        pass

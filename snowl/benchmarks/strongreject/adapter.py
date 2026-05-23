@@ -14,13 +14,23 @@ Change guardrails:
 
 from __future__ import annotations
 
+import csv
 import hashlib
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from snowl.benchmarks.base_adapter import BaseBenchmarkAdapter
-from snowl.benchmarks.utils import default_reference_path, read_csv_rows
+from snowl.benchmarks.utils import default_reference_path
 from snowl.core import EnvSpec
+from snowl.errors import SnowlValidationError
+
+# Pinned GitHub commit for reproducibility (same as inspect_evals reference).
+_STRONGREJECT_CSV_URL = (
+    "https://raw.githubusercontent.com/alexandrasouly/strongreject/"
+    "3432b2d696b428f242bd507df96d80f686571d5e/"
+    "strongreject_dataset/strongreject_dataset.csv"
+)
 
 
 def _default_dataset_path() -> str:
@@ -30,6 +40,48 @@ def _default_dataset_path() -> str:
         "strongreject_dataset",
         "strongreject_small_dataset.csv",
     )
+
+
+def _load_rows_from_csv(path: str) -> list[dict[str, Any]]:
+    """Load rows from a local CSV file."""
+    p = Path(path)
+    if not p.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    with p.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            rows.append(dict(row))
+    return rows
+
+
+def _load_rows_from_url() -> list[dict[str, Any]]:
+    """Download StrongReject CSV from pinned GitHub URL and parse rows."""
+    try:
+        import requests  # type: ignore
+    except ImportError as exc:
+        raise SnowlValidationError(
+            "Missing optional dependency 'requests'. "
+            "Install Snowl with the 'safety_assets' extra to use remote benchmark assets."
+        ) from exc
+
+    from snowl.benchmarks.assets import benchmark_cache_root
+
+    cache_dir = benchmark_cache_root() / "direct_url"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = cache_dir / "strongreject_dataset.csv"
+
+    if not cache_file.exists():
+        resp = requests.get(_STRONGREJECT_CSV_URL, timeout=60)
+        resp.raise_for_status()
+        cache_file.write_bytes(resp.content)
+
+    rows: list[dict[str, Any]] = []
+    with cache_file.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            rows.append(dict(row))
+    return rows
 
 
 @dataclass(frozen=True)
@@ -43,10 +95,11 @@ class StrongRejectBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
     id_field: str = "id"
 
     def _iter_rows(self) -> list[dict[str, Any]]:
-        return read_csv_rows(
-            self.dataset_path,
-            not_found_message="StrongReject dataset file not found",
-        )
+        # Try local file first, fall back to remote download
+        rows = _load_rows_from_csv(self.dataset_path)
+        if rows:
+            return rows
+        return _load_rows_from_url()
 
     def _row_split(self, row: dict[str, Any], *, row_index: int) -> str:
         _ = row_index
@@ -107,4 +160,4 @@ class StrongRejectBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
         }
 
     def _no_samples_error(self, split: str) -> str:
-        return f"No StrongReject samples loaded for split='{split}' in {self.dataset_path}."
+        return f"No StrongReject samples loaded for split='{split}'."

@@ -16,12 +16,17 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from snowl.benchmarks.base import BenchmarkInfo
 from snowl.benchmarks.base_adapter import BaseBenchmarkAdapter
-from snowl.benchmarks.utils import default_reference_path, read_jsonl_rows
+from snowl.benchmarks.utils import HFDatasetAsset, default_reference_path, stable_benchmark_id
 from snowl.core import EnvSpec
+
+# HuggingFace dataset (same as inspect_evals reference).
+_HF_DATASET_PATH = "cais/wmdp"
+_HF_DATASET_REVISION = "7125571f22f032c56415e7980f48d877dd830ff8"
 
 
 def _default_cyber_dataset_path() -> str:
@@ -62,6 +67,34 @@ _VARIANT_METADATA = {
         "dashboard_tags": ["mcq", "chemistry"],
     },
 }
+
+
+def _load_local_jsonl(path: str) -> list[dict[str, Any]]:
+    """Try loading rows from a local JSONL file."""
+    p = Path(path)
+    if not p.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    with p.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            import json
+            rows.append(json.loads(line))
+    return rows
+
+
+def _load_hf_rows(variant: str) -> list[dict[str, Any]]:
+    """Load rows from HuggingFace cais/wmdp dataset."""
+    hf_name = variant  # "wmdp-cyber" or "wmdp-chem"
+    return HFDatasetAsset(
+        source=_HF_DATASET_PATH,
+        revision=_HF_DATASET_REVISION,
+        split="test",
+        name=hf_name,
+        cache_tag=f"wmdp-{variant}",
+    ).load_rows()
 
 
 @dataclass(frozen=True)
@@ -111,10 +144,11 @@ class WMDPBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
         return {"scoring": "accuracy", "variant": self.variant}
 
     def _iter_rows(self) -> list[dict[str, Any]]:
-        return read_jsonl_rows(
-            self.dataset_path,
-            not_found_message=f"WMDP dataset file not found: {self.dataset_path}",
-        )
+        # Try local JSONL first, fall back to HuggingFace
+        rows = _load_local_jsonl(self.dataset_path)
+        if rows:
+            return rows
+        return _load_hf_rows(self.variant)
 
     def _row_split(self, row: dict[str, Any], *, row_index: int) -> str:
         _ = row_index
@@ -168,4 +202,4 @@ class WMDPBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
         return EnvSpec(env_type="local")
 
     def _no_samples_error(self, split: str) -> str:
-        return f"No WMDP samples loaded for split='{split}' in {self.dataset_path}."
+        return f"No WMDP samples loaded for split='{split}' (variant={self.variant})."

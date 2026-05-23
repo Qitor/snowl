@@ -9,10 +9,10 @@ from snowl.runtime.container_providers import (
     ContainerProviderRegistry,
     ContainerSession,
     DockerContainerProvider,
-    OSWorldProvider,
-    TerminalBenchProvider,
     default_container_provider_registry,
 )
+from snowl.benchmarks.osworld.provider import OSWorldProvider
+from snowl.benchmarks.terminalbench.provider import TerminalBenchProvider
 from snowl.runtime.container_runtime import ContainerRuntime
 
 
@@ -187,7 +187,7 @@ def test_terminalbench_provider_emits_compatible_lifecycle_events(monkeypatch, t
                 "stderr": "",
             }
 
-    monkeypatch.setattr("snowl.runtime.container_providers.TerminalEnv", _FakeTerminalEnv)
+    monkeypatch.setattr("snowl.benchmarks.terminalbench.provider.TerminalEnv", _FakeTerminalEnv)
     monkeypatch.setattr("snowl.runtime.container_providers.shutil.which", lambda _name: "/usr/bin/docker")
 
     provider = TerminalBenchProvider()
@@ -262,7 +262,7 @@ def test_terminalbench_provider_isolates_resources_per_variant(monkeypatch, tmp_
             _ = on_event
             return {"event": "terminal.compose.down", "exit_code": 0, "duration_ms": 1, "stdout": "", "stderr": ""}
 
-    monkeypatch.setattr("snowl.runtime.container_providers.TerminalEnv", _FakeTerminalEnv)
+    monkeypatch.setattr("snowl.benchmarks.terminalbench.provider.TerminalEnv", _FakeTerminalEnv)
     monkeypatch.setattr("snowl.runtime.container_providers.shutil.which", lambda _name: "/usr/bin/docker")
 
     provider = TerminalBenchProvider()
@@ -448,7 +448,7 @@ def test_osworld_provider_prepare_and_close_emit_events(monkeypatch) -> None:
                 self._emit({"event": "osworld.container.started", "phase": "env", "docker_path": docker_path})
             return type("Prepared", (), {"env": _FakeGuiEnv(), "metadata": {"image": "img"}})()
 
-    monkeypatch.setattr("snowl.runtime.container_providers.OSWorldContainerLauncher", _FakeLauncher)
+    monkeypatch.setattr("snowl.benchmarks.osworld.provider.OSWorldContainerLauncher", _FakeLauncher)
     monkeypatch.setattr("snowl.runtime.container_providers.shutil.which", lambda _name: "/usr/bin/docker")
 
     provider = OSWorldProvider()

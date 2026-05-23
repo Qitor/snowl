@@ -79,8 +79,6 @@ class ReActAgent:
         context: AgentContext,
         tools: Sequence[Any] | None = None,
     ) -> AgentState:
-        emit = context.metadata.get("__snowl_emit_event")
-
         async def _generate_with_events(
             messages: list[dict[str, Any]],
             *,
@@ -95,115 +93,112 @@ class ReActAgent:
             _model_name = getattr(self.model_client, "model", "")
             _base_url = getattr(self.model_client, "base_url", "")
             _provider_id = getattr(self.model_client, "provider_id", "")
-            if callable(emit):
-                emit(
-                    {
-                        "event": "runtime.model.io",
-                        "phase": "agent",
-                        "agent_id": self.agent_id,
-                        "task_id": context.task_id,
-                        "sample_id": context.sample_id,
-                        "step": step,
-                        "mode": mode_name,
-                        "direction": "input",
-                        "message": "model input captured before provider call",
-                        "model": _model_name,
-                        "base_url": _base_url,
-                        "provider_id": _provider_id,
-                        "model_input": {
-                            "messages": request_messages,
-                            "generation_kwargs": request_kwargs,
-                        },
-                        "request": {
-                            "messages": request_messages,
-                            "generation_kwargs": request_kwargs,
-                        },
-                    }
-                )
-                emit(
-                    {
-                        "event": "runtime.model.query.start",
-                        "phase": "agent",
-                        "agent_id": self.agent_id,
-                        "task_id": context.task_id,
-                        "sample_id": context.sample_id,
-                        "step": step,
-                        "mode": mode_name,
-                        "message": "waiting for provider response",
-                        "model": _model_name,
-                        "base_url": _base_url,
-                        "provider_id": _provider_id,
-                    }
-                )
+            context.emit_event(
+                {
+                    "event": "runtime.model.io",
+                    "phase": "agent",
+                    "agent_id": self.agent_id,
+                    "task_id": context.task_id,
+                    "sample_id": context.sample_id,
+                    "step": step,
+                    "mode": mode_name,
+                    "direction": "input",
+                    "message": "model input captured before provider call",
+                    "model": _model_name,
+                    "base_url": _base_url,
+                    "provider_id": _provider_id,
+                    "model_input": {
+                        "messages": request_messages,
+                        "generation_kwargs": request_kwargs,
+                    },
+                    "request": {
+                        "messages": request_messages,
+                        "generation_kwargs": request_kwargs,
+                    },
+                }
+            )
+            context.emit_event(
+                {
+                    "event": "runtime.model.query.start",
+                    "phase": "agent",
+                    "agent_id": self.agent_id,
+                    "task_id": context.task_id,
+                    "sample_id": context.sample_id,
+                    "step": step,
+                    "mode": mode_name,
+                    "message": "waiting for provider response",
+                    "model": _model_name,
+                    "base_url": _base_url,
+                    "provider_id": _provider_id,
+                }
+            )
             try:
                 response = await self.model_client.generate(request_messages, **request_kwargs)
             except Exception as exc:
-                if callable(emit):
-                    emit(
-                        {
-                            "event": "runtime.model.query.error",
-                            "phase": "agent",
-                            "agent_id": self.agent_id,
-                            "task_id": context.task_id,
-                            "sample_id": context.sample_id,
-                            "step": step,
-                            "mode": mode_name,
-                            "message": str(exc),
-                            "error_type": exc.__class__.__name__,
-                            "model": _model_name,
-                            "base_url": _base_url,
-                            "provider_id": _provider_id,
-                        }
-                    )
-                raise
-            if callable(emit):
-                emit(
+                context.emit_event(
                     {
-                        "event": "runtime.model.query.finish",
-                        "phase": "agent",
-                        "agent_id": self.agent_id,
-                        "task_id": context.task_id,
-                        "sample_id": context.sample_id,
-                        "duration_ms": max(0, int(response.timing.ended_at_ms) - start_ms),
-                        "input_tokens": response.usage.input_tokens,
-                        "output_tokens": response.usage.output_tokens,
-                        "total_tokens": response.usage.total_tokens,
-                        "model": _model_name,
-                        "base_url": _base_url,
-                        "provider_id": _provider_id,
-                    }
-                )
-                emit(
-                    {
-                        "event": "runtime.model.io",
+                        "event": "runtime.model.query.error",
                         "phase": "agent",
                         "agent_id": self.agent_id,
                         "task_id": context.task_id,
                         "sample_id": context.sample_id,
                         "step": step,
                         "mode": mode_name,
-                        "direction": "output",
-                        "message": "model output captured after provider response",
+                        "message": str(exc),
+                        "error_type": exc.__class__.__name__,
                         "model": _model_name,
                         "base_url": _base_url,
                         "provider_id": _provider_id,
-                        "model_output": dict(response.message),
-                        "response": {
-                            "message": dict(response.message),
-                            "raw": response.raw,
-                            "usage": {
-                                "input_tokens": response.usage.input_tokens,
-                                "output_tokens": response.usage.output_tokens,
-                                "total_tokens": response.usage.total_tokens,
-                            },
-                            "timing": {
-                                "started_at_ms": response.timing.started_at_ms,
-                                "ended_at_ms": response.timing.ended_at_ms,
-                                "duration_ms": response.timing.duration_ms,
-                            },
-                        },
                     }
                 )
+                raise
+            context.emit_event(
+                {
+                    "event": "runtime.model.query.finish",
+                    "phase": "agent",
+                    "agent_id": self.agent_id,
+                    "task_id": context.task_id,
+                    "sample_id": context.sample_id,
+                    "duration_ms": max(0, int(response.timing.ended_at_ms) - start_ms),
+                    "input_tokens": response.usage.input_tokens,
+                    "output_tokens": response.usage.output_tokens,
+                    "total_tokens": response.usage.total_tokens,
+                    "model": _model_name,
+                    "base_url": _base_url,
+                    "provider_id": _provider_id,
+                }
+            )
+            context.emit_event(
+                {
+                    "event": "runtime.model.io",
+                    "phase": "agent",
+                    "agent_id": self.agent_id,
+                    "task_id": context.task_id,
+                    "sample_id": context.sample_id,
+                    "step": step,
+                    "mode": mode_name,
+                    "direction": "output",
+                    "message": "model output captured after provider response",
+                    "model": _model_name,
+                    "base_url": _base_url,
+                    "provider_id": _provider_id,
+                    "model_output": dict(response.message),
+                    "response": {
+                        "message": dict(response.message),
+                        "raw": response.raw,
+                        "usage": {
+                            "input_tokens": response.usage.input_tokens,
+                            "output_tokens": response.usage.output_tokens,
+                            "total_tokens": response.usage.total_tokens,
+                        },
+                        "timing": {
+                            "started_at_ms": response.timing.started_at_ms,
+                            "ended_at_ms": response.timing.ended_at_ms,
+                            "duration_ms": response.timing.duration_ms,
+                        },
+                    },
+                }
+            )
             return response
 
         middleware_chain = MiddlewareChain(self.middlewares)
@@ -288,20 +283,19 @@ class ReActAgent:
                     },
                 }
             )
-            if callable(emit):
-                emit(
-                    {
-                        "event": "runtime.agent.step",
-                        "phase": "agent",
-                        "agent_id": self.agent_id,
-                        "task_id": context.task_id,
-                        "sample_id": context.sample_id,
-                        "step": step,
-                        "mode": mode,
-                        "status": "running",
-                        "message": "react agent step executed",
-                    }
-                )
+            context.emit_event(
+                {
+                    "event": "runtime.agent.step",
+                    "phase": "agent",
+                    "agent_id": self.agent_id,
+                    "task_id": context.task_id,
+                    "sample_id": context.sample_id,
+                    "step": step,
+                    "mode": mode,
+                    "status": "running",
+                    "message": "react agent step executed",
+                }
+            )
 
             if mode == "json_fallback":
                 content = str(message.get("content", "") or "")

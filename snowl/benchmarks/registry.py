@@ -17,31 +17,65 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from snowl.benchmarks.base import BenchmarkAdapter, BenchmarkConcurrencyProfile, BenchmarkInfo
-from snowl.benchmarks.agent_bench_os import AgentBenchOSBenchmarkAdapter
-from snowl.benchmarks.agentdojo import AgentDojoBenchmarkAdapter
-from snowl.benchmarks.agentsafetybench import AgentSafetyBenchBenchmarkAdapter
-from snowl.benchmarks.agentharm import AgentHarmBenchmarkAdapter
-from snowl.benchmarks.bfcl import BFCLBenchmarkAdapter
-from snowl.benchmarks.coconot import CoconotBenchmarkAdapter
-from snowl.benchmarks.csv_adapter import CsvBenchmarkAdapter
-from snowl.benchmarks.cybermetric import CyberMetricBenchmarkAdapter
-from snowl.benchmarks.fortress import FortressBenchmarkAdapter
-from snowl.benchmarks.ipi_coding_agent import IPICodingAgentBenchmarkAdapter
-from snowl.benchmarks.jsonl_adapter import JsonlBenchmarkAdapter
-from snowl.benchmarks.mask import MASKBenchmarkAdapter
-from snowl.benchmarks.osworld import OSWorldBenchmarkAdapter
-from snowl.benchmarks.sec_qa import SecQABenchmarkAdapter
-from snowl.benchmarks.sevenllm import SevenLLMMCQBenchmarkAdapter
-from snowl.benchmarks.strongreject import StrongRejectBenchmarkAdapter
-from snowl.benchmarks.terminalbench import TerminalBenchBenchmarkAdapter
-from snowl.benchmarks.toolemu import ToolEmuBenchmarkAdapter
-from snowl.benchmarks.wmdp import WMDPBenchmarkAdapter
-from snowl.benchmarks.xstest import XSTestBenchmarkAdapter
+from snowl.benchmarks.base import BenchmarkAdapter, BenchmarkConcurrencyProfile, BenchmarkInfo, RiskDomain
 from snowl.errors import SnowlValidationError
+
+# -- Shared RiskDomain definitions ------------------------------------------------
+
+RISK_PROMPT_INJECTION = RiskDomain(
+    domain_id="prompt_injection",
+    display_name="Prompt Injection",
+    description="Resistance to adversarial prompt injection attacks in agentic settings.",
+)
+RISK_HARMFUL_TOOL_USE = RiskDomain(
+    domain_id="harmful_tool_use",
+    display_name="Harmful Tool Use",
+    description="Propensity to use tools in ways that cause real-world harm.",
+)
+RISK_OVER_REFUSAL = RiskDomain(
+    domain_id="over_refusal",
+    display_name="Over-Refusal",
+    description="Tendency to refuse benign requests that appear marginally sensitive.",
+)
+RISK_UNSAFE_COMPLIANCE = RiskDomain(
+    domain_id="unsafe_compliance",
+    display_name="Unsafe Compliance",
+    description="Willingness to comply with explicitly harmful instructions.",
+)
+RISK_CYBER_CAPABILITY = RiskDomain(
+    domain_id="cyber_capability",
+    display_name="Cyber Capability",
+    description="Capability to assist with offensive cybersecurity operations.",
+)
+RISK_CBRN_HAZARDOUS = RiskDomain(
+    domain_id="cbrn_hazardous",
+    display_name="CBRN Hazardous",
+    description="Capability to assist with chemical, biological, radiological, or nuclear hazards.",
+)
+RISK_LONG_HORIZON = RiskDomain(
+    domain_id="long_horizon",
+    display_name="Long-Horizon Agent Risk",
+    description="Risks from agents operating autonomously over extended task horizons.",
+)
 
 
 AdapterFactory = Callable[..., BenchmarkAdapter]
+
+
+def _lazy_factory(module_path: str, class_name: str, **extra_kwargs: Any) -> AdapterFactory:
+    """Create a factory that lazily imports the adapter class on first call.
+
+    Avoids importing all benchmark adapter modules at registry initialization
+    time, reducing startup cost and decoupling the registry from individual
+    adapter packages.
+    """
+    def _factory(**kwargs: Any) -> BenchmarkAdapter:
+        import importlib
+        merged = {**extra_kwargs, **kwargs}
+        module = importlib.import_module(module_path)
+        cls = getattr(module, class_name)
+        return cls(**merged)
+    return _factory
 
 
 @dataclass(frozen=True)
@@ -69,6 +103,58 @@ class BenchmarkRegistry:
             raise SnowlValidationError(f"Unknown benchmark adapter '{name}'.")
         return entry.factory(**kwargs)
 
+    def has(self, name: str) -> bool:
+        return name.strip() in self._entries
+
+    def discover_plugins(self) -> None:
+        """Discover and register benchmark adapters from installed entry points.
+
+        Looks for entry points in two groups (for backward compatibility):
+        - ``snowl.benchmarks`` (preferred, matches plugin contract)
+        - ``snowl.benchmark`` (legacy)
+
+        Entry points should resolve to one of:
+        - A callable that accepts this registry and registers adapters
+        - A callable that returns a BenchmarkAdapter instance when called
+
+        Errors during plugin loading are emitted as warnings rather than
+        raising, so a broken plugin does not block the framework.
+        """
+        import importlib.metadata
+        import warnings
+
+        seen_names: set[str] = set()
+        for group in ("snowl.benchmarks", "snowl.benchmark"):
+            try:
+                eps = importlib.metadata.entry_points(group=group)
+            except Exception:
+                continue
+
+            for ep in eps:
+                if ep.name in seen_names:
+                    continue
+                seen_names.add(ep.name)
+                try:
+                    loaded = ep.load()
+                    if callable(loaded):
+                        # Try calling as register_fn(registry) first
+                        import inspect
+                        sig = inspect.signature(loaded)
+                        params = list(sig.parameters)
+                        if len(params) >= 1:
+                            loaded(self)
+                        else:
+                            # No params — treat as adapter factory
+                            adapter = loaded()
+                            if hasattr(adapter, "info") and hasattr(adapter, "load_tasks"):
+                                info = adapter.info
+                                self.register(ep.name, info=info, factory=lambda **kw: loaded())
+                except Exception as exc:
+                    warnings.warn(
+                        f"Failed to load benchmark plugin '{ep.name}': {exc}",
+                        stacklevel=2,
+                    )
+
 
 _DEFAULT_BENCHMARK_REGISTRY = BenchmarkRegistry()
 
@@ -91,8 +177,9 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=True,
             sample_preview_mode="code_trace",
             dashboard_tags=["terminal", "tool_use", "os"],
+            risk_domains=(),
         ),
-        factory=lambda **kwargs: AgentBenchOSBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.agent_bench_os", "AgentBenchOSBenchmarkAdapter"),
     )
     registry.register(
         name="agentdojo",
@@ -106,13 +193,14 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=True,
             sample_preview_mode="tool_trace",
             dashboard_tags=["prompt_injection", "tool_use", "stateful"],
+            risk_domains=(RISK_PROMPT_INJECTION,),
             concurrency_profile=BenchmarkConcurrencyProfile(
                 name="agentdojo",
                 api_call_amplification=5.0,
                 recommended_max_running=6,
             ),
         ),
-        factory=lambda **kwargs: AgentDojoBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.agentdojo", "AgentDojoBenchmarkAdapter"),
     )
     registry.register(
         name="agentharm",
@@ -126,8 +214,9 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=True,
             sample_preview_mode="tool_trace",
             dashboard_tags=["agent_safety", "tool_use", "refusal"],
+            risk_domains=(RISK_HARMFUL_TOOL_USE,),
         ),
-        factory=lambda **kwargs: AgentHarmBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.agentharm", "AgentHarmBenchmarkAdapter"),
     )
     registry.register(
         name="agentharm_benign",
@@ -141,8 +230,9 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=True,
             sample_preview_mode="tool_trace",
             dashboard_tags=["agent_safety", "tool_use", "refusal"],
+            risk_domains=(RISK_HARMFUL_TOOL_USE,),
         ),
-        factory=lambda **kwargs: AgentHarmBenchmarkAdapter(mode="benign", **kwargs),
+        factory=_lazy_factory("snowl.benchmarks.agentharm", "AgentHarmBenchmarkAdapter", mode="benign"),
     )
     registry.register(
         name="agentsafetybench",
@@ -158,9 +248,10 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=True,
             sample_preview_mode="tool_trace",
             dashboard_tags=["agent_safety", "tool_use", "stateful"],
+            risk_domains=(RISK_HARMFUL_TOOL_USE,),
             middleware_hints={"type": "agentsafetybench", "execution_mode": "dynamic_env"},
         ),
-        factory=lambda **kwargs: AgentSafetyBenchBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.agentsafetybench", "AgentSafetyBenchBenchmarkAdapter"),
     )
     registry.register(
         name="bfcl",
@@ -174,8 +265,9 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=True,
             sample_preview_mode="tool_trace",
             dashboard_tags=["function_calling", "tool_use"],
+            risk_domains=(),
         ),
-        factory=lambda **kwargs: BFCLBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.bfcl", "BFCLBenchmarkAdapter"),
     )
     registry.register(
         name="coconot",
@@ -189,8 +281,9 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=True,
             sample_preview_mode="dialog",
             dashboard_tags=["noncompliance", "refusal"],
+            risk_domains=(RISK_OVER_REFUSAL,),
         ),
-        factory=lambda **kwargs: CoconotBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.coconot", "CoconotBenchmarkAdapter"),
     )
     registry.register(
         name="jsonl",
@@ -198,7 +291,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             name="jsonl",
             description="Generic JSONL benchmark adapter.",
         ),
-        factory=lambda **kwargs: JsonlBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.jsonl_adapter", "JsonlBenchmarkAdapter"),
     )
     registry.register(
         name="csv",
@@ -206,7 +299,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             name="csv",
             description="Generic CSV benchmark adapter.",
         ),
-        factory=lambda **kwargs: CsvBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.csv_adapter", "CsvBenchmarkAdapter"),
     )
     registry.register(
         name="ipi_coding_agent",
@@ -220,8 +313,9 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=True,
             sample_preview_mode="code_trace",
             dashboard_tags=["prompt_injection", "coding", "tool_use"],
+            risk_domains=(RISK_PROMPT_INJECTION,),
         ),
-        factory=lambda **kwargs: IPICodingAgentBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.ipi_coding_agent", "IPICodingAgentBenchmarkAdapter"),
     )
     for dataset_name in ("CyberMetric-80", "CyberMetric-500", "CyberMetric-2000", "CyberMetric-10000"):
         adapter_name = f"cybermetric_{dataset_name.rsplit('-', 1)[-1]}"
@@ -239,11 +333,9 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
                 higher_is_better=True,
                 sample_preview_mode="qa",
                 dashboard_tags=["mcq", "cybersecurity"],
+                risk_domains=(RISK_CYBER_CAPABILITY,),
             ),
-            factory=lambda dataset_name=dataset_name, **kwargs: CyberMetricBenchmarkAdapter(
-                dataset_name=dataset_name,
-                **kwargs,
-            ),
+            factory=_lazy_factory("snowl.benchmarks.cybermetric", "CyberMetricBenchmarkAdapter", dataset_name=dataset_name),
         )
     registry.register(
         name="fortress_adversarial",
@@ -257,8 +349,9 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=True,
             sample_preview_mode="dialog",
             dashboard_tags=["safeguards", "refusal"],
+            risk_domains=(RISK_OVER_REFUSAL, RISK_UNSAFE_COMPLIANCE),
         ),
-        factory=lambda **kwargs: FortressBenchmarkAdapter(mode="adversarial", **kwargs),
+        factory=_lazy_factory("snowl.benchmarks.fortress", "FortressBenchmarkAdapter", mode="adversarial"),
     )
     registry.register(
         name="fortress_benign",
@@ -272,8 +365,9 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=True,
             sample_preview_mode="dialog",
             dashboard_tags=["safeguards", "refusal"],
+            risk_domains=(RISK_OVER_REFUSAL,),
         ),
-        factory=lambda **kwargs: FortressBenchmarkAdapter(mode="benign", **kwargs),
+        factory=_lazy_factory("snowl.benchmarks.fortress", "FortressBenchmarkAdapter", mode="benign"),
     )
     registry.register(
         name="strongreject",
@@ -287,8 +381,9 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=False,
             sample_preview_mode="dialog",
             dashboard_tags=["jailbreak", "refusal"],
+            risk_domains=(RISK_UNSAFE_COMPLIANCE,),
         ),
-        factory=lambda **kwargs: StrongRejectBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.strongreject", "StrongRejectBenchmarkAdapter"),
     )
     registry.register(
         name="terminalbench",
@@ -302,8 +397,9 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=True,
             sample_preview_mode="code_trace",
             dashboard_tags=["coding", "terminal"],
+            risk_domains=(RISK_LONG_HORIZON,),
         ),
-        factory=lambda **kwargs: TerminalBenchBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.terminalbench", "TerminalBenchBenchmarkAdapter"),
     )
     registry.register(
         name="osworld",
@@ -317,8 +413,9 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=True,
             sample_preview_mode="gui_trace",
             dashboard_tags=["gui", "desktop", "agent_capability"],
+            risk_domains=(RISK_LONG_HORIZON,),
         ),
-        factory=lambda **kwargs: OSWorldBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.osworld", "OSWorldBenchmarkAdapter"),
     )
     registry.register(
         name="sec_qa_v1",
@@ -334,8 +431,9 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=True,
             sample_preview_mode="qa",
             dashboard_tags=["mcq", "cybersecurity"],
+            risk_domains=(RISK_CYBER_CAPABILITY,),
         ),
-        factory=lambda **kwargs: SecQABenchmarkAdapter(variant="secqa_v1", **kwargs),
+        factory=_lazy_factory("snowl.benchmarks.sec_qa", "SecQABenchmarkAdapter", variant="secqa_v1"),
     )
     registry.register(
         name="sec_qa_v2",
@@ -351,8 +449,9 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=True,
             sample_preview_mode="qa",
             dashboard_tags=["mcq", "cybersecurity"],
+            risk_domains=(RISK_CYBER_CAPABILITY,),
         ),
-        factory=lambda **kwargs: SecQABenchmarkAdapter(variant="secqa_v2", **kwargs),
+        factory=_lazy_factory("snowl.benchmarks.sec_qa", "SecQABenchmarkAdapter", variant="secqa_v2"),
     )
     registry.register(
         name="sevenllm_mcq_en",
@@ -368,8 +467,9 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=True,
             sample_preview_mode="qa",
             dashboard_tags=["mcq", "cybersecurity", "en"],
+            risk_domains=(RISK_CYBER_CAPABILITY,),
         ),
-        factory=lambda **kwargs: SevenLLMMCQBenchmarkAdapter(language="en", **kwargs),
+        factory=_lazy_factory("snowl.benchmarks.sevenllm", "SevenLLMMCQBenchmarkAdapter", language="en"),
     )
     registry.register(
         name="sevenllm_mcq_zh",
@@ -385,8 +485,9 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=True,
             sample_preview_mode="qa",
             dashboard_tags=["mcq", "cybersecurity", "zh"],
+            risk_domains=(RISK_CYBER_CAPABILITY,),
         ),
-        factory=lambda **kwargs: SevenLLMMCQBenchmarkAdapter(language="zh", **kwargs),
+        factory=_lazy_factory("snowl.benchmarks.sevenllm", "SevenLLMMCQBenchmarkAdapter", language="zh"),
     )
     registry.register(
         name="toolemu",
@@ -400,6 +501,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=False,
             sample_preview_mode="tool_trace",
             dashboard_tags=["tool_use", "agent_risk"],
+            risk_domains=(RISK_HARMFUL_TOOL_USE, RISK_PROMPT_INJECTION),
             concurrency_profile=BenchmarkConcurrencyProfile(
                 name="toolemu",
                 api_call_amplification=30.0,
@@ -408,7 +510,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
                 scorer_provider_id="openai",
             ),
         ),
-        factory=lambda **kwargs: ToolEmuBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.toolemu", "ToolEmuBenchmarkAdapter"),
     )
     registry.register(
         name="wmdp-cyber",
@@ -424,8 +526,9 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=True,
             sample_preview_mode="qa",
             dashboard_tags=["mcq", "cybersecurity"],
+            risk_domains=(RISK_CYBER_CAPABILITY,),
         ),
-        factory=lambda **kwargs: WMDPBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.wmdp", "WMDPBenchmarkAdapter"),
     )
     registry.register(
         name="wmdp-chem",
@@ -441,8 +544,9 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=True,
             sample_preview_mode="qa",
             dashboard_tags=["mcq", "chemistry"],
+            risk_domains=(RISK_CBRN_HAZARDOUS,),
         ),
-        factory=lambda **kwargs: WMDPBenchmarkAdapter(variant="wmdp-chem", **kwargs),
+        factory=_lazy_factory("snowl.benchmarks.wmdp", "WMDPBenchmarkAdapter", variant="wmdp-chem"),
     )
     registry.register(
         name="xstest",
@@ -456,8 +560,9 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=True,
             sample_preview_mode="dialog",
             dashboard_tags=["refusal", "overrefusal"],
+            risk_domains=(RISK_OVER_REFUSAL,),
         ),
-        factory=lambda **kwargs: XSTestBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.xstest", "XSTestBenchmarkAdapter"),
     )
     registry.register(
         name="mask",
@@ -473,9 +578,36 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=False,
             sample_preview_mode="dialog",
             dashboard_tags=["situational_awareness", "deception"],
+            risk_domains=(RISK_UNSAFE_COMPLIANCE,),
         ),
-        factory=lambda **kwargs: MASKBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.mask", "MASKBenchmarkAdapter"),
     )
+    registry.register(
+        name="exploitbench",
+        info=BenchmarkInfo(
+            name="exploitbench",
+            description="ExploitBench V8 exploitation capability ladder benchmark.",
+            display_name="ExploitBench",
+            short_description="V8 binary exploitation capability ladder evaluation",
+            domain="cyber_offense",
+            benchmark_type="capability",
+            family="exploitbench",
+            primary_metric="exploitbench_capability_score",
+            higher_is_better=True,
+            sample_preview_mode="tool_trace",
+            dashboard_tags=["exploitation", "v8", "binary_exploitation", "mcp"],
+            risk_domains=(RISK_CYBER_CAPABILITY,),
+            concurrency_profile=BenchmarkConcurrencyProfile(
+                name="exploitbench",
+                api_call_amplification=10.0,
+                recommended_max_running=3,
+            ),
+        ),
+        factory=_lazy_factory("snowl.benchmarks.exploitbench.adapter", "ExploitBenchBenchmarkAdapter"),
+    )
+
+    # Discover third-party plugins via entry_points
+    registry.discover_plugins()
     return registry
 
 

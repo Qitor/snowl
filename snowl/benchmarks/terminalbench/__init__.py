@@ -11,7 +11,8 @@ Change guardrails:
 """
 
 from snowl.benchmarks.terminalbench.adapter import TerminalBenchBenchmarkAdapter
+from snowl.benchmarks.terminalbench.provider import TerminalBenchProvider
 from snowl.benchmarks.terminalbench.scorer import TerminalBenchScorer, terminalbench
 
-__all__ = ["TerminalBenchBenchmarkAdapter", "TerminalBenchScorer", "terminalbench"]
+__all__ = ["TerminalBenchBenchmarkAdapter", "TerminalBenchProvider", "TerminalBenchScorer", "terminalbench"]
 

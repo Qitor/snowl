@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "snowl.benchmark_manifest.v1",
+  "title": "Snowl Benchmark Manifest v1",
+  "description": "Metadata contract for benchmark adapters in the Snowl ecosystem.",
+  "type": "object",
+  "required": ["schema_version", "name", "display_name", "benchmark_type", "primary_metric", "source", "adapter", "runtime", "scoring"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "snowl.benchmark_manifest.v1",
+      "description": "Must be exactly 'snowl.benchmark_manifest.v1'."
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Machine-readable benchmark name (snake_case). Must match the registry key."
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable benchmark name."
+    },
+    "family": {
+      "type": "string",
+      "description": "Benchmark family for grouping related variants."
+    },
+    "domain": {
+      "type": "string",
+      "description": "Primary domain (e.g., agentic_safety, cyber_offense, tool_use)."
+    },
+    "benchmark_type": {
+      "type": "string",
+      "enum": ["capability", "safety", "tool_use", "knowledge", "reasoning", "other"],
+      "description": "Category of evaluation."
+    },
+    "primary_metric": {
+      "type": "string",
+      "description": "Name of the primary scoring metric."
+    },
+    "higher_is_better": {
+      "type": "boolean",
+      "default": true
+    },
+    "status": {
+      "type": "string",
+      "enum": ["stable", "experimental", "deprecated"],
+      "default": "stable"
+    },
+    "source": {
+      "type": "object",
+      "description": "Source attribution for the benchmark.",
+      "properties": {
+        "paper": { "type": ["string", "null"], "format": "uri" },
+        "code": { "type": ["string", "null"], "format": "uri" },
+        "dataset": { "type": ["string", "null"], "format": "uri" },
+        "homepage": { "type": ["string", "null"], "format": "uri" },
+        "citation": { "type": ["string", "null"] },
+        "license": { "type": ["string", "null"] }
+      }
+    },
+    "adapter": {
+      "type": "object",
+      "description": "Adapter entry point and compatibility.",
+      "required": ["entrypoint"],
+      "properties": {
+        "entrypoint": {
+          "type": "string",
+          "description": "Python entry point, e.g. 'snowl_evals.agentdojo:adapter'."
+        },
+        "min_snowl_version": {
+          "type": ["string", "null"],
+          "description": "Minimum snowl version required."
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "description": "Runtime requirements.",
+      "properties": {
+        "env_type": { "type": "string" },
+        "requires_network": { "type": "boolean", "default": false },
+        "requires_docker": { "type": "boolean", "default": false },
+        "requires_browser": { "type": "boolean", "default": false },
+        "requires_gui": { "type": "boolean", "default": false },
+        "expected_minutes_per_100_samples": { "type": ["number", "null"] },
+        "api_call_amplification": { "type": ["number", "null"] }
+      }
+    },
+    "data": {
+      "type": "object",
+      "description": "Dataset availability.",
+      "properties": {
+        "included": { "type": "boolean", "default": false },
+        "download_required": { "type": "boolean", "default": false },
+        "local_path_env": { "type": ["string", "null"] },
+        "checksum": { "type": ["string", "null"] }
+      }
+    },
+    "scoring": {
+      "type": "object",
+      "description": "Scoring method documentation.",
+      "properties": {
+        "method": { "type": "string" },
+        "judge_model_required": { "type": "boolean", "default": false },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+    "reproducibility": {
+      "type": "object",
+      "description": "Reproducibility characteristics.",
+      "properties": {
+        "deterministic": { "type": "boolean", "default": false },
+        "seed_supported": { "type": "boolean", "default": true },
+        "known_caveats": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "maintainers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "contact": { "type": ["string", "null"] }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

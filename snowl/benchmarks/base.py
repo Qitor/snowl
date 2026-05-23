@@ -20,6 +20,28 @@ from typing import Any, Protocol
 from snowl.core import Task
 from snowl.errors import SnowlValidationError
 
+# Re-export RiskDomain for convenience
+__all__ = ["RiskDomain", "BenchmarkConcurrencyProfile", "BenchmarkInfo", "BenchmarkAdapter", "validate_benchmark_adapter"]
+
+
+@dataclass(frozen=True)
+class RiskDomain:
+    """Structured risk domain metadata for frontier AI risk evaluation.
+
+    Attributes:
+        domain_id: Machine-readable identifier (e.g., "prompt_injection").
+        display_name: Human-readable label for dashboards.
+        description: One-line explanation of what this domain measures.
+        severity_levels: Ordered severity levels from least to most severe.
+        categories: Fine-grained sub-categories within this domain.
+    """
+
+    domain_id: str
+    display_name: str
+    description: str = ""
+    severity_levels: tuple[str, ...] = ("low", "medium", "high", "critical")
+    categories: tuple[str, ...] = ()
+
 
 @dataclass(frozen=True)
 class BenchmarkConcurrencyProfile:
@@ -61,6 +83,7 @@ class BenchmarkInfo:
     sample_preview_mode: str = "qa"
     dashboard_tags: list[str] = field(default_factory=list)
     concurrency_profile: BenchmarkConcurrencyProfile | None = None
+    risk_domains: tuple[RiskDomain, ...] = ()
     middleware_hints: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

@@ -66,13 +66,20 @@ FORBIDDEN_RUNTIME_BENCHMARK_IMPORTS = (
     "snowl.benchmarks.xstest",
     "snowl.benchmarks.cybermetric",
     "snowl.benchmarks.agent_bench_os",
+    "snowl.benchmarks.exploitbench",
 )
 
 # Known exceptions for runtime → benchmark imports (documented boundary violations)
 # These are tracked in docs/architecture/boundary-audit.md
 RUNTIME_BENCHMARK_EXCEPTIONS: dict[str, list[str]] = {
-    "snowl.runtime.container_providers": ["snowl.benchmarks.osworld"],
-    "snowl.runtime.policy": ["snowl.benchmarks.base", "snowl.benchmarks.registry"],
+    # Lazy imports in _register_benchmark_providers are the self-registration bridge
+    "snowl.runtime.container_providers": [
+        "snowl.benchmarks.osworld",
+        "snowl.benchmarks.terminalbench",
+        "snowl.benchmarks.exploitbench",
+    ],
+    # policy.py uses lazy import for benchmark registry lookup
+    "snowl.runtime.policy": ["snowl.benchmarks.registry"],
 }
 
 # Patterns that indicate real API keys in example files

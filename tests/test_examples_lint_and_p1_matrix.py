@@ -112,7 +112,8 @@ def _write_osworld_dataset(root: Path) -> None:
 
 
 def test_p1_matrix_smoke_three_benchmarks(tmp_path: Path, monkeypatch) -> None:
-    from snowl.runtime.container_providers import ContainerSession, OSWorldProvider
+    from snowl.runtime.container_providers import ContainerSession
+    from snowl.benchmarks.osworld.provider import OSWorldProvider
 
     async def _fake_prepare(self, context):  # type: ignore[no-untyped-def]
         context.emit_event({"event": "osworld.container.started", "phase": "env", "ready": True})

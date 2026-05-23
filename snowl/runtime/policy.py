@@ -6,7 +6,6 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from snowl.benchmarks.base import BenchmarkConcurrencyProfile
 from snowl.core import Task
 from snowl.project_config import ProjectConfig
 
@@ -78,8 +77,10 @@ def benchmark_name_for_task(task: Task) -> str:
     return value or "custom"
 
 
-def _get_benchmark_profile(tasks: list[Task]) -> BenchmarkConcurrencyProfile | None:
+def _get_benchmark_profile(tasks: list[Task]) -> Any | None:
     """Look up the concurrency profile from the benchmark registry for the given tasks."""
+    from snowl.benchmarks.base import BenchmarkConcurrencyProfile
+
     if not tasks:
         return None
     benchmark_names = sorted({benchmark_name_for_task(t) for t in tasks})

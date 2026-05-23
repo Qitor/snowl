@@ -105,6 +105,7 @@ docs.zip
 # -----------------------------
 # Test screenshots / local scripts
 # -----------------------------
+examples/e2e-*/run.sh
 webui/*.png
 run_toolemu_emulation.sh
 .claude/

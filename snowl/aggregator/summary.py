@@ -116,6 +116,20 @@ class DomainRow:
 
 
 @dataclass(frozen=True)
+class RiskDomainRow:
+    """Aggregated metrics for a single risk domain across benchmarks."""
+    risk_domain_id: str
+    display_name: str
+    capability_score: float
+    safety_score: float
+    risk_index: float
+    benchmark_count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class LeaderboardRow:
     model: str
     domain: str
@@ -268,6 +282,79 @@ def aggregate_domain_rows(benchmark_rows: list[BenchmarkRow]) -> list[DomainRow]
             risk_index=round(risk_index, 4),
             benchmark_count=len({r.benchmark for r in b_rows}),
             model_count=len(models),
+        ))
+
+    return rows
+
+
+def aggregate_risk_domain_rows(
+    benchmark_rows: list[BenchmarkRow],
+    *,
+    risk_domain_map: dict[str, tuple[RiskDomainRow, ...]] | None = None,
+    beta_config: dict[str, Any] | None = None,
+) -> list[RiskDomainRow]:
+    """Aggregate benchmark rows by risk domain.
+
+    Groups benchmarks that share the same risk domain and computes
+    per-domain capability, safety, and risk index scores.
+
+    Args:
+        benchmark_rows: Aggregated benchmark rows (from aggregate_benchmark_rows).
+        risk_domain_map: Optional mapping of benchmark name to its RiskDomain tuples.
+            If None, falls back to the benchmark registry for domain metadata.
+        beta_config: Optional config for compute_risk_index weights.
+
+    Returns:
+        List of RiskDomainRow, one per unique risk domain.
+    """
+    from snowl.benchmarks.base import RiskDomain
+
+    # Resolve risk domain metadata for each benchmark
+    benchmark_risk_domains: dict[str, tuple[RiskDomain, ...]] = {}
+    if risk_domain_map is not None:
+        benchmark_risk_domains = risk_domain_map
+    else:
+        try:
+            from snowl.benchmarks.registry import get_default_benchmark_registry
+            registry = get_default_benchmark_registry()
+            for entry in registry.list():
+                if entry.info.risk_domains:
+                    benchmark_risk_domains[entry.info.name] = entry.info.risk_domains
+        except Exception:
+            pass
+
+    # Group benchmark rows by risk domain
+    domain_groups: dict[str, list[BenchmarkRow]] = {}
+    domain_meta: dict[str, RiskDomain] = {}
+    for row in benchmark_rows:
+        domains = benchmark_risk_domains.get(row.benchmark, ())
+        for rd in domains:
+            domain_groups.setdefault(rd.domain_id, []).append(row)
+            domain_meta.setdefault(rd.domain_id, rd)
+
+    rows: list[RiskDomainRow] = []
+    for domain_id, b_rows in sorted(domain_groups.items()):
+        meta = domain_meta[domain_id]
+        cap_rows = [r for r in b_rows if r.benchmark_type == "capability"]
+        safety_rows = [r for r in b_rows if r.benchmark_type == "safety"]
+
+        capability_score = _mean([r.primary_metric_value for r in cap_rows]) if cap_rows else 0.0
+        safety_score = _mean([r.primary_metric_value for r in safety_rows]) if safety_rows else 0.0
+
+        risk_index = compute_risk_index(
+            capability_score=capability_score,
+            safety_score=safety_score,
+            has_safety=len(safety_rows) > 0,
+            beta_config=beta_config,
+        )
+
+        rows.append(RiskDomainRow(
+            risk_domain_id=domain_id,
+            display_name=meta.display_name,
+            capability_score=round(capability_score, 4),
+            safety_score=round(safety_score, 4),
+            risk_index=round(risk_index, 4),
+            benchmark_count=len({r.benchmark for r in b_rows}),
         ))
 
     return rows

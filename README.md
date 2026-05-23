@@ -14,11 +14,19 @@ Snowl is an open-source safety evaluation framework for AI agents, jointly
 developed by the [Shanghai Innovation Institute (SII)](https://www.sii.edu.cn/) and
 [Fudan University](https://www.fudan.edu.cn).
 
-It helps you run reproducible, observable, and retryable evaluations across agent
-implementations, model variants, benchmarks, and execution environments. Think
-of it as a local "wind tunnel" for agent safety testing: define what an agent
-should do, run it against realistic tasks, capture every artifact, and compare
-results without rebuilding the whole evaluation stack each time.
+It is the core framework/runtime for reproducible, observable, and retryable
+agent evaluation. Snowl provides the contracts, runtime, and tooling that make
+it possible to run consistent evaluations across agent implementations, model
+variants, benchmarks, and execution environments. Think of it as a local
+"wind tunnel" for agent safety testing: define what an agent should do, run it
+against realistic tasks, capture every artifact, and compare results without
+rebuilding the whole evaluation stack each time.
+
+Third-party benchmark integrations are supported through adapters and the
+plugin contract. The main repository includes core framework components and
+reference adapters (generic JSONL/CSV). Larger official benchmark integrations
+are intended to live in a planned `snowl-evals` collection, and benchmark
+recipes and reproduction suites may later live in `snowl-recipes`.
 
 If you care about agent safety, benchmark reliability, or making your agent
 framework easy to evaluate, Snowl is built for you.
@@ -520,6 +528,22 @@ Project orientation:
 - [docs/architecture/runtime-and-scheduler.md](./docs/architecture/runtime-and-scheduler.md)
 - [docs/how-to/custom-benchmark-adapter.md](./docs/how-to/custom-benchmark-adapter.md)
 - [docs/governance.md](./docs/governance.md)
+
+## Repository Boundaries
+
+`snowl` focuses on the core framework: evaluation abstractions, runtime
+execution, artifact schema, project/suite config, CLI, provider abstraction,
+generic reference adapters, and web monitor integration. Third-party benchmark
+integrations should use the [plugin contract](./docs/governance/plugin_contract.md)
+and, when they become official maintained integrations, live in the planned
+`snowl-evals` collection.
+
+- **`snowl`**: core framework, runtime, contracts, generic adapters, web monitor
+- **`snowl-evals`** *(planned)*: official benchmark adapters, manifests, benchmark-specific dependencies
+- **`snowl-recipes`** *(planned)*: tutorial projects, experiment suites, reproduction reports
+
+See [docs/governance/repo_boundaries.md](./docs/governance/repo_boundaries.md) for
+the full boundary policy.
 
 ## Roadmap
 

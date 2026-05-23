@@ -11,7 +11,8 @@ Change guardrails:
 """
 
 from snowl.benchmarks.osworld.adapter import OSWorldBenchmarkAdapter
+from snowl.benchmarks.osworld.provider import OSWorldProvider
 from snowl.benchmarks.osworld.scorer import OSWorldScorer, osworld
 
-__all__ = ["OSWorldBenchmarkAdapter", "OSWorldScorer", "osworld"]
+__all__ = ["OSWorldBenchmarkAdapter", "OSWorldProvider", "OSWorldScorer", "osworld"]
 

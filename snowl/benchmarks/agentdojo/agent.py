@@ -37,11 +37,13 @@ class AgentDojoAgent:
         suite: str = "banking",
         max_steps: int = 10,
         toolkit_data: dict[str, Any] | None = None,
+        default_generation_kwargs: dict[str, Any] | None = None,
     ) -> None:
         self.model_client = model_client
         self.suite = suite
         self.max_steps = max_steps
         self.toolkit_data = toolkit_data or {}
+        self.default_generation_kwargs = default_generation_kwargs or {}
 
     async def run(
         self,
@@ -81,6 +83,7 @@ class AgentDojoAgent:
             agent_id=self.agent_id,
             max_steps=self.max_steps,
             middlewares=[executor],
+            default_generation_kwargs=self.default_generation_kwargs,
         )
 
         result_state = await react.run(state, context, tools=stub_tools)

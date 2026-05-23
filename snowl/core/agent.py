@@ -57,6 +57,17 @@ class AgentContext:
     sample_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def emit_event(self, event: dict[str, Any]) -> None:
+        """Emit a runtime event through the registered emitter.
+
+        Uses the ``__snowl_emit_event`` callback stored in ``metadata`` by
+        the runtime engine.  Agents should prefer this method over accessing
+        ``metadata["__snowl_emit_event"]`` directly.
+        """
+        emitter = self.metadata.get("__snowl_emit_event")
+        if callable(emitter):
+            emitter(dict(event))
+
 
 class Agent(Protocol):
     """Normalized agent contract for native and adapted agents."""

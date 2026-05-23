@@ -63,9 +63,16 @@ osworld_eval = [
   "tldextract>=5.3.0",
   "xmltodict",
 ]
+exploitbench = [
+  "mcp>=1.1",
+]
 
 [project.scripts]
 snowl = "snowl.cli:main"
+
+[project.entry-points."snowl.benchmark"]
+[project.entry-points."snowl.container_provider"]
+[project.entry-points."snowl.agent_adapter"]
 
 [project.urls]
 Homepage = "https://github.com/Qitor/snowl"

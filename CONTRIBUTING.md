@@ -32,12 +32,55 @@ Snowl follows a **core-first architecture**:
 
 ## Adding a New Benchmark Adapter
 
+**Do not add a new third-party benchmark directly to `snowl/benchmarks/` by
+default.** Third-party benchmark integrations should live outside the main
+repository and register through the plugin contract. The main repository should
+only contain:
+
+- tiny reference adapters (generic JSONL/CSV)
+- conformance fixtures
+- minimal examples needed to test framework behavior
+
+### Recommended path: external adapter package
+
+1. Create a standalone package (e.g., `snowl-evals-mybench`) with a
+   `BenchmarkAdapter` subclass
+2. Register via Python entry point in your `pyproject.toml`:
+
+   ```toml
+   [project.entry-points."snowl.benchmarks"]
+   mybench = "snowl_evals_mybench:register"
+   ```
+
+3. Include a benchmark manifest (`benchmark.yaml`) following the
+   `snowl.benchmark_manifest.v1` schema
+4. Run conformance: `snowl bench check mybench`
+5. Users install: `pip install snowl snowl-evals-mybench`
+
+See [docs/governance/plugin_contract.md](./docs/governance/plugin_contract.md)
+for the full plugin registration guide.
+
+### If a benchmark is accepted into the main repository
+
 1. Create `snowl/benchmarks/<name>/` with `adapter.py` subclassing `BaseBenchmarkAdapter`
 2. Implement `_iter_rows`, `_row_split`, `_row_to_sample`
 3. Optionally add `agent.py`, `scorer.py`, `executor.py`
-4. Register in `snowl/benchmarks/registry.py`
-5. Add tests in `tests/test_<name>_benchmark.py`
-6. Add example project in `examples/<name>/`
+4. Register in `snowl/benchmarks/registry.py` using `_lazy_factory`
+5. Add a benchmark manifest (`benchmark.yaml`) next to the adapter
+6. Add tests in `tests/test_<name>_benchmark.py`
+7. Add example project in `examples/<name>/`
+
+### Benchmark Adapter Checklist
+
+- [ ] Adapter lives outside core unless explicitly accepted as reference adapter
+- [ ] Manifest included (`benchmark.yaml` following `snowl.benchmark_manifest.v1`)
+- [ ] Source / paper / code / dataset links included in manifest
+- [ ] License notes included in manifest
+- [ ] Runtime requirements declared in manifest
+- [ ] Scoring method documented in manifest
+- [ ] Sample fixture included
+- [ ] Conformance test passes (`snowl bench check <name>`)
+- [ ] Heavy dependencies are optional (use `pyproject.toml` extras)
 
 ## Adding a New Scorer
 

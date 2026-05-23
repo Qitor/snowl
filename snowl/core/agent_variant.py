@@ -46,7 +46,16 @@ class AgentVariantAdapter:
     middleware_config: dict[str, Any] = field(default_factory=dict)
 
     async def run(self, state, context, tools=None):
-        return await self.agent.run(state, context, tools=tools)
+        result = await self.agent.run(state, context, tools=tools)
+
+        # Ensure output contains normalized fields
+        if result.output is None:
+            result.output = {}
+        result.output.setdefault("usage", {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
+        result.output.setdefault("trace_events", [])
+        result.output.setdefault("message", {})
+
+        return result
 
 
 def validate_agent_variant(variant: AgentVariant) -> None:
