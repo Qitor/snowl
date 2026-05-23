@@ -2,7 +2,9 @@
 
 ## Overview
 
-External packages (such as the planned `snowl-evals`) can register benchmark adapters with `snowl` through Python entry points. This allows `snowl bench list` and `snowl bench run <benchmark>` to discover and use adapters without modifying the core framework.
+External packages (such as `snowl-evals`) can register benchmark adapters with `snowl` through Python entry points. This allows `snowl bench list` and `snowl bench run <benchmark>` to discover and use adapters without modifying the core framework.
+
+The official benchmark collection is [`snowl-evals`](https://github.com/Qitor/snowl-evals), a standalone package that lives outside the main snowl repository.
 
 ## Registration
 
@@ -47,10 +49,20 @@ The callable receives `**kwargs` from the user (via CLI `--benchmark-args`) and 
 ```bash
 # Install core + benchmark collection
 pip install snowl
-pip install snowl-evals[agentdojo,terminalbench]
+pip install snowl-evals
+
+# Or from local source for development:
+pip install -e /path/to/snowl
+pip install -e /path/to/snowl-evals
 
 # List all available benchmarks (built-in + plugins)
 snowl bench list
+
+# Include shadowed plugin entries
+snowl bench list --all
+
+# Diagnose plugin installation
+snowl bench doctor
 
 # Run a plugin-provided benchmark
 snowl bench run agentdojo --project project.yml

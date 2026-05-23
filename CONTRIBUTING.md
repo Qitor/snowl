@@ -43,6 +43,8 @@ only contain:
 
 ### Recommended path: external adapter package
 
+Official benchmark adapters live in the standalone [`snowl-evals`](https://github.com/Qitor/snowl-evals) package. To add a new benchmark to the official collection, contribute to `snowl-evals` rather than adding it to the main snowl repository.
+
 1. Create a standalone package (e.g., `snowl-evals-mybench`) with a
    `BenchmarkAdapter` subclass
 2. Register via Python entry point in your `pyproject.toml`:

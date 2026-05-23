@@ -24,9 +24,12 @@ rebuilding the whole evaluation stack each time.
 
 Third-party benchmark integrations are supported through adapters and the
 plugin contract. The main repository includes core framework components and
-reference adapters (generic JSONL/CSV). Larger official benchmark integrations
-are intended to live in a planned `snowl-evals` collection, and benchmark
-recipes and reproduction suites may later live in `snowl-recipes`.
+reference adapters (generic JSONL/CSV). Official benchmark adapters live in
+the standalone [`snowl-evals`](https://github.com/Qitor/snowl-evals) package.
+During transition, some benchmark adapters still exist in snowl for compatibility.
+New benchmark integrations should target `snowl-evals`. Heavy benchmark
+migration (AgentDojo, TerminalBench, OSWorld, ToolEmu, ExploitBench) remains pending.
+`snowl bench doctor` can diagnose plugin installation and shadowed duplicates.
 
 If you care about agent safety, benchmark reliability, or making your agent
 framework easy to evaluate, Snowl is built for you.

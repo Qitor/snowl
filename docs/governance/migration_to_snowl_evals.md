@@ -137,14 +137,23 @@ snowl bench run agentdojo --project project.yml
 
 ## Phase 2 Status: COMPLETE
 
-All 13 phase_2_simple benchmarks are migrated into `external/snowl-evals-prototype/`:
+All 13 phase_2_simple benchmarks are migrated into `snowl-evals` (formerly `external/snowl-evals-prototype/`):
 
 - strongreject, xstest, wmdp, sec_qa, cybermetric (Round 2)
 - coconot, mask, sevenllm, fortress, agentharm, agent_bench_os, bfcl, ipi_coding_agent (Round 3)
 
 Compatibility shims with `DeprecationWarning` are in place for all 13 benchmarks.
 Duplicate plugin handling is hardened: built-in wins, plugin shadowed, doctor reports.
-All tests pass: 670 snowl, 18 prototype.
+All tests pass: 698 snowl, 104 snowl-evals.
+
+## Phase 4 Status: COMPLETE
+
+- `external/snowl-evals-prototype/` extracted to standalone `../snowl-evals/` package
+- Version: 0.1.0.dev0 (pre-release)
+- 104 snowl-evals tests pass
+- Cross-repo integration script added: `scripts/check_snowl_evals_integration.sh`
+- Prototype removed from snowl repository
+- Deprecation policy documented
 
 ## Phase 3: Not Started
 
@@ -153,10 +162,11 @@ Heavy/runtime benchmarks remain in core:
 
 These require container provider interface stabilization before migration.
 
-## Extraction Plan
+## Publishing Plan
 
-1. Copy `external/snowl-evals-prototype/` to `Qitor/snowl-evals` standalone repo
-2. Update `pyproject.toml` dependency from editable to released snowl version
+1. Create `Qitor/snowl-evals` repository on GitHub
+2. Push local `../snowl-evals/` to remote
 3. Activate CI (`.github/workflows/ci.yml` skeleton already exists)
-4. Publish to PyPI
-5. Remove built-in adapter code from snowl after 2 minor releases with deprecation warnings
+4. TestPyPI dry run
+5. Publish to PyPI
+6. Remove built-in adapter code from snowl after 2 minor releases with deprecation warnings
