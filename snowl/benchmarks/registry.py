@@ -643,7 +643,47 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
         ),
         factory=lambda **kwargs: GAIABenchmarkAdapter(**kwargs),
     )
+    # Discover plugin benchmarks from entry_points (e.g., snowl-evals)
+    _discover_plugin_benchmarks(registry)
+
     return registry
+
+
+def _discover_plugin_benchmarks(registry: BenchmarkRegistry) -> None:
+    """Discover and register benchmark adapters from snowl.benchmarks entry_points.
+
+    Plugin benchmarks that share a name with a built-in entry are skipped
+    (built-in takes precedence during the transition period).
+    """
+    import sys
+    import importlib.metadata
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    group = "snowl.benchmarks"
+    try:
+        if sys.version_info >= (3, 12):
+            eps = importlib.metadata.entry_points(group=group)
+        else:
+            eps = importlib.metadata.entry_points().get(group, [])
+    except Exception:
+        return
+
+    for ep in eps:
+        if ep.name in registry._entries:
+            logger.debug(
+                "Plugin benchmark '%s' shadows built-in entry; keeping built-in.",
+                ep.name,
+            )
+            continue
+        try:
+            register_fn = ep.load()
+            if callable(register_fn):
+                register_fn(registry)
+                logger.info("Registered plugin benchmark '%s' from %s.", ep.name, ep.value)
+        except Exception as exc:
+            logger.warning("Failed to load plugin benchmark '%s': %s", ep.name, exc)
 
 
 register_builtin_benchmarks()

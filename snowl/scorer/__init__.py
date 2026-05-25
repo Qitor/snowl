@@ -39,7 +39,7 @@ from snowl.scorer.agent import (
 )
 from snowl.scorer.composition import ChainedScorer, WeightedCompositeScorer, chain, weighted
 from snowl.scorer.choice import ChoiceAnswerScorer, choice_answer, extract_choice_answer, normalize_choice_targets
-from snowl.scorer.grade_judge import MultiJudgeReducer, RegexGradeJudgeScorer, regex_grade_judge
+from snowl.scorer.grade_judge import JudgeClientFactory, MultiJudgeReducer, RegexGradeJudgeScorer, regex_grade_judge
 from snowl.scorer.model_judge import ModelAsJudgeJSONScorer, model_as_judge_json
 from snowl.scorer.test_results import (
     UnitTestResultScorer,
@@ -71,6 +71,7 @@ __all__ = [
     "CommandCheckScorer",
     "FunctionCallMatchScorer",
     "IncludesScorer",
+    "JudgeClientFactory",
     "MatchScorer",
     "ChainedScorer",
     "ChoiceAnswerScorer",
