@@ -67,6 +67,16 @@ osworld_eval = [
 [project.scripts]
 snowl = "snowl.cli:main"
 
+[project.entry-points."snowl.adapters"]
+custom = "snowl.adapters.custom:CustomAdapter"
+langgraph = "snowl.adapters.langgraph:LangGraphAdapter"
+openai_agents = "snowl.adapters.openai_agents:OpenAIAgentsAdapter"
+qitos = "snowl.adapters.qitos:QitOSAdapter"
+
+[project.entry-points."snowl.environment_providers"]
+docker = "snowl.envs.provider:DockerProvider"
+local = "snowl.envs.provider:LocalProvider"
+
 [project.urls]
 Homepage = "https://github.com/Qitor/snowl"
 Repository = "https://github.com/Qitor/snowl"

@@ -74,7 +74,7 @@ class BaseBenchmarkAdapter(ABC, Generic[RowT]):
         self._validate_split_request(requested_split)
         filters = filters or {}
 
-        selected: list[dict[str, Any]] = []
+        selected: list[Any] = []
         for row_index, row in enumerate(self._iter_rows(), start=1):
             row_split = self._normalize_split(self._row_split(row, row_index=row_index))
             if row_split != requested_split:
@@ -89,6 +89,10 @@ class BaseBenchmarkAdapter(ABC, Generic[RowT]):
             )
             if sample is None:
                 continue
+            # Legacy dict samples are auto-converted to Sample
+            from snowl.core.sample import Sample
+            if isinstance(sample, dict):
+                sample = Sample.from_dict(sample)
             selected.append(sample)
             if limit is not None and len(selected) >= limit:
                 break
@@ -121,8 +125,11 @@ class BaseBenchmarkAdapter(ABC, Generic[RowT]):
         row_index: int,
         row_split: str,
         selected_count: int,
-    ) -> dict[str, Any] | None:
-        """Transform a row into a benchmark sample."""
+    ) -> "dict[str, Any] | Sample | None":
+        """Transform a row into a benchmark sample.
+
+        May return a dict (legacy) or a ``Sample`` instance (preferred).
+        """
 
     def _env_spec(self) -> EnvSpec:
         return EnvSpec(env_type="local")

@@ -73,6 +73,18 @@ from snowl.ui.input import StdinInputPump
 class EvalRenderer(Protocol):
     def render_plan(self, plan: "EvalPlan") -> None: ...
 
+
+def _resolve_score_reducer_from_config(project_config: ProjectConfig) -> Any | None:
+    """Resolve a ScoreReducer from project config if epochs > 1."""
+    from snowl.core.reducer import resolve_score_reducer
+    epochs = project_config.eval.epochs
+    if epochs <= 1:
+        return None
+    return resolve_score_reducer(
+        project_config.eval.score_reducer,
+        epochs=epochs,
+    )
+
     def render_global(self, *, done: int, total: int, success: int, incorrect: int, other: int) -> None: ...
 
     def render_trial_start(self, trial: "PlanTrial", index: int, total: int) -> None: ...
@@ -888,6 +900,9 @@ async def run_eval_with_components(
         log=_log,
         save_checkpoint=_save_checkpoint,
         serialize_outcome=_to_serializable_outcome,
+        bridge=project_config.eval.bridge if project_config else None,
+        epochs=project_config.eval.epochs if project_config else 1,
+        score_reducer=_resolve_score_reducer_from_config(project_config) if project_config else None,
     )
 
     async def _bounded_run(

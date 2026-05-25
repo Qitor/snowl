@@ -38,6 +38,14 @@ from snowl.benchmarks.terminalbench import TerminalBenchBenchmarkAdapter
 from snowl.benchmarks.toolemu import ToolEmuBenchmarkAdapter
 from snowl.benchmarks.wmdp import WMDPBenchmarkAdapter
 from snowl.benchmarks.xstest import XSTestBenchmarkAdapter
+from snowl.benchmarks.tau_bench import TauBenchBenchmarkAdapter
+from snowl.benchmarks.cybench import CyBenchBenchmarkAdapter
+from snowl.benchmarks.humaneval import HumanEvalBenchmarkAdapter
+from snowl.benchmarks.math_bench import MATHBenchmarkAdapter
+from snowl.benchmarks.swe_bench import SWEBenchBenchmarkAdapter
+from snowl.benchmarks.cybergym import CyberGymBenchmarkAdapter
+from snowl.benchmarks.gaia import GAIABenchmarkAdapter
+from snowl.benchmarks.webarena import WebArenaBenchmarkAdapter
 from snowl.errors import SnowlValidationError
 
 
@@ -496,6 +504,144 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             dashboard_tags=["situational_awareness", "deception"],
         ),
         factory=lambda **kwargs: MASKBenchmarkAdapter(**kwargs),
+    )
+    registry.register(
+        name="tau_bench_airline",
+        info=BenchmarkInfo(
+            name="tau_bench_airline",
+            description="Tau-Bench airline domain policy compliance.",
+            domain="agentic_capability",
+            benchmark_type="capability",
+            family="tau_bench",
+            primary_metric="policy_compliance",
+            higher_is_better=True,
+            sample_preview_mode="dialog",
+            dashboard_tags=["policy_compliance", "tool_use", "multi_turn"],
+            mcp_hints={"supported_servers": ["airline_api"], "recommended_transport": "stdio"},
+        ),
+        factory=lambda **kwargs: TauBenchBenchmarkAdapter(domain="airline", **kwargs),
+    )
+    registry.register(
+        name="tau_bench_retail",
+        info=BenchmarkInfo(
+            name="tau_bench_retail",
+            description="Tau-Bench retail domain policy compliance.",
+            domain="agentic_capability",
+            benchmark_type="capability",
+            family="tau_bench",
+            primary_metric="policy_compliance",
+            higher_is_better=True,
+            sample_preview_mode="dialog",
+            dashboard_tags=["policy_compliance", "tool_use", "multi_turn"],
+            mcp_hints={"supported_servers": ["retail_api"], "recommended_transport": "stdio"},
+        ),
+        factory=lambda **kwargs: TauBenchBenchmarkAdapter(domain="retail", **kwargs),
+    )
+    registry.register(
+        name="cybench",
+        info=BenchmarkInfo(
+            name="cybench",
+            description="CyBench cybersecurity CTF benchmark.",
+            domain="cyber_offense",
+            benchmark_type="capability",
+            family="cybench",
+            primary_metric="flag_accuracy",
+            higher_is_better=True,
+            sample_preview_mode="code_trace",
+            dashboard_tags=["ctf", "cybersecurity", "terminal"],
+        ),
+        factory=lambda **kwargs: CyBenchBenchmarkAdapter(**kwargs),
+    )
+    registry.register(
+        name="humaneval",
+        info=BenchmarkInfo(
+            name="humaneval",
+            description="HumanEval code generation benchmark.",
+            domain="agentic_capability",
+            benchmark_type="capability",
+            family="humaneval",
+            primary_metric="pass_at_1",
+            higher_is_better=True,
+            sample_preview_mode="code_trace",
+            dashboard_tags=["coding", "code_generation", "python"],
+        ),
+        factory=lambda **kwargs: HumanEvalBenchmarkAdapter(**kwargs),
+    )
+    for subset in ("lite", "verified"):
+        registry.register(
+            name=f"swe_bench_{subset}",
+            info=BenchmarkInfo(
+                name=f"swe_bench_{subset}",
+                description=f"SWE-Bench {subset} software engineering benchmark.",
+                domain="agentic_capability",
+                benchmark_type="capability",
+                family="swe_bench",
+                primary_metric="resolved",
+                higher_is_better=True,
+                sample_preview_mode="code_trace",
+                dashboard_tags=["coding", "software_engineering", "patch"],
+            ),
+            factory=lambda subset=subset, **kwargs: SWEBenchBenchmarkAdapter(subset=subset, **kwargs),
+        )
+    registry.register(
+        name="math",
+        info=BenchmarkInfo(
+            name="math",
+            description="MATH mathematical reasoning benchmark.",
+            domain="agentic_capability",
+            benchmark_type="capability",
+            family="math",
+            primary_metric="accuracy",
+            higher_is_better=True,
+            sample_preview_mode="qa",
+            dashboard_tags=["math", "reasoning", "stem"],
+        ),
+        factory=lambda **kwargs: MATHBenchmarkAdapter(**kwargs),
+    )
+    registry.register(
+        name="webarena",
+        info=BenchmarkInfo(
+            name="webarena",
+            description="WebArena web interaction benchmark.",
+            domain="agentic_capability",
+            benchmark_type="capability",
+            family="webarena",
+            primary_metric="success_rate",
+            higher_is_better=True,
+            sample_preview_mode="gui_trace",
+            dashboard_tags=["web", "browser", "agent_capability"],
+        ),
+        factory=lambda **kwargs: WebArenaBenchmarkAdapter(**kwargs),
+    )
+    registry.register(
+        name="cybergym",
+        info=BenchmarkInfo(
+            name="cybergym",
+            description="CyberGym security capability benchmark.",
+            domain="cyber_offense",
+            benchmark_type="capability",
+            family="cybergym",
+            primary_metric="flag_accuracy",
+            higher_is_better=True,
+            sample_preview_mode="code_trace",
+            dashboard_tags=["ctf", "cybersecurity", "capability"],
+        ),
+        factory=lambda **kwargs: CyberGymBenchmarkAdapter(**kwargs),
+    )
+    registry.register(
+        name="gaia",
+        info=BenchmarkInfo(
+            name="gaia",
+            description="GAIA general AI assistant benchmark — real-world reasoning with tool use",
+            domain="agentic_capability",
+            benchmark_type="capability",
+            family="gaia",
+            primary_metric="gaia_accuracy",
+            higher_is_better=True,
+            sample_preview_mode="qa",
+            dashboard_tags=["reasoning", "tool_use", "multi_modal"],
+        ),
+        factory=lambda **kwargs: GAIABenchmarkAdapter(**kwargs),
     )
     return registry
 

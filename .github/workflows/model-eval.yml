@@ -1,0 +1,71 @@
+name: Model Release Auto-Eval
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: 'Model ID to evaluate (e.g. gpt-4o, claude-3-opus)'
+        required: false
+        default: 'gpt-4o'
+      benchmarks:
+        description: 'Comma-separated benchmark names (e.g. cybench,humaneval,math)'
+        required: false
+        default: 'cybench,humaneval,math'
+      limit:
+        description: 'Max samples per benchmark (0 = all)'
+        required: false
+        default: '10'
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly Monday 6am UTC
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Snowl
+        run: pip install -e ".[dev]"
+
+      - name: Run evaluation
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          MODEL="${{ github.event.inputs.model || 'gpt-4o' }}"
+          BENCHMARKS="${{ github.event.inputs.benchmarks || 'cybench,humaneval,math' }}"
+          LIMIT="${{ github.event.inputs.limit || '10' }}"
+
+          IFS=',' read -ra BMK_ARRAY <<< "$BENCHMARKS"
+          for bmk in "${BMK_ARRAY[@]}"; do
+            bmk=$(echo "$bmk" | xargs)
+            echo "=== Running benchmark: $bmk ==="
+            LIMIT_FLAG=""
+            if [ "$LIMIT" != "0" ]; then
+              LIMIT_FLAG="--limit $LIMIT"
+            fi
+            snowl bench run "$bmk" --model "$MODEL" $LIMIT_FLAG || true
+          done
+
+      - name: Publish to leaderboard
+        if: always()
+        run: |
+          for dir in .snowl/runs/*/; do
+            if [ -d "$dir" ]; then
+              snowl leaderboard publish "$dir" || true
+            fi
+          done
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: .snowl/runs/
+          retention-days: 30

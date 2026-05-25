@@ -72,6 +72,10 @@ class TrialRequest:
     trial_id: str | None = None
     execution_mode: str = "native"  # "native" | "emulated" | "stateful"
     middleware_config: dict[str, Any] = field(default_factory=dict)
+    solver_chain: Any | None = None
+    mcp_servers: list[dict[str, Any]] | None = None  # From project.yml
+    epochs: int = 1  # Number of times to run each sample
+    score_reducer: Any | None = None  # ScoreReducer instance
 
     def __post_init__(self) -> None:
         # Backward compat: if scorers empty but scorer provided, wrap it.
@@ -82,6 +86,11 @@ class TrialRequest:
             agent_mode = getattr(self.agent, "execution_mode", None)
             if agent_mode and agent_mode != "native":
                 object.__setattr__(self, "execution_mode", agent_mode)
+        # Inherit solver_chain from agent if not explicitly set
+        if self.solver_chain is None:
+            agent_chain = getattr(self.agent, "solver_chain", None)
+            if agent_chain is not None:
+                object.__setattr__(self, "solver_chain", agent_chain)
 
 
 @dataclass(frozen=True)
@@ -115,6 +124,7 @@ class PreparedTrial:
     prepared_sandbox: Any | None = None
     original_max_steps: int | None = None
     failed_partial: PartialTrialResult | None = None
+    mcp_manager: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -662,6 +672,42 @@ async def prepare_trial_phase(request: TrialRequest) -> PreparedTrial:
         )
     context.metadata["available_tool_names"] = [spec.name for spec in resolved_tool_specs]
 
+    # ── MCP server startup and tool discovery ──────────────────────────
+    mcp_manager = None
+    mcp_specs = _collect_mcp_specs(request, state)
+    if mcp_specs:
+        from snowl.runtime.mcp_manager import MCPServerManager
+        from snowl.tools.mcp_adapter import discover_mcp_tool_specs
+        try:
+            mcp_manager = MCPServerManager(mcp_specs)
+            await mcp_manager.start_all()
+            mcp_tool_specs = await discover_mcp_tool_specs(mcp_manager)
+            resolved_tool_specs = list(resolved_tool_specs)
+            existing_names = {s.name for s in resolved_tool_specs}
+            for spec in mcp_tool_specs:
+                if spec.name not in existing_names:
+                    resolved_tool_specs.append(spec)
+                    existing_names.add(spec.name)
+            context.metadata["available_tool_names"] = [s.name for s in resolved_tool_specs]
+            emit({
+                "event": "runtime.mcp.started",
+                "phase": "prepare",
+                "servers": mcp_manager.active_server_names,
+                "tools_discovered": len(mcp_tool_specs),
+            })
+        except Exception as exc:
+            if mcp_manager is not None:
+                try:
+                    await mcp_manager.stop_all()
+                except Exception:
+                    pass
+                mcp_manager = None
+            emit({
+                "event": "runtime.mcp.error",
+                "phase": "prepare",
+                "message": str(exc),
+            })
+
     required_ops = {op for spec in resolved_tool_specs for op in spec.required_ops}
     provided_ops = set(request.task.env_spec.provided_ops)
     missing_ops = ensure_tool_ops_compatible(required_ops, provided_ops)
@@ -762,7 +808,109 @@ async def prepare_trial_phase(request: TrialRequest) -> PreparedTrial:
         prepared_sandbox=prepared_sandbox,
         original_max_steps=original_max_steps,
         failed_partial=None,
+        mcp_manager=mcp_manager,
     )
+
+
+def _collect_mcp_specs(request: TrialRequest, state: AgentState) -> tuple[Any, ...]:
+    """Collect MCP server specs from all sources: EnvSpec, solver chain, and request."""
+    from snowl.core.mcp import MCPServerSpec, mcp_server_spec_from_dict
+
+    specs: list[MCPServerSpec] = []
+
+    # 1. From task.env_spec.mcp_servers
+    for spec in request.task.env_spec.mcp_servers:
+        specs.append(spec)
+
+    # 2. From solver chain state (use_tools().with_mcp_servers())
+    solver_mcp = (state.output or {}).get("_solver_mcp_servers", [])
+    for s in solver_mcp:
+        if isinstance(s, MCPServerSpec):
+            specs.append(s)
+        elif isinstance(s, dict):
+            try:
+                specs.append(mcp_server_spec_from_dict(s))
+            except Exception:
+                pass
+
+    # 3. From project config (stored on TrialRequest via project_config)
+    config_mcp = getattr(request, "mcp_servers", None)
+    if config_mcp and isinstance(config_mcp, list):
+        for s in config_mcp:
+            if isinstance(s, MCPServerSpec):
+                specs.append(s)
+            elif isinstance(s, dict):
+                try:
+                    specs.append(mcp_server_spec_from_dict(s))
+                except Exception:
+                    pass
+
+    # Deduplicate by name
+    seen: set[str] = set()
+    unique: list[MCPServerSpec] = []
+    for spec in specs:
+        if spec.name not in seen:
+            seen.add(spec.name)
+            unique.append(spec)
+
+    return tuple(unique)
+
+
+async def _score_in_verifier(
+    executor: Any,
+    scorer: Any,
+    task_result: Any,
+    trace: dict[str, Any],
+    context: Any,
+    *,
+    verifier_spec: Any,
+    emit: Any,
+) -> dict[str, Any] | None:
+    """Run a scorer's verification in the separated verifier container.
+
+    Uses the ``SEPARATED_SCORER_REGISTRY`` to find the appropriate
+    separated scorer, resolves its command, runs it in the container,
+    and converts the result into a ScoreMap.
+    """
+    from snowl.scorer.separated import SEPARATED_SCORER_REGISTRY
+
+    scorer_id = getattr(scorer, "scorer_id", "scorer")
+
+    # Look up the separated scorer class
+    separated_cls = SEPARATED_SCORER_REGISTRY.get(scorer_id)
+    if separated_cls is None:
+        # Scorer doesn't support separated execution — fall back to shared
+        emit({
+            "event": "runtime.verifier.no_separated_scorer",
+            "phase": "score",
+            "scorer_id": scorer_id,
+        })
+        if hasattr(scorer, "ascore") and callable(scorer.ascore):
+            return await scorer.ascore(task_result, trace, context)
+        return await asyncio.to_thread(scorer.score, task_result, trace, context)
+
+    # Instantiate the separated scorer
+    separated_scorer = separated_cls()
+
+    # Resolve the command to run in the verifier container
+    command = separated_scorer.resolve_command(context)
+    if not command:
+        emit({
+            "event": "runtime.verifier.no_command",
+            "phase": "score",
+            "scorer_id": scorer_id,
+        })
+        return None
+
+    # Run the command in the verifier container
+    result = await executor.run_command(
+        command,
+        workdir="/workspace",
+        timeout_seconds=verifier_spec.timeout_seconds,
+    )
+
+    # Convert the verifier result into a ScoreMap
+    return separated_scorer.score_from_result(result)
 
 
 def _inject_execution_middleware(prepared: PreparedTrial, mode: str, config: dict[str, Any]) -> None:
@@ -838,28 +986,139 @@ async def execute_agent_phase(prepared: PreparedTrial | TrialRequest) -> Partial
     status = TaskStatus.SUCCESS
     state = prepared.state
 
+    # Multi-step task: delegate to MultiStepExecutor if task has steps
+    step_results: list[Any] = []
+    if request.task.steps:
+        from snowl.runtime.multi_step import MultiStepExecutor
+        executor = MultiStepExecutor()
+        try:
+            step_results = await executor.execute(
+                task=request.task,
+                agent=request.agent,
+                sample=dict(prepared.sample),
+                context=prepared.context,
+                tools=prepared.resolved_tool_specs,
+            )
+            # Compute aggregate status from step results
+            if any(sr.status == TaskStatus.ERROR for sr in step_results):
+                status = TaskStatus.ERROR
+            elif any(sr.status == TaskStatus.LIMIT_EXCEEDED for sr in step_results):
+                status = TaskStatus.LIMIT_EXCEEDED
+            else:
+                status = TaskStatus.SUCCESS
+            # The executor mutates state in-place via agent.run()
+        except Exception as exc:
+            status = TaskStatus.ERROR
+            state.stop_reason = StopReason.ERROR
+            error = ErrorInfo(code="multi_step_error", message=str(exc), retryable=False)
+        # Fall through to the normal result construction below,
+        # which will use the current state, status, and error.
+        # step_results will be attached to TaskResult later.
+
     # Apply execution strategy: inject middleware based on execution_mode
     execution_mode = request.execution_mode or "native"
-    if execution_mode != "native":
-        _inject_execution_middleware(prepared, execution_mode, request.middleware_config)
+
+    # Detect solver chain execution path
+    solver_chain = request.solver_chain
+    if solver_chain is None:
+        solver_chain = getattr(request.agent, "solver_chain", None)
+
+    if solver_chain is not None:
+        # Solver chain execution: inject context + tools into state.output
+        output = dict(prepared.state.output or {})
+        output["_solver_context"] = prepared.context
+        existing_tools = list(output.get("_solver_tools", []))
+        for spec in prepared.resolved_tool_specs:
+            if spec.name not in {t.name for t in existing_tools}:
+                existing_tools.append(spec)
+        output["_solver_tools"] = existing_tools
+        if request.middleware_config:
+            existing_mw = list(output.get("_solver_middleware", []))
+            output["_solver_middleware"] = existing_mw
+        prepared.state.output = output
+
+    # Default no-op generate for solver chains (replaced by bridge if active)
+    async def _noop_generate(**kwargs):
+        raise RuntimeError(
+            "No framework generate() available; "
+            "include generate(model_client) in your solver chain "
+            "or enable bridge mode in project.yml."
+        )
 
     try:
-        async def _agent_run():
-            return await request.agent.run(prepared.state, prepared.context, tools=prepared.resolved_tool_specs)
+        if solver_chain is not None:
+            # Solver chain path
+            async def _solver_run():
+                # Check if bridge mode is active and provide a real generate fn
+                generate_fn = _noop_generate
+                try:
+                    from snowl.bridges._config import get_bridge_config
+                    bc = get_bridge_config()
+                    if bc is not None and bc.enabled and bc.model_client is not None:
+                        from snowl.bridges._generate import bridge_generate
+                        generate_fn = bridge_generate(bc.model_client)
+                except ImportError:
+                    pass
+                return await solver_chain(prepared.state, generate_fn)
+
+            _run_fn = _solver_run
+        else:
+            # Traditional agent.run() path
+            # Check if bridge mode should wrap agent execution
+            bridge_enabled = False
+            bridge_model_client = None
+            try:
+                from snowl.bridges._config import get_bridge_config
+                bc = get_bridge_config()
+                if bc is not None and bc.enabled and bc.model_client is not None:
+                    bridge_enabled = True
+                    bridge_model_client = bc.model_client
+            except ImportError:
+                pass
+
+            if bridge_enabled and bridge_model_client is not None:
+                if execution_mode != "native":
+                    _inject_execution_middleware(prepared, execution_mode, request.middleware_config)
+
+                async def _agent_run():
+                    from snowl.bridges import snowl_bridge
+                    async with snowl_bridge(model_client=bridge_model_client) as handle:
+                        state = await request.agent.run(prepared.state, prepared.context, tools=prepared.resolved_tool_specs)
+                        # Merge bridge usage into state output
+                        if state.output is None:
+                            state.output = {}
+                        bridge_usage = handle.usage()
+                        existing_usage = state.output.get("usage") or {}
+                        state.output["usage"] = {
+                            "input_tokens": existing_usage.get("input_tokens", 0) + bridge_usage["input_tokens"],
+                            "output_tokens": existing_usage.get("output_tokens", 0) + bridge_usage["output_tokens"],
+                            "total_tokens": existing_usage.get("total_tokens", 0) + bridge_usage["total_tokens"],
+                        }
+                        return state
+
+                _run_fn = _agent_run
+            else:
+                if execution_mode != "native":
+                    _inject_execution_middleware(prepared, execution_mode, request.middleware_config)
+
+                async def _agent_run():
+                    return await request.agent.run(prepared.state, prepared.context, tools=prepared.resolved_tool_specs)
+
+                _run_fn = _agent_run
 
         if request.limits.time_limit_seconds is not None:
             if prepared.prepared_sandbox is not None:
                 state = await asyncio.wait_for(
-                    prepared.sandbox_runtime.run(prepared.prepared_sandbox, _agent_run),
+                    prepared.sandbox_runtime.run(prepared.prepared_sandbox, _run_fn),
                     timeout=request.limits.time_limit_seconds,
                 )
             else:
-                state = await asyncio.wait_for(_agent_run(), timeout=request.limits.time_limit_seconds)
+                state = await asyncio.wait_for(_run_fn(), timeout=request.limits.time_limit_seconds)
         else:
             if prepared.prepared_sandbox is not None:
-                state = await prepared.sandbox_runtime.run(prepared.prepared_sandbox, _agent_run)
+                state = await prepared.sandbox_runtime.run(prepared.prepared_sandbox, _run_fn)
             else:
-                state = await _agent_run()
+                state = await _run_fn()
 
         status = _status_from_stop_reason(state.stop_reason)
     except TimeoutError:
@@ -997,6 +1256,7 @@ async def execute_agent_phase(prepared: PreparedTrial | TrialRequest) -> Partial
         error=error,
         artifacts=artifacts,
         payload=payload,
+        step_results=step_results if request.task.steps else None,
     )
     trace = {
         "trace_events": output.get("trace_events", []),
@@ -1083,8 +1343,67 @@ async def score_trial_phase(prepared: PreparedTrial | TrialRequest, partial: Par
     all_scores: dict[str, Any] = {}
     scorer_error: Exception | None = None
 
+    # ── Separated verifier setup ──────────────────────────────────────
+    verifier_spec = request.task.verifier_spec
+    verifier_executor = None
+    if verifier_spec is not None and verifier_spec.mode.value == "separate":
+        try:
+            from snowl.runtime.separated_verifier import SeparatedVerifierExecutor
+            workspace_dir = None
+            if isinstance(prepared, PreparedTrial) and prepared.workspace_session is not None:
+                workspace_dir = prepared.workspace_session.workspace_dir
+            verifier_executor = SeparatedVerifierExecutor(
+                spec=verifier_spec,
+                run_id=getattr(request, "run_id", None),
+                trial_id=getattr(request, "trial_id", None),
+                emit=emit,
+            )
+            await verifier_executor.prepare()
+            if workspace_dir:
+                await verifier_executor.transfer_artifacts(workspace_dir=workspace_dir)
+        except Exception as exc:
+            emit({
+                "event": "runtime.verifier.fallback",
+                "phase": "score",
+                "message": str(exc),
+            })
+            verifier_executor = None  # Fallback to shared mode
+
     for scorer in scorers:
         scorer_id = getattr(scorer, "scorer_id", "scorer")
+
+        # Determine if this scorer should run in separated verifier
+        should_separate = (
+            verifier_executor is not None
+            and verifier_spec is not None
+            and (
+                not verifier_spec.priority_scorers
+                or scorer_id in verifier_spec.priority_scorers
+            )
+        )
+
+        if should_separate:
+            try:
+                scores = await _score_in_verifier(
+                    verifier_executor, scorer, task_result, trace, score_context,
+                    verifier_spec=verifier_spec,
+                    emit=emit,
+                )
+                if scores:
+                    validate_scores(scores)
+                    all_scores.update(scores)
+            except Exception as exc:
+                scorer_error = exc
+                emit({
+                    "event": "runtime.trial.error",
+                    "phase": "score",
+                    "code": "verifier_scorer_error",
+                    "message": str(exc),
+                    "task_id": task_result.task_id,
+                    "scorer_id": scorer_id,
+                })
+            continue  # Skip in-process scoring for this scorer
+
         try:
             emit(
                 {
@@ -1174,6 +1493,13 @@ async def score_trial_phase(prepared: PreparedTrial | TrialRequest, partial: Par
                 )
                 return TrialOutcome(task_result=task_result, scores={}, trace=trace)
 
+    # ── Separated verifier teardown ───────────────────────────────────
+    if verifier_executor is not None:
+        try:
+            await verifier_executor.teardown()
+        except Exception:
+            pass
+
     accuracy = all_scores.get("accuracy")
     if (
         task_result.status == TaskStatus.SUCCESS
@@ -1237,6 +1563,19 @@ async def finalize_trial_phase(
             "sample_id": prepared.sample_id,
         }
     )
+
+    try:
+        if prepared.mcp_manager is not None:
+            emit({"event": "runtime.mcp.stop", "phase": "finalize"})
+            await prepared.mcp_manager.stop_all()
+            emit({"event": "runtime.mcp.stopped", "phase": "finalize"})
+    except Exception as exc:
+        finalize_error = exc
+        emit({
+            "event": "runtime.mcp.error",
+            "phase": "finalize",
+            "message": str(exc),
+        })
 
     try:
         if prepared.prepared_sandbox is not None:

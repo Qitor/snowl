@@ -59,6 +59,19 @@ class ArtifactRef:
 
 
 @dataclass(frozen=True)
+class StepResult:
+    """Outcome of a single step execution in a multi-step task."""
+
+    step_id: str
+    status: TaskStatus
+    scores: dict[str, Any] = field(default_factory=dict)
+    max_score: float = 0.0
+    timing: Timing | None = None
+    usage: Usage | None = None
+    artifacts: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class TaskResult:
     # stable identity
     task_id: str
@@ -76,6 +89,9 @@ class TaskResult:
 
     # extensibility bucket
     payload: dict[str, Any] = field(default_factory=dict)
+
+    # multi-step results
+    step_results: list[StepResult] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -108,6 +124,7 @@ class TaskResult:
             error=error,
             artifacts=artifacts,
             payload=data.get("payload", {}),
+            step_results=None,  # StepResult deserialization not supported in from_dict
         )
 
 

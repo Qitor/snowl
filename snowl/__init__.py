@@ -22,6 +22,7 @@ from snowl.model import (
     load_openai_compatible_config,
 )
 from snowl.runtime import TrialLimits, TrialOutcome, TrialRequest, execute_trial
+from snowl.registry import SnowlRegistry, get_registry
 from snowl.scorer import includes, match, model_as_judge_json, pattern
 
 __all__ = [
@@ -32,11 +33,13 @@ __all__ = [
     "ReActAgent",
     "OpenAICompatibleChatClient",
     "OpenAICompatibleConfig",
+    "SnowlRegistry",
     "SnowlValidationError",
     "TrialLimits",
     "TrialOutcome",
     "TrialRequest",
     "execute_trial",
+    "get_registry",
     "load_openai_compatible_config",
     "tool",
     "includes",

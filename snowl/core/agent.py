@@ -56,6 +56,7 @@ class AgentContext:
     task_id: str
     sample_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    sample: Any | None = None  # Sample object (deferred import to avoid circular)
 
 
 class Agent(Protocol):

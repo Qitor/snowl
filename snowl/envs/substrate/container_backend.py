@@ -133,6 +133,23 @@ class ContainerBackend:
             on_event=on_event,
         )
 
+    def cp(
+        self,
+        *,
+        source: str,
+        container_id: str,
+        dest: str,
+        on_event: EventSink = None,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        """Copy files from host into a container via ``docker cp``."""
+        cmd = ["docker", "cp", str(source), f"{str(container_id)}:{str(dest)}"]
+        return self._runner.run(
+            cmd,
+            timeout_seconds=timeout_seconds,
+            on_event=on_event,
+        )
+
     @staticmethod
     def compose_base_cmd(*, project: str, compose_file: str) -> list[str]:
         return [

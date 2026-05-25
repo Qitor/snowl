@@ -8,7 +8,9 @@ from typing import Any
 from snowl.benchmarks.base import BenchmarkInfo
 from snowl.benchmarks.base_adapter import BaseBenchmarkAdapter
 from snowl.benchmarks.utils import read_json_array, stable_benchmark_id
-from snowl.core import EnvSpec
+from snowl.benchmarks.utils.task_builder import build_benchmark_task
+from snowl.core import EnvSpec, Task
+from snowl.core.step import TaskStep
 from snowl.errors import SnowlValidationError
 
 
@@ -137,6 +139,55 @@ class IPICodingAgentBenchmarkAdapter(BaseBenchmarkAdapter[dict[str, Any]]):
 
     def _env_spec(self) -> EnvSpec:
         return EnvSpec(env_type="terminal", provided_ops=("process.run", "terminal.exec", "terminal.capture", "terminal.wait"))
+
+    def load_tasks(
+        self,
+        *,
+        split: str,
+        limit: int | None = None,
+        filters: dict[str, Any] | None = None,
+    ) -> list[Task]:
+        """Load tasks with multi-step structure: setup -> execute -> verify."""
+        # Use the base class to load samples normally
+        tasks = super().load_tasks(split=split, limit=limit, filters=filters)
+
+        # Add TaskSteps to each task for multi-step execution
+        enhanced: list[Task] = []
+        for task in tasks:
+            steps = (
+                TaskStep(
+                    step_id="setup",
+                    instruction="Set up the workspace and environment for the coding task.",
+                    env_spec=task.env_spec,
+                    min_reward=0.0,
+                    metadata={"phase": "setup"},
+                ),
+                TaskStep(
+                    step_id="execute",
+                    instruction="Implement the coding task according to the requirements.",
+                    env_spec=task.env_spec,
+                    min_reward=0.0,
+                    metadata={"phase": "execute"},
+                ),
+                TaskStep(
+                    step_id="verify",
+                    instruction="Run the verification command to check the implementation.",
+                    env_spec=task.env_spec,
+                    scorer_ids=("ipi_coding_agent",),
+                    min_reward=0.5,
+                    metadata={"phase": "verify"},
+                ),
+            )
+            # Create a new Task with steps, preserving all other fields
+            enhanced_task = Task(
+                task_id=task.task_id,
+                env_spec=task.env_spec,
+                sample_iter_factory=task.sample_iter_factory,
+                steps=steps,
+                metadata=dict(task.metadata),
+            )
+            enhanced.append(enhanced_task)
+        return enhanced
 
 
 def _coerce_bool(value: Any) -> bool | None:

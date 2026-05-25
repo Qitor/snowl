@@ -634,6 +634,22 @@ class ConsoleRenderer:
                 msg = str(getattr(error, "message", ""))[:200]
                 grid.add_row("error_code:", Text(code, style=theme.error))
                 grid.add_row("error_msg:", Text(msg, style=theme.error))
+
+            # Multi-step results
+            step_results = getattr(outcome.task_result, "step_results", None)
+            if step_results:
+                total_steps = len(step_results)
+                for i, sr in enumerate(step_results, start=1):
+                    sr_status = sr.status.value if hasattr(sr.status, "value") else str(sr.status)
+                    sr_style = theme.status_ok if sr_status == "success" else (theme.status_fail if sr_status in ("error", "incorrect") else "dim")
+                    step_id = getattr(sr, "step_id", f"step_{i}")
+                    max_score = getattr(sr, "max_score", 0.0)
+                    score_str = f"  score={max_score:.2f}" if max_score > 0 else ""
+                    grid.add_row(
+                        f"Step {i}/{total_steps} ({step_id}):",
+                        Text(f"{sr_status.upper()}{score_str}", style=sr_style),
+                    )
+
             panel = Panel(
                 grid,
                 title="[bold]Trial Result[/]",
@@ -652,6 +668,17 @@ class ConsoleRenderer:
                 msg = str(getattr(error, "message", ""))[:200]
                 self._emit(f"  error_code: {code}")
                 self._emit(f"  error_msg:  {msg}")
+
+            # Multi-step results (plain text fallback)
+            step_results = getattr(outcome.task_result, "step_results", None)
+            if step_results:
+                total_steps = len(step_results)
+                for i, sr in enumerate(step_results, start=1):
+                    sr_status = sr.status.value if hasattr(sr.status, "value") else str(sr.status)
+                    step_id = getattr(sr, "step_id", f"step_{i}")
+                    max_score = getattr(sr, "max_score", 0.0)
+                    score_str = f"  score={max_score:.2f}" if max_score > 0 else ""
+                    self._emit(f"  Step {i}/{total_steps} ({step_id}): {sr_status.upper()}{score_str}")
 
     def render_compare(self, aggregate: Any) -> None:
         if not self.verbose:

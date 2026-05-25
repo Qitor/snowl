@@ -18,7 +18,7 @@ import importlib.util
 import inspect
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
 from typing import Any, TypeVar
@@ -53,6 +53,8 @@ class ProjectComponents:
     agents: list[Agent]
     scorers: list[Scorer]
     tool_specs: list[ToolSpec]
+    solvers: list[Any] = field(default_factory=list)
+    hooks: list[Any] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -421,6 +423,105 @@ def _discover_scorers(module: ModuleType) -> list[Scorer]:
 
 
 # ---------------------------------------------------------------------------
+# Solver discovery
+# ---------------------------------------------------------------------------
+
+def _discover_solvers(module: ModuleType) -> list[Any]:
+    """Discover Solver instances from a module."""
+    from snowl.core.solver import Solver
+
+    strict_ids = _discovery_strict_ids_enabled()
+    solvers: list[Any] = []
+    fallback_found = False
+    object_seen: set[int] = set()
+    id_sources: dict[str, str] = {}
+
+    for name, value, decl in _iter_decorated_values(module, "solver"):
+        if isinstance(value, (list, tuple, set)):
+            items = list(value)
+        else:
+            items = [value]
+        for item in items:
+            if not isinstance(item, Solver) and not callable(item):
+                raise SnowlValidationError(
+                    f"Decorated solver declaration '{name}' did not resolve to Solver or callable."
+                )
+            if id(item) in object_seen:
+                continue
+            sid = getattr(item, "solver_id", name)
+            if isinstance(sid, str) and sid in id_sources:
+                raise SnowlValidationError(
+                    f"Duplicate solver_id '{sid}' discovered between {id_sources[sid]} "
+                    f"and decorated declaration '{name}'."
+                )
+            object_seen.add(id(item))
+            if isinstance(sid, str):
+                id_sources[sid] = f"decorated declaration '{name}'"
+            solvers.append(item)
+
+    for name, value in _iter_module_values(module):
+        if has_declaration(value, kind="solver"):
+            continue
+        if inspect.isclass(value):
+            continue
+        if isinstance(value, Solver) or (callable(value) and hasattr(value, "solver_id")):
+            fallback_found = True
+            if id(value) in object_seen:
+                continue
+            sid = getattr(value, "solver_id", name)
+            solvers.append(value)
+            object_seen.add(id(value))
+            if isinstance(sid, str):
+                id_sources[sid] = f"fallback object '{name}'"
+
+    if strict_ids and fallback_found:
+        raise SnowlValidationError(
+            "SNOWL_DISCOVERY_STRICT_IDS=1 requires decorator-based declarations. "
+            "Fallback solver objects were found; mark them with @solver(...)."
+        )
+    return solvers
+
+
+# ---------------------------------------------------------------------------
+# Hooks discovery
+# ---------------------------------------------------------------------------
+
+def _discover_hooks(module: ModuleType) -> list[Any]:
+    """Discover TrialHooks instances from a module."""
+    from snowl.core.hooks import TrialHooks
+
+    strict_ids = _discovery_strict_ids_enabled()
+    hooks_list: list[Any] = []
+    fallback_found = False
+    object_seen: set[int] = set()
+
+    for name, value, decl in _iter_decorated_values(module, "hooks"):
+        if id(value) in object_seen:
+            continue
+        hooks_list.append(value)
+        object_seen.add(id(value))
+
+    for name, value in _iter_module_values(module):
+        if has_declaration(value, kind="hooks"):
+            continue
+        if inspect.isclass(value):
+            continue
+        if isinstance(value, TrialHooks) or (callable(value) and hasattr(value, "hooks_id")):
+            fallback_found = True
+            if id(value) in object_seen:
+                continue
+            hooks_list.append(value)
+            object_seen.add(id(value))
+
+    if strict_ids and fallback_found:
+        raise SnowlValidationError(
+            "SNOWL_DISCOVERY_STRICT_IDS=1 requires decorator-based declarations. "
+            "Fallback hooks objects were found; mark them with @hooks(...)."
+        )
+    return hooks_list
+
+
+# ---------------------------------------------------------------------------
 # Tool discovery
 # ---------------------------------------------------------------------------
 
@@ -496,6 +597,8 @@ def load_project_components(
     scorer_module = _load_module("snowl_user_scorer", scorer_file)
     agents = _discover_agents(agent_module)
     scorers = _discover_scorers(scorer_module)
+    solvers = _discover_solvers(agent_module)
+    hooks_list = _discover_hooks(agent_module)
 
     # Apply declarative agent_type from project.yml to all discovered agents
     agent_type = None
@@ -551,6 +654,31 @@ def load_project_components(
                 updated_agents.append(agent)
         agents = updated_agents
 
+    # Apply framework adapter from project.yml
+    framework = None
+    if project_config is not None and project_config.eval is not None:
+        framework = project_config.eval.framework
+    if framework:
+        from snowl.adapters.registry import get_default_adapter_registry
+        adapter_registry = get_default_adapter_registry()
+        if adapter_registry.has(framework):
+            adapter = adapter_registry.get(framework)
+            agent_config_for_adapter = dict(agent_config or {})
+            wrapped_agents = []
+            for discovered_agent in agents:
+                # For AgentVariantAdapter, wrap the inner agent
+                inner = discovered_agent
+                if isinstance(discovered_agent, AgentVariantAdapter):
+                    inner = discovered_agent.agent
+                try:
+                    wrapped = adapter.wrap(inner, **agent_config_for_adapter)
+                    wrapped_agents.append(wrapped)
+                except Exception as exc:
+                    raise SnowlValidationError(
+                        f"Failed to wrap agent with {framework} adapter: {exc}"
+                    ) from exc
+            agents = wrapped_agents
+
     if require_task_file and not tasks:
         raise SnowlValidationError("No Task instances discovered in task.py")
     if not agents:
@@ -563,4 +691,6 @@ def load_project_components(
         agents=agents,
         scorers=scorers,
         tool_specs=tool_registry.list(),
+        solvers=solvers,
+        hooks=hooks_list,
     )

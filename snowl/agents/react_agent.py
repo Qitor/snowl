@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import time
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Sequence
 
@@ -72,6 +73,7 @@ class ReActAgent:
     enable_json_fallback: bool = True
     native_tool_call_policy: str = "single"
     middlewares: list[Any] | None = None
+    _use_solver_chain: bool = False
 
     async def run(
         self,
@@ -79,6 +81,18 @@ class ReActAgent:
         context: AgentContext,
         tools: Sequence[Any] | None = None,
     ) -> AgentState:
+        if not self._use_solver_chain:
+            warnings.warn(
+                "ReActAgent with _use_solver_chain=False is deprecated. "
+                "Set _use_solver_chain=True or use solver chains directly: "
+                "chain(system_message(...), use_tools(...), generate(...)).",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        if self._use_solver_chain:
+            return await self._run_via_solver_chain(state, context, tools)
+
         emit = context.metadata.get("__snowl_emit_event")
 
         async def _generate_with_events(
@@ -495,3 +509,57 @@ class ReActAgent:
         except json.JSONDecodeError:
             return None
         return parsed if isinstance(parsed, dict) else None
+
+    def _build_solver_chain(self, tools: Sequence[Any] | None):
+        """Build a Solver chain equivalent to this ReActAgent's run loop."""
+        from snowl.core.solver import chain
+        from snowl.solver import generate, submit_tool, system_message, use_tools
+
+        solvers = []
+
+        # System message from template
+        tool_schemas = self._build_openai_tool_schemas(tools)
+        system_prompt = self.build_system_prompt(tool_schemas)
+        solvers.append(system_message(system_prompt))
+
+        # Tools + middleware
+        if tools:
+            specs = [resolve_tool_spec(t) for t in tools]
+            tool_solver = use_tools(*specs)
+            if self.middlewares:
+                tool_solver = tool_solver.with_middleware(*self.middlewares)
+            solvers.append(tool_solver)
+        solvers.append(submit_tool())
+
+        # Generate with tool loop
+        solvers.append(generate(
+            self.model_client,
+            max_steps=self.max_steps,
+            temperature=self.temperature,
+            enable_json_fallback=self.enable_json_fallback,
+            native_tool_call_policy=self.native_tool_call_policy,
+            generation_kwargs=self.default_generation_kwargs,
+        ))
+
+        return chain(*solvers)
+
+    async def _run_via_solver_chain(
+        self,
+        state: AgentState,
+        context: AgentContext,
+        tools: Sequence[Any] | None = None,
+    ) -> AgentState:
+        """Execute via internally-built Solver chain."""
+        output = dict(state.output or {})
+        output["_solver_context"] = context
+        state.output = output
+
+        solver_chain = self._build_solver_chain(tools)
+
+        async def _noop_generate(**kwargs):
+            raise RuntimeError(
+                "No framework generate() available; "
+                "generate() is included in the chain."
+            )
+
+        return await solver_chain(state, _noop_generate)

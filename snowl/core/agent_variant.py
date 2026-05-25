@@ -30,6 +30,7 @@ class AgentVariant:
     provenance: dict[str, Any] = field(default_factory=dict)
     execution_mode: str = "native"  # "native" | "emulated" | "stateful"
     middleware_config: dict[str, Any] = field(default_factory=dict)
+    solver_chain: Any | None = None
 
 
 @dataclass
@@ -44,8 +45,28 @@ class AgentVariantAdapter:
     provenance: dict[str, Any] = field(default_factory=dict)
     execution_mode: str = "native"  # "native" | "emulated" | "stateful"
     middleware_config: dict[str, Any] = field(default_factory=dict)
+    solver_chain: Any | None = None
 
     async def run(self, state, context, tools=None):
+        if self.solver_chain is not None:
+            output = dict(state.output or {})
+            output["_solver_context"] = context
+            if tools:
+                from snowl.core.tool import resolve_tool_spec
+                existing = list(output.get("_solver_tools", []))
+                for t in tools:
+                    spec = resolve_tool_spec(t)
+                    if spec.name not in {s.name for s in existing}:
+                        existing.append(spec)
+                output["_solver_tools"] = existing
+            state.output = output
+
+            async def _noop_generate(**kwargs):
+                raise RuntimeError(
+                    "No framework generate() available; "
+                    "include generate(model_client) in your solver chain."
+                )
+            return await self.solver_chain(state, _noop_generate)
         return await self.agent.run(state, context, tools=tools)
 
 
@@ -95,5 +116,6 @@ def bind_agent_variant(variant: AgentVariant) -> AgentVariantAdapter:
         provenance=dict(variant.provenance),
         execution_mode=variant.execution_mode,
         middleware_config=dict(variant.middleware_config),
+        solver_chain=variant.solver_chain,
     )
 

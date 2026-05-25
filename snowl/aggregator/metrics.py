@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, TYPE_CHECKING
 
 
 @dataclass(frozen=True)
@@ -172,3 +172,26 @@ class MetricAggregator:
     def metric_means_dict(self, reports: list[MetricReport]) -> dict[str, float]:
         """Convenience: collapse reports into a {name: value} dict (for backward compat)."""
         return {r.name: r.value for r in reports}
+
+    def aggregate_with_scorer_metrics(
+        self,
+        scores: list[dict[str, float]],
+        scorer: Any,
+    ) -> list[MetricReport]:
+        """Aggregate scores using metric definitions bound to a scorer.
+
+        If the scorer was declared with ``@scorer(metrics=[accuracy(), stderr()])``,
+        those MetricDefinitions are used instead of defaults.
+
+        Args:
+            scores: List of {metric_name: value} dicts (one per trial/sample).
+            scorer: A scorer object that may have ``_metrics`` bound.
+
+        Returns:
+            List of MetricReport, one per distinct metric name found in *scores*.
+        """
+        definitions: list[MetricDefinition] | None = None
+        bound = getattr(scorer, "_metrics", None)
+        if bound:
+            definitions = list(bound)
+        return self.aggregate(scores, definitions=definitions)

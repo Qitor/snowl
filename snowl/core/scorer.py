@@ -38,6 +38,7 @@ class ScoreContext:
     sample_id: str | None = None
     task_metadata: dict[str, Any] = field(default_factory=dict)
     sample_metadata: dict[str, Any] = field(default_factory=dict)
+    sample: Any | None = None  # Full Sample object for direct field access
 
 
 Trace = Mapping[str, Any]
@@ -99,9 +100,19 @@ def scorer(
     value: Any | None = None,
     *,
     scorer_id: str | None = None,
+    metrics: list[Any] | None = None,
     metadata: dict[str, Any] | None = None,
 ):
-    """Declare a scorer object/factory for eval autodiscovery."""
+    """Declare a scorer object/factory for eval autodiscovery.
+
+    Args:
+        value: The scorer class/function (when used without parentheses).
+        scorer_id: Override scorer_id on the decorated object.
+        metrics: List of MetricDefinition instances for declarative metric binding.
+            When provided, these are stored on the scorer and used by the
+            aggregation layer to produce correct reports.
+        metadata: Additional metadata stored in the declaration.
+    """
 
     if scorer_id is not None and (not isinstance(scorer_id, str) or not scorer_id.strip()):
         raise SnowlValidationError("Decorator @scorer(...): 'scorer_id' must be a non-empty string.")
@@ -113,11 +124,33 @@ def scorer(
                 setattr(inner, "scorer_id", declared_id)
             except Exception:
                 pass
-        return declare(inner, kind="scorer", object_id=declared_id, metadata=metadata)
+        # Store metrics binding on the scorer object
+        if metrics:
+            try:
+                setattr(inner, "_metrics", list(metrics))
+            except Exception:
+                pass
+        effective_metadata = dict(metadata) if metadata else {}
+        if metrics:
+            effective_metadata["_bound_metrics"] = [
+                {"name": getattr(m, "name", str(m)),
+                 "aggregation": getattr(m, "aggregation", "mean"),
+                 "higher_is_better": getattr(m, "higher_is_better", True)}
+                for m in metrics
+            ]
+        return declare(inner, kind="scorer", object_id=declared_id, metadata=effective_metadata if effective_metadata else None)
 
     if value is not None:
         return _decorate(value)
     return _decorate
+
+
+def get_scorer_metrics(scorer_obj: Any) -> list[Any]:
+    """Retrieve metric definitions bound to a scorer via @scorer(metrics=[...]).
+
+    Returns an empty list if no metrics were bound.
+    """
+    return list(getattr(scorer_obj, "_metrics", []))
 
 
 def validate_scores(scores: Mapping[str, Score]) -> None:

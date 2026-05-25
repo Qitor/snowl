@@ -69,6 +69,10 @@ class EvalTrialLifecycle:
         log: Callable[[str], None],
         save_checkpoint: Callable[[Path, str, dict[str, Any]], None],
         serialize_outcome: Callable[[TrialOutcome], dict[str, Any]],
+        bridge: dict[str, Any] | None = None,
+        epochs: int = 1,
+        score_reducer: Any | None = None,
+        model_client: Any | None = None,
     ) -> None:
         self.run_id = run_id
         self.base_dir = base_dir
@@ -101,6 +105,10 @@ class EvalTrialLifecycle:
         self.log = log
         self.save_checkpoint = save_checkpoint
         self.serialize_outcome = serialize_outcome
+        self._bridge = bridge
+        self._epochs = epochs
+        self._score_reducer = score_reducer
+        self._model_client = model_client
 
     async def run(
         self,
@@ -173,13 +181,90 @@ class EvalTrialLifecycle:
             run_id=self.run_id,
             trial_id=key,
             middleware_config=agent_middleware,
+            epochs=getattr(self, '_epochs', 1),
+            score_reducer=getattr(self, '_score_reducer', None),
         )
         async with self.scheduler.begin_prepare(execution_plan):
             prepared = await prepare_trial_phase(request)
-        async with self.scheduler.begin_execute(execution_plan):
-            partial = await execute_agent_phase(prepared)
+
+        # Activate bridge mode if configured
+        bridge_token = None
+        bridge_usage_token = None
+        bridge_accumulator = None
+        bridge_cfg = self._bridge
+        if bridge_cfg and bridge_cfg.get("enabled") and self._model_client is not None:
+            try:
+                from snowl.bridges._config import BridgeConfig, set_bridge_config, set_usage_accumulator, BridgeUsageAccumulator
+                from snowl.bridges._patch_openai import patch_openai
+                from snowl.bridges._patch_anthropic import patch_anthropic
+
+                if bridge_cfg.get("patch_openai", True):
+                    patch_openai()
+                if bridge_cfg.get("patch_anthropic", True):
+                    patch_anthropic()
+
+                config = BridgeConfig(
+                    enabled=True,
+                    model_client=self._model_client,
+                    provider_id="eval_bridge",
+                )
+                bridge_token = set_bridge_config(config)
+                bridge_accumulator = BridgeUsageAccumulator()
+                bridge_usage_token = set_usage_accumulator(bridge_accumulator)
+            except ImportError:
+                pass
+
+        try:
+            async with self.scheduler.begin_execute(execution_plan):
+                partial = await execute_agent_phase(prepared)
+        finally:
+            # Deactivate bridge mode
+            if bridge_token is not None:
+                try:
+                    from snowl.bridges._config import reset_bridge_config, reset_usage_accumulator
+                    reset_bridge_config(bridge_token)
+                    if bridge_usage_token is not None:
+                        reset_usage_accumulator(bridge_usage_token)
+                except ImportError:
+                    pass
+
+                # Merge bridge usage into task result
+                if bridge_accumulator is not None and partial is not None:
+                    try:
+                        tr = partial.task_result
+                        existing = tr.usage or {}
+                        tr.usage = {
+                            "input_tokens": (existing.get("input_tokens") or 0) + bridge_accumulator.input_tokens,
+                            "output_tokens": (existing.get("output_tokens") or 0) + bridge_accumulator.output_tokens,
+                            "total_tokens": (existing.get("total_tokens") or 0) + bridge_accumulator.total_tokens,
+                            "bridge_calls": bridge_accumulator.call_count,
+                        }
+                    except Exception:
+                        pass
         async with self.scheduler.begin_score(execution_plan):
             outcome = await score_trial_phase(prepared, partial)
+
+        # Multi-epoch: collect scores from additional epochs and reduce
+        epochs = request.epochs
+        if epochs > 1 and request.score_reducer is not None:
+            epoch_scores = [outcome.scores]
+            for epoch_idx in range(1, epochs):
+                async with self.scheduler.begin_prepare(execution_plan):
+                    prepared = await prepare_trial_phase(request)
+                async with self.scheduler.begin_execute(execution_plan):
+                    partial = await execute_agent_phase(prepared)
+                async with self.scheduler.begin_score(execution_plan):
+                    epoch_outcome = await score_trial_phase(prepared, partial)
+                async with self.scheduler.begin_finalize(execution_plan):
+                    await finalize_trial_phase(prepared, epoch_outcome)
+                epoch_scores.append(epoch_outcome.scores)
+            reduced_scores = request.score_reducer.reduce(epoch_scores)
+            outcome = TrialOutcome(
+                task_result=outcome.task_result,
+                scores=reduced_scores,
+                trace=outcome.trace,
+            )
+
         async with self.scheduler.begin_finalize(execution_plan):
             outcome, _ = await finalize_trial_phase(prepared, outcome)
 

@@ -18,7 +18,7 @@ from itertools import count
 from typing import Any, Literal
 
 
-DeclarationKind = Literal["task", "agent", "scorer"]
+DeclarationKind = Literal["task", "agent", "scorer", "solver", "hooks"]
 
 _DECL_KIND_ATTR = "__snowl_declaration_kind__"
 _DECL_ID_ATTR = "__snowl_declaration_id__"

@@ -68,6 +68,14 @@ class ProjectEvalConfig:
     limit: int | None = None
     agent_type: str | None = None  # "native" | "emulated" | "stateful"
     agent_config: dict[str, Any] | None = None
+    framework: str | None = None  # Adapter framework name (e.g., "langgraph", "custom")
+    solver_chain: dict[str, Any] | None = None  # Declarative solver chain config
+    mcp_servers: list[dict[str, Any]] | None = None  # MCP server declarations
+    verifier: dict[str, Any] | None = None  # Verifier configuration
+    epochs: int = 1  # Number of times to run each sample
+    score_reducer: str = "mean"  # "mean" | "max" | "pass_at_k"
+    bridge: dict[str, Any] | None = None  # Bridge mode configuration
+    hooks: list[dict[str, Any]] | None = None  # Hook declarations (e.g., cost_tracker, audit_log, progress, rate_limit_alert)
 
 
 @dataclass(frozen=True)
@@ -78,6 +86,7 @@ class ProjectRuntimeConfig:
     max_scoring_tasks: int | None = None
     provider_budgets: dict[str, int] = field(default_factory=dict)
     recovery: "ProjectRecoveryConfig" = field(default_factory=lambda: ProjectRecoveryConfig())
+    environment_provider: str | None = None  # "docker" | "local" | custom
 
 
 @dataclass(frozen=True)
@@ -297,6 +306,16 @@ def load_project_config(path: str | Path) -> ProjectConfig:
         limit=_coerce_optional_int(eval_data.get("limit"), label="eval.limit", path=config_path),
         agent_type=_coerce_optional_str(eval_data.get("agent_type")),
         agent_config=dict(eval_data["agent_config"]) if isinstance(eval_data.get("agent_config"), dict) else None,
+        framework=_coerce_optional_str(eval_data.get("framework")),
+        solver_chain=dict(eval_data["solver_chain"]) if isinstance(eval_data.get("solver_chain"), dict) else None,
+        mcp_servers=_parse_mcp_servers(eval_data.get("mcp_servers"), path=config_path),
+        verifier=dict(eval_data["verifier"]) if isinstance(eval_data.get("verifier"), dict) else None,
+        epochs=_coerce_non_negative_int(
+            eval_data.get("epochs"), label="eval.epochs", path=config_path, default=1,
+        ),
+        score_reducer=_coerce_score_reducer(eval_data.get("score_reducer"), path=config_path),
+        bridge=dict(eval_data["bridge"]) if isinstance(eval_data.get("bridge"), dict) else None,
+        hooks=_parse_hooks(eval_data.get("hooks"), path=config_path),
     )
 
     runtime_data = _require_mapping(data.get("runtime") or {}, label="runtime", path=config_path)
@@ -317,6 +336,7 @@ def load_project_config(path: str | Path) -> ProjectConfig:
         max_builds=_coerce_optional_int(runtime_data.get("max_builds"), label="runtime.max_builds", path=config_path),
         max_scoring_tasks=_coerce_optional_int(runtime_data.get("max_scoring_tasks"), label="runtime.max_scoring_tasks", path=config_path),
         provider_budgets=provider_budgets,
+        environment_provider=_coerce_optional_str(runtime_data.get("environment_provider")),
         recovery=ProjectRecoveryConfig(
             auto_retry_non_success=_coerce_bool(recovery_data.get("auto_retry_non_success"), default=True),
             max_auto_retries_per_trial=_coerce_non_negative_int(
@@ -503,6 +523,86 @@ def _coerce_auto_int(value: Any, *, label: str, path: Path) -> int | str | None:
 def _coerce_optional_str(value: Any) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+_VALID_SCORE_REDUCERS = {"mean", "max", "pass_at_k"}
+
+
+def _coerce_score_reducer(value: Any, *, path: Path) -> str:
+    text = str(value or "mean").strip().lower()
+    if text not in _VALID_SCORE_REDUCERS:
+        raise SnowlValidationError(
+            f"eval.score_reducer must be one of {sorted(_VALID_SCORE_REDUCERS)}, got '{text}' in {path}"
+        )
+    return text
+
+
+def _parse_mcp_servers(value: Any, *, path: Path) -> list[dict[str, Any]] | None:
+    """Parse eval.mcp_servers from project.yml.
+
+    Returns a list of dicts (not MCPServerSpec — that conversion happens
+    in the engine layer which has access to the validation logic).
+    """
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise SnowlValidationError(f"eval.mcp_servers must be a list in {path}")
+    result: list[dict[str, Any]] = []
+    for i, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            raise SnowlValidationError(
+                f"eval.mcp_servers[{i}] must be a mapping in {path}"
+            )
+        if not item.get("name"):
+            raise SnowlValidationError(
+                f"eval.mcp_servers[{i}] must include a non-empty 'name' in {path}"
+            )
+        result.append(dict(item))
+    return result
+
+
+_VALID_HOOK_NAMES = {"cost_tracker", "audit_log", "progress", "rate_limit_alert"}
+
+
+def _parse_hooks(value: Any, *, path: Path) -> list[dict[str, Any]] | None:
+    """Parse eval.hooks from project.yml.
+
+    Each hook entry is a dict with at least a ``name`` key. Supported names:
+    ``cost_tracker``, ``audit_log``, ``progress``, ``rate_limit_alert``.
+    Additional keys are passed as configuration to the hook constructor.
+
+    Example YAML::
+
+        eval:
+          hooks:
+            - name: cost_tracker
+            - name: rate_limit_alert
+              warn_after: 5
+              window_seconds: 120
+    """
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise SnowlValidationError(f"eval.hooks must be a list in {path}")
+    result: list[dict[str, Any]] = []
+    for i, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            raise SnowlValidationError(
+                f"eval.hooks[{i}] must be a mapping in {path}"
+            )
+        name = item.get("name")
+        if not name or not str(name).strip():
+            raise SnowlValidationError(
+                f"eval.hooks[{i}] must include a non-empty 'name' in {path}"
+            )
+        name_str = str(name).strip()
+        if name_str not in _VALID_HOOK_NAMES:
+            raise SnowlValidationError(
+                f"eval.hooks[{i}].name must be one of {sorted(_VALID_HOOK_NAMES)}, "
+                f"got '{name_str}' in {path}"
+            )
+        result.append(dict(item))
+    return result
 
 
 def _resolve_dir(value: Any, *, base: Path, default: Path, label: str, path: Path) -> Path:

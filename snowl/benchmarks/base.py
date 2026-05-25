@@ -80,6 +80,7 @@ class BenchmarkInfo:
     concurrency_profile: BenchmarkConcurrencyProfile | None = None
     middleware_hints: dict[str, Any] = field(default_factory=dict)
     risk_domains: tuple[RiskDomain, ...] = ()
+    mcp_hints: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.display_name:

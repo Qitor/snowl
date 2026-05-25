@@ -17,7 +17,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator, Mapping, Protocol, runtime_checkable
 
 from snowl.core.declarations import declare
-from snowl.core.env import EnvSpec, validate_env_spec
+from snowl.core.env import EnvSpec, VerifierSpec, validate_env_spec, validate_verifier_spec
+from snowl.core.step import TaskStep
 from snowl.errors import SnowlValidationError
 
 
@@ -33,9 +34,25 @@ class Task:
     env_spec: EnvSpec
     sample_iter_factory: Callable[[], SampleIterator]
     metadata: dict[str, Any] = field(default_factory=dict)
+    steps: tuple[TaskStep, ...] = ()
+    verifier_spec: VerifierSpec | None = None
 
     def iter_samples(self) -> SampleIterator:
         return self.sample_iter_factory()
+
+    def iter_typed_samples(self) -> "Iterator[Sample]":
+        """Iterate samples, converting raw dicts to Sample objects.
+
+        Supports both Sample instances and legacy dict samples.
+        """
+        from snowl.core.sample import Sample
+        for raw in self.sample_iter_factory():
+            if isinstance(raw, Sample):
+                yield raw
+            elif isinstance(raw, dict):
+                yield Sample.from_dict(raw)
+            else:
+                raise TypeError(f"Expected Sample or dict, got {type(raw).__name__}")
 
 
 @runtime_checkable
@@ -72,6 +89,7 @@ def task(
                 env_spec=inner.env_spec,
                 sample_iter_factory=inner.sample_iter_factory,
                 metadata=dict(inner.metadata),
+                steps=inner.steps,
             )
         return declare(inner, kind="task", object_id=declared_id, metadata=metadata)
 
@@ -105,6 +123,24 @@ def validate_task(task: Task) -> None:
         raise SnowlValidationError(
             "Task.sample_iter_factory must return an iterator of samples."
         )
+
+    if task.steps:
+        if not isinstance(task.steps, tuple):
+            raise SnowlValidationError("Task.steps must be a tuple of TaskStep instances.")
+        seen_ids: set[str] = set()
+        for step in task.steps:
+            if not isinstance(step, TaskStep):
+                raise SnowlValidationError(
+                    f"Task.steps must contain TaskStep instances, got {type(step).__name__}."
+                )
+            if step.step_id in seen_ids:
+                raise SnowlValidationError(
+                    f"Duplicate step_id '{step.step_id}' in Task.steps."
+                )
+            seen_ids.add(step.step_id)
+
+    if task.verifier_spec is not None:
+        validate_verifier_spec(task.verifier_spec)
 
 
 def validate_task_provider(provider: TaskProvider) -> None:

@@ -42,6 +42,7 @@ FORBIDDEN_THIRD_PARTY = (
     "flask",
     "aiohttp",
     "requests",
+    "mcp",
 )
 
 
@@ -59,7 +60,7 @@ class TestCoreLayerBoundaries:
     def test_core_modules_exist(self) -> None:
         """Core directory has expected modules."""
         names = {info.name for info in pkgutil.iter_modules([str(CORE_DIR)])}
-        expected = {"agent", "agent_variant", "declarations", "env", "scorer", "task", "task_result", "tool"}
+        expected = {"agent", "agent_variant", "declarations", "env", "mcp", "scorer", "task", "task_result", "tool"}
         assert expected <= names, f"Missing core modules: {expected - names}"
 
     def test_core_no_adapter_imports(self) -> None:
