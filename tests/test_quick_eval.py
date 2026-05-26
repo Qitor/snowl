@@ -7,6 +7,9 @@ import pytest
 from snowl.quick_eval import (
     QuickEvalResult,
     quick_eval,
+    quick_eval_langgraph,
+    quick_eval_openai,
+    quick_eval_qitos,
     quick_eval_sync,
     _resolve_agent,
     _resolve_scorer,
@@ -151,8 +154,69 @@ def test_quick_eval_result_str():
         scores={"includes": 0.75},
         total_tokens=100,
         duration_ms=500,
+        working_time_ms=400,
         sample_count=4,
     )
     text = str(result)
     assert "75% pass rate" in text
     assert "4 samples" in text
+    assert "Working: 400ms" in text
+
+
+def test_quick_eval_result_str_with_cost():
+    result = QuickEvalResult(
+        status="success",
+        pass_rate=1.0,
+        scores={"includes": 1.0},
+        total_tokens=1000,
+        duration_ms=500,
+        working_time_ms=400,
+        sample_count=2,
+        estimated_cost_usd=0.05,
+        score_per_dollar=20.0,
+    )
+    text = str(result)
+    assert "Cost: $0.0500" in text
+    assert "Score/$: 20.00" in text
+
+
+# ---------------------------------------------------------------------------
+# Framework-specific quick_eval_* wrappers
+# ---------------------------------------------------------------------------
+
+class _FakeQitOSModule:
+    """Minimal QitOS AgentModule stub for testing."""
+    name = "fake_qitos"
+
+    def run(self, task, **kwargs):
+        return type("Result", (), {"task_result": type("TR", (), {"final_answer": "ok"}), "cancel": False})()
+
+
+class _FakeLangGraph:
+    """Minimal compiled graph stub with ainvoke."""
+    async def ainvoke(self, input, **kwargs):
+        return {"output": "graph response"}
+
+
+@pytest.mark.asyncio
+async def test_quick_eval_qitos_with_fake_module():
+    """quick_eval_qitos wraps a QitOS module and evaluates."""
+    result = await quick_eval_qitos(
+        agent_module=_FakeQitOSModule(),
+        samples=[{"id": "s1", "input": "test"}],
+        scorer="includes",
+    )
+    assert isinstance(result, QuickEvalResult)
+    assert result.sample_count == 1
+
+
+@pytest.mark.asyncio
+async def test_quick_eval_langgraph_with_fake_graph():
+    """quick_eval_langgraph wraps a compiled graph and evaluates."""
+    result = await quick_eval_langgraph(
+        graph=_FakeLangGraph(),
+        samples=[{"id": "s1", "input": "test"}],
+        scorer="includes",
+    )
+    assert isinstance(result, QuickEvalResult)
+    assert result.sample_count == 1

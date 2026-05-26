@@ -40,8 +40,11 @@ class QuickEvalResult:
     pass_rate: float  # 0.0 - 1.0
     scores: dict[str, float]  # {"includes": 1.0, "judge": 0.8}
     total_tokens: int
-    duration_ms: int
+    duration_ms: int  # wall-clock total
+    working_time_ms: int  # agent execution time (excludes scoring overhead)
     sample_count: int
+    estimated_cost_usd: float | None = None
+    score_per_dollar: float | None = None
     output_dir: str | None = None
 
     def __str__(self) -> str:
@@ -49,8 +52,12 @@ class QuickEvalResult:
             f"QuickEvalResult: {self.pass_rate:.0%} pass rate ({self.sample_count} samples)",
             f"  Status: {self.status}",
             f"  Scores: {self.scores}",
-            f"  Tokens: {self.total_tokens}  Duration: {self.duration_ms}ms",
+            f"  Tokens: {self.total_tokens}  Duration: {self.duration_ms}ms  Working: {self.working_time_ms}ms",
         ]
+        if self.estimated_cost_usd is not None:
+            lines.append(f"  Cost: ${self.estimated_cost_usd:.4f}")
+        if self.score_per_dollar is not None:
+            lines.append(f"  Score/$: {self.score_per_dollar:.2f}")
         return "\n".join(lines)
 
 
@@ -175,6 +182,7 @@ async def quick_eval(
     samples: list[dict[str, Any]] | None = None,
     limit: int | None = None,
     max_tokens: int = 256,
+    strip_canaries: bool = False,
 ) -> QuickEvalResult:
     """Run a quick evaluation of an agent against samples or a benchmark.
 
@@ -243,25 +251,44 @@ async def quick_eval(
     if not sample_list:
         raise ValueError("No samples to evaluate.")
 
+    # --- Strip canary markers from inputs if requested ---
+    if strip_canaries:
+        from snowl.canary import strip_canary_from_sample
+        sample_list = [strip_canary_from_sample(s) for s in sample_list]
+
     # --- Run trials ---
     start = time.monotonic()
     total_tokens = 0
+    total_cost_usd = 0.0
+    total_working_ms = 0
     success_count = 0
     error_count = 0
     aggregate_scores: dict[str, list[float]] = {}
 
     for sample in sample_list:
         try:
+            trial_start = time.monotonic()
             outcome = await execute_trial(TrialRequest(
                 task=task,
                 agent=resolved_agent,
                 sample=sample,
                 scorer=resolved_scorer,
             ))
+            trial_elapsed = int((time.monotonic() - trial_start) * 1000)
+
+            # Agent execution time from TaskResult.Timing (excludes scoring)
+            timing = outcome.task_result.timing
+            if timing is not None:
+                total_working_ms += getattr(timing, "duration_ms", 0) or 0
+            else:
+                total_working_ms += trial_elapsed
 
             usage = outcome.task_result.usage
             if usage is not None:
                 total_tokens += getattr(usage, "total_tokens", 0) or 0
+                cost = getattr(usage, "estimated_cost_usd", None)
+                if cost is not None:
+                    total_cost_usd += cost
 
             status_val = outcome.task_result.status.value
             if status_val == "success":
@@ -292,13 +319,24 @@ async def quick_eval(
     else:
         status = "incorrect"
 
+    # Cost efficiency
+    cost_usd: float | None = total_cost_usd if total_cost_usd > 0 else None
+    spd: float | None = None
+    if cost_usd is not None and cost_usd > 0:
+        # Use the primary score (first metric) for cost efficiency
+        primary_score = next(iter(avg_scores.values()), pass_rate)
+        spd = primary_score / cost_usd
+
     return QuickEvalResult(
         status=status,
         pass_rate=pass_rate,
         scores=avg_scores,
         total_tokens=total_tokens,
         duration_ms=elapsed_ms,
+        working_time_ms=total_working_ms,
         sample_count=total,
+        estimated_cost_usd=cost_usd,
+        score_per_dollar=spd,
     )
 
 
@@ -319,3 +357,159 @@ def quick_eval_sync(**kwargs: Any) -> QuickEvalResult:
         )
     """
     return asyncio.run(quick_eval(**kwargs))
+
+
+# ---------------------------------------------------------------------------
+# Framework-specific convenience wrappers
+# ---------------------------------------------------------------------------
+
+async def quick_eval_qitos(
+    agent_module: Any,
+    *,
+    benchmark: str | None = None,
+    scorer: Scorer | str | None = None,
+    samples: list[dict[str, Any]] | None = None,
+    limit: int | None = None,
+    max_tokens: int = 256,
+    **qitos_kwargs: Any,
+) -> QuickEvalResult:
+    """Evaluate a QitOS AgentModule against a benchmark or samples.
+
+    This is a convenience wrapper that automatically wraps the QitOS module
+    via :class:`QitOSAdapter` and delegates to :func:`quick_eval`.
+
+    Args:
+        agent_module: A QitOS ``AgentModule`` instance.
+        benchmark: Name of a built-in benchmark.
+        scorer: A Scorer instance, a string name, or None for default.
+        samples: Custom sample dicts.
+        limit: Max number of samples.
+        max_tokens: Token limit for agent responses.
+        **qitos_kwargs: Extra config passed to ``QitOSAdapter.wrap()``.
+
+    Returns:
+        A :class:`QuickEvalResult`.
+
+    Example::
+
+        from snowl import quick_eval_qitos
+
+        result = await quick_eval_qitos(
+            agent_module=my_agent,
+            benchmark="cybench",
+            limit=10,
+        )
+    """
+    from snowl.adapters.qitos import QitOSAdapter
+
+    adapter = QitOSAdapter()
+    agent = adapter.wrap(agent_module, **qitos_kwargs)
+    return await quick_eval(
+        agent=agent,
+        benchmark=benchmark,
+        scorer=scorer,
+        samples=samples,
+        limit=limit,
+        max_tokens=max_tokens,
+    )
+
+
+async def quick_eval_langgraph(
+    graph: Any,
+    *,
+    benchmark: str | None = None,
+    scorer: Scorer | str | None = None,
+    samples: list[dict[str, Any]] | None = None,
+    limit: int | None = None,
+    max_tokens: int = 256,
+) -> QuickEvalResult:
+    """Evaluate a compiled LangGraph graph against a benchmark or samples.
+
+    This is a convenience wrapper that automatically wraps the graph
+    via :class:`LangGraphAdapter` and delegates to :func:`quick_eval`.
+
+    Args:
+        graph: A compiled LangGraph graph with an ``ainvoke()`` method.
+        benchmark: Name of a built-in benchmark.
+        scorer: A Scorer instance, a string name, or None for default.
+        samples: Custom sample dicts.
+        limit: Max number of samples.
+        max_tokens: Token limit for agent responses.
+
+    Returns:
+        A :class:`QuickEvalResult`.
+
+    Example::
+
+        from snowl import quick_eval_langgraph
+
+        result = await quick_eval_langgraph(
+            graph=compiled_graph,
+            benchmark="gaia",
+            limit=10,
+        )
+    """
+    from snowl.adapters.langgraph import LangGraphAdapter
+
+    adapter = LangGraphAdapter()
+    agent = adapter.wrap(graph)
+    return await quick_eval(
+        agent=agent,
+        benchmark=benchmark,
+        scorer=scorer,
+        samples=samples,
+        limit=limit,
+        max_tokens=max_tokens,
+    )
+
+
+async def quick_eval_openai(
+    client: Any,
+    *,
+    model: str = "gpt-4.1-mini",
+    benchmark: str | None = None,
+    scorer: Scorer | str | None = None,
+    samples: list[dict[str, Any]] | None = None,
+    limit: int | None = None,
+    max_tokens: int = 256,
+) -> QuickEvalResult:
+    """Evaluate an OpenAI client against a benchmark or samples.
+
+    This is a convenience wrapper that automatically wraps the client
+    via :class:`OpenAIAgentsAdapter` and delegates to :func:`quick_eval`.
+
+    Args:
+        client: An OpenAI client instance.
+        model: Model name to use for evaluation.
+        benchmark: Name of a built-in benchmark.
+        scorer: A Scorer instance, a string name, or None for default.
+        samples: Custom sample dicts.
+        limit: Max number of samples.
+        max_tokens: Token limit for agent responses.
+
+    Returns:
+        A :class:`QuickEvalResult`.
+
+    Example::
+
+        from snowl import quick_eval_openai
+
+        result = await quick_eval_openai(
+            client=openai_client,
+            model="gpt-4.1-mini",
+            benchmark="xstest",
+            limit=10,
+        )
+    """
+    from snowl.adapters.openai_agents import OpenAIAgentsAdapter
+
+    adapter = OpenAIAgentsAdapter()
+    agent = adapter.wrap(client, model=model)
+    return await quick_eval(
+        agent=agent,
+        benchmark=benchmark,
+        scorer=scorer,
+        samples=samples,
+        limit=limit,
+        max_tokens=max_tokens,
+    )

@@ -24,7 +24,15 @@ from snowl.model import (
 from snowl.runtime import TrialLimits, TrialOutcome, TrialRequest, execute_trial
 from snowl.registry import SnowlRegistry, get_registry
 from snowl.scorer import includes, match, model_as_judge_json, pattern
-from snowl.quick_eval import quick_eval, quick_eval_sync, QuickEvalResult
+from snowl.canary import strip_canary, strip_canary_from_sample
+from snowl.quick_eval import (
+    quick_eval,
+    quick_eval_langgraph,
+    quick_eval_openai,
+    quick_eval_qitos,
+    quick_eval_sync,
+    QuickEvalResult,
+)
 
 __all__ = [
     "__version__",
@@ -44,7 +52,12 @@ __all__ = [
     "get_registry",
     "load_openai_compatible_config",
     "quick_eval",
+    "quick_eval_langgraph",
+    "quick_eval_openai",
+    "quick_eval_qitos",
     "quick_eval_sync",
+    "strip_canary",
+    "strip_canary_from_sample",
     "tool",
     "includes",
     "match",
