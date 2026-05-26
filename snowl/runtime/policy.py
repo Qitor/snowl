@@ -51,22 +51,47 @@ def available_memory_gb() -> float | None:
         return None
 
 
+def _get_runtime_hints(benchmark: str) -> dict[str, Any]:
+    """Look up runtime_hints from benchmark registry."""
+    try:
+        from snowl.benchmarks.registry import get_default_benchmark_registry
+        registry = get_default_benchmark_registry()
+        for entry in registry.list():
+            if entry.info.name == benchmark:
+                return entry.info.runtime_hints
+    except Exception:
+        pass
+    return {}
+
+
+def _get_container_slots_profile(benchmark: str) -> dict[str, Any] | None:
+    """Look up container_slots_profile from benchmark registry runtime_hints."""
+    hints = _get_runtime_hints(benchmark)
+    profile = hints.get("container_slots_profile")
+    return profile if isinstance(profile, dict) else None
+
+
 def auto_container_slots(*, benchmark: str, cpu_count: int | None = None, mem_gb: float | None = None) -> int:
     cpu = max(1, int(cpu_count or os.cpu_count() or 1))
     memory = mem_gb if mem_gb is not None else available_memory_gb()
     benchmark_key = str(benchmark or "").strip().lower()
+
+    # No containers for non-container benchmarks
     if benchmark_key in {"", "custom", "strongreject", "toolemu", "agentsafetybench"}:
         return 0
-    if benchmark_key == "terminalbench":
-        by_cpu = max(1, min(4, cpu // 2))
+
+    # Try registry-driven profile
+    profile = _get_container_slots_profile(benchmark_key)
+    if profile is not None:
+        max_slots = profile.get("max_slots", 2)
+        cpu_divisor = profile.get("cpu_divisor", 2)
+        mem_per_slot = profile.get("mem_per_slot_gb", 4)
+        by_cpu = max(1, min(max_slots, cpu // cpu_divisor or 1))
         if memory is None:
             return by_cpu
-        return max(1, min(by_cpu, int(memory // 6) or 1))
-    if benchmark_key == "osworld":
-        by_cpu = max(1, min(2, cpu // 4 or 1))
-        if memory is None:
-            return by_cpu
-        return max(1, min(by_cpu, int(memory // 10) or 1))
+        return max(1, min(by_cpu, int(memory // mem_per_slot) or 1))
+
+    # Default heuristic
     return max(1, min(2, cpu // 2 or 1))
 
 
@@ -112,10 +137,11 @@ def is_docker_like_task(task: Task) -> bool:
                 return True
     except Exception:
         pass
-    metadata = getattr(task, "metadata", {}) or {}
-    if isinstance(metadata, dict):
-        bench = str(metadata.get("benchmark") or metadata.get("benchmark_name") or "").lower()
-        if bench in {"terminalbench", "osworld"}:
+    # Check registry hint
+    bench_name = benchmark_name_for_task(task)
+    if bench_name and bench_name != "custom":
+        hints = _get_runtime_hints(bench_name)
+        if hints.get("is_docker_like") is True:
             return True
     return False
 

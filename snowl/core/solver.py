@@ -185,20 +185,16 @@ class AgentSolver:
         self.solver_id = solver_id or f"agent:{agent.agent_id}"
 
     async def __call__(self, state: AgentState, generate: Generate) -> AgentState:
-        # Try to read the real context from state (injected by the engine)
-        context = None
-        if state.output and isinstance(state.output, dict):
-            context = state.output.get("_solver_context")
+        # Try to read the real context from named attribute (injected by the engine)
+        context = state.solver_context
         if context is None:
             context = AgentContext(
                 task_id="",
                 sample_id=None,
                 metadata={},
             )
-        # Tools are injected by the engine into state.output["_solver_tools"]
-        tools = None
-        if state.output and isinstance(state.output, dict):
-            tools = state.output.get("_solver_tools") or None
+        # Tools are injected by the engine into state.solver_tools
+        tools = state.solver_tools
         return await self.agent.run(state, context, tools=tools)
 
 

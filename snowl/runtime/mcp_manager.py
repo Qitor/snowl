@@ -3,6 +3,7 @@
 Framework role:
 - Starts, discovers, and stops MCP servers declared via `MCPServerSpec`.
 - Bridges MCP tool discovery results into the Snowl tool pipeline.
+- Provides reconnection and healthcheck for robust MCP server management.
 
 Runtime/usage wiring:
 - Used by `prepare_trial_phase` / `finalize_trial_phase` in engine.py.
@@ -24,6 +25,11 @@ from snowl.core.mcp import MCPServerSpec, validate_mcp_server_spec
 
 logger = logging.getLogger(__name__)
 
+# Reconnection defaults
+_MAX_RECONNECT_ATTEMPTS = 3
+_RECONNECT_BASE_DELAY_SEC = 1.0
+_RECONNECT_BACKOFF_FACTOR = 2.0
+
 
 class MCPServerManager:
     """Lifecycle manager for MCP servers declared in an evaluation.
@@ -32,7 +38,7 @@ class MCPServerManager:
 
         async with MCPServerManager(specs) as mgr:
             tools = await mgr.discover_tools()
-            result = await mgr.call_tool("server", "tool_name", {"arg": "val"})
+            result = await mgr.call_tool("server", "tool_name", {"arg": "val}")
     """
 
     def __init__(self, specs: tuple[MCPServerSpec, ...] | list[MCPServerSpec]) -> None:
@@ -43,6 +49,8 @@ class MCPServerManager:
         self._streams: dict[str, tuple[Any, Any]] = {}
         # name -> subprocess.Process for stdio
         self._processes: dict[str, asyncio.subprocess.Process] = {}
+        # name -> MCPServerSpec (for reconnection)
+        self._spec_map: dict[str, MCPServerSpec] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -55,6 +63,7 @@ class MCPServerManager:
 
         for spec in self._specs:
             validate_mcp_server_spec(spec)
+            self._spec_map[spec.name] = spec
             try:
                 if spec.transport == "stdio":
                     await self._start_stdio(spec)
@@ -87,7 +96,28 @@ class MCPServerManager:
 
         self._sessions[spec.name] = session
         self._streams[spec.name] = (read_stream, write_stream)
+        # Store the process handle for cleanup
+        # stdio_client creates an asyncio subprocess internally; find it
+        # from the context manager returned by stdio_client
+        self._store_stdio_process(spec.name, read_stream, write_stream)
         logger.info("MCP server '%s' started (stdio)", spec.name)
+
+    def _store_stdio_process(self, name: str, read_stream: Any, write_stream: Any) -> None:
+        """Best-effort: extract and store the stdio subprocess for cleanup."""
+        # The mcp SDK wraps the process in context managers; try to find it
+        for stream in (read_stream, write_stream):
+            proc = getattr(stream, '_process', None)
+            if proc is None:
+                # Try common attribute names in different SDK versions
+                for attr in ('process', '_transport', '_proc'):
+                    proc = getattr(stream, attr, None)
+                    if proc is not None:
+                        break
+            if isinstance(proc, asyncio.subprocess.Process):
+                self._processes[name] = proc
+                return
+        logger.debug("Could not extract stdio process for MCP server '%s'; "
+                      "cleanup will rely on session.close()", name)
 
     async def _start_remote(self, spec: MCPServerSpec) -> None:
         """Start a remote (SSE / streamable-http) MCP server session."""
@@ -199,6 +229,76 @@ class MCPServerManager:
             raise RuntimeError(f"MCP server '{server_name}' is not running")
         result = await session.call_tool(tool_name, arguments)
         return result
+
+    # ------------------------------------------------------------------
+    # Healthcheck & reconnection
+    # ------------------------------------------------------------------
+
+    async def healthcheck(self, name: str) -> dict[str, Any]:
+        """Check whether an MCP server is alive.
+
+        Returns a dict with keys: ``alive`` (bool), ``server_name`` (str),
+        ``details`` (str, optional error message).
+        """
+        session = self._sessions.get(name)
+        if session is None:
+            return {"alive": False, "server_name": name, "details": "no active session"}
+        try:
+            # Ping the server via list_tools (lightweight read-only call)
+            await session.list_tools()
+            return {"alive": True, "server_name": name}
+        except Exception as exc:
+            return {"alive": False, "server_name": name, "details": str(exc)}
+
+    async def reconnect(self, name: str) -> bool:
+        """Attempt to reconnect a failed MCP server.
+
+        Uses exponential backoff up to ``_MAX_RECONNECT_ATTEMPTS``.
+        Returns True if reconnection succeeded.
+        """
+        spec = self._spec_map.get(name)
+        if spec is None:
+            logger.warning("No spec found for MCP server '%s'; cannot reconnect", name)
+            return False
+
+        # Close stale session/stream if present
+        stale_session = self._sessions.pop(name, None)
+        if stale_session is not None:
+            try:
+                await stale_session.close()
+            except Exception:
+                pass
+        self._streams.pop(name, None)
+
+        delay = _RECONNECT_BASE_DELAY_SEC
+        for attempt in range(1, _MAX_RECONNECT_ATTEMPTS + 1):
+            try:
+                if spec.transport == "stdio":
+                    await self._start_stdio(spec)
+                else:
+                    await self._start_remote(spec)
+                logger.info(
+                    "MCP server '%s' reconnected on attempt %d", name, attempt
+                )
+                return True
+            except Exception as exc:
+                logger.warning(
+                    "MCP server '%s' reconnect attempt %d/%d failed: %s",
+                    name, attempt, _MAX_RECONNECT_ATTEMPTS, exc,
+                )
+                if attempt < _MAX_RECONNECT_ATTEMPTS:
+                    await asyncio.sleep(delay)
+                    delay *= _RECONNECT_BACKOFF_FACTOR
+
+        logger.error("MCP server '%s' failed to reconnect after %d attempts", name, _MAX_RECONNECT_ATTEMPTS)
+        return False
+
+    async def ensure_connected(self, name: str) -> bool:
+        """Check health and reconnect if needed. Returns True if connected."""
+        result = await self.healthcheck(name)
+        if result["alive"]:
+            return True
+        return await self.reconnect(name)
 
     # ------------------------------------------------------------------
     # Context manager

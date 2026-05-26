@@ -161,6 +161,25 @@ def _extract_sample_input(sample: Mapping[str, Any]) -> dict[str, Any]:
     return {"sample": _json_safe(sample)}
 
 
+def _get_extra_payload_keys(task: Task) -> list[str]:
+    """Look up extra_payload_keys from benchmark registry via task metadata."""
+    metadata = getattr(task, "metadata", None)
+    if not isinstance(metadata, Mapping):
+        return []
+    bench_name = str(metadata.get("benchmark") or metadata.get("benchmark_name") or "").strip().lower()
+    if not bench_name or bench_name == "custom":
+        return []
+    try:
+        from snowl.benchmarks.registry import get_default_benchmark_registry
+        registry = get_default_benchmark_registry()
+        for entry in registry.list():
+            if entry.info.name == bench_name:
+                return entry.info.runtime_hints.get("extra_payload_keys", [])
+    except Exception:
+        pass
+    return []
+
+
 def _sample_declared_tool_names(sample: Mapping[str, Any]) -> list[str]:
     metadata = sample.get("metadata")
     if not isinstance(metadata, Mapping):
@@ -1024,18 +1043,16 @@ async def execute_agent_phase(prepared: PreparedTrial | TrialRequest) -> Partial
         solver_chain = getattr(request.agent, "solver_chain", None)
 
     if solver_chain is not None:
-        # Solver chain execution: inject context + tools into state.output
-        output = dict(prepared.state.output or {})
-        output["_solver_context"] = prepared.context
-        existing_tools = list(output.get("_solver_tools", []))
+        # Solver chain execution: inject context + tools into named attributes
+        prepared.state.solver_context = prepared.context
+        existing_tools = list(prepared.state.solver_tools or [])
         for spec in prepared.resolved_tool_specs:
             if spec.name not in {t.name for t in existing_tools}:
                 existing_tools.append(spec)
-        output["_solver_tools"] = existing_tools
+        prepared.state.solver_tools = existing_tools
         if request.middleware_config:
-            existing_mw = list(output.get("_solver_middleware", []))
-            output["_solver_middleware"] = existing_mw
-        prepared.state.output = output
+            existing_mw = list(prepared.state.solver_middleware or [])
+            prepared.state.solver_middleware = existing_mw
 
     # Default no-op generate for solver chains (replaced by bridge if active)
     async def _noop_generate(**kwargs):
@@ -1217,11 +1234,9 @@ async def execute_agent_phase(prepared: PreparedTrial | TrialRequest) -> Partial
     variant_params = getattr(request.agent, "params", None)
     if isinstance(variant_params, dict) and "model_metadata" in variant_params:
         payload["model_metadata"] = variant_params["model_metadata"]
-    for _agentdojo_key in ("agentdojo_post_state", "agentdojo_state_diff"):
-        if output.get(_agentdojo_key) is not None:
-            payload[_agentdojo_key] = output[_agentdojo_key]
-    if output.get("osworld_score") is not None:
-        payload["osworld_score"] = output["osworld_score"]
+    for _key in _get_extra_payload_keys(request.task):
+        if output.get(_key) is not None:
+            payload[_key] = output[_key]
     if prepared.prepared_sandbox is not None:
         payload["sandbox"] = {
             "sandbox_id": prepared.prepared_sandbox.sandbox_id,
@@ -1270,9 +1285,9 @@ async def execute_agent_phase(prepared: PreparedTrial | TrialRequest) -> Partial
         ],
         "stop_reason": state.stop_reason.value if state.stop_reason else None,
     }
-    for _agentdojo_key in ("agentdojo_post_state", "agentdojo_state_diff"):
-        if output.get(_agentdojo_key) is not None:
-            trace[_agentdojo_key] = output[_agentdojo_key]
+    for _key in _get_extra_payload_keys(request.task):
+        if output.get(_key) is not None:
+            trace[_key] = output[_key]
     if prepared.prepared_sandbox is not None:
         trace["sandbox"] = {
             "sandbox_id": prepared.prepared_sandbox.sandbox_id,

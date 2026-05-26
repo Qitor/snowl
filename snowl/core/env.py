@@ -199,3 +199,35 @@ def validate_env_spec(env_spec: EnvSpec) -> None:
 
 def ensure_tool_ops_compatible(required_ops: set[str], provided_ops: set[str]) -> set[str]:
     return {op for op in required_ops if op not in provided_ops}
+
+
+# ---------------------------------------------------------------------------
+# Health status
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class HealthStatus:
+    """Result of an environment healthcheck.
+
+    Inspired by Docker-style health checks: each check returns a ready/not-ready
+    status with individual check results and an optional message.
+    """
+    ready: bool
+    checks: dict[str, bool] = field(default_factory=dict)
+    message: str | None = None
+
+
+@runtime_checkable
+class HealthcheckProvider(Protocol):
+    """Protocol for environment providers that support health checks."""
+
+    async def healthcheck(self, env_id: str) -> HealthStatus:
+        """Check whether an environment is healthy and ready for use.
+
+        Args:
+            env_id: Identifier for the environment instance.
+
+        Returns:
+            A HealthStatus indicating readiness and individual check results.
+        """
+        ...

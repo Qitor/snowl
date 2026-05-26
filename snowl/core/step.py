@@ -30,6 +30,7 @@ class TaskStep:
     step_id: str
     instruction: str
     env_spec: EnvSpec | None = None
+    agent_override: str | None = None
     scorer_ids: tuple[str, ...] = ()
     min_reward: float = 0.0
     timeout_sec: float | None = None

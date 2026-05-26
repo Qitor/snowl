@@ -1,7 +1,7 @@
 {
-  "project_dir": "/Users/jcy/Documents/Phd/sii/other/summer-26/snowl/examples/agentdojo",
+  "project_dir": "/private/var/folders/8z/ycbqn4pn0159stcvwf708lnc0000gn/T/pytest-of-morinop/pytest-334/test_cli_web_monitor_missing_d0",
   "poll_interval_sec": 0.5,
-  "cache_key": "0.1.0-459caf2412c2-b92480a29e5d",
-  "source_dir": "/Users/jcy/Documents/Phd/sii/other/summer-26/snowl/webui",
+  "cache_key": "0.1.0-459caf2412c2-a602675ff962",
+  "source_dir": "/Users/morinop/coding/taro_project/snowl/webui",
   "source_mode": "repo"
 }

@@ -55,15 +55,14 @@ class GenerateSolver:
         self.generation_kwargs = generation_kwargs or {}
 
     async def __call__(self, state: AgentState, generate: GenerateType) -> AgentState:
-        # Extract tools and middleware from state
-        output = state.output or {}
-        tool_specs: list[ToolSpec] = list(output.get("_solver_tools", []))
-        middlewares: list[Any] = list(output.get("_solver_middleware", []))
+        # Extract tools and middleware from named attributes
+        tool_specs: list[ToolSpec] = list(state.solver_tools or [])
+        middlewares: list[Any] = list(state.solver_middleware or [])
         middleware_chain = MiddlewareChain(middlewares) if middlewares else None
 
         # Extract emit function from solver context for event parity with ReActAgent
         emit = None
-        solver_context = output.get("_solver_context")
+        solver_context = state.solver_context
         if solver_context is not None and hasattr(solver_context, "metadata"):
             emit = solver_context.metadata.get("__snowl_emit_event")
 

@@ -25,6 +25,8 @@ docs = [
 ]
 dev = [
   "pytest>=8.0",
+  "pytest-rerunfailures>=14.0",
+  "pytest-timeout>=2.3",
   "build>=1.0.0",
   "twine>=5.0.0",
 ]
@@ -105,6 +107,9 @@ include = ["snowl", "snowl.*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "live: tests that call real LLM APIs (require SNOWL_LIVE_API_KEY, skipped by default)",
+]
 norecursedirs = [
   ".git",
   ".snowl",

@@ -98,26 +98,19 @@ def run_conformance(adapter: BenchmarkAdapter) -> ConformanceReport:
 
     # Benchmark semantic hints (task env + recommended scorer/metrics).
     benchmark_name = getattr(adapter.info, "name", "")
-    expected_env = {
-        "strongreject": "local",
-        "terminalbench": "terminal",
-        "osworld": "gui",
-    }
-    expected_scorer_hint = {
-        "strongreject": "benchmarks.strongreject scorer (judge-based)",
-        "terminalbench": "benchmarks.terminalbench scorer (unit-test results)",
-        "osworld": "benchmarks.osworld scorer (env evaluate score)",
-    }
+    runtime_hints = getattr(adapter.info, "runtime_hints", {})
+    expected_env_type = runtime_hints.get("expected_env_type")
+    expected_scorer_hint = runtime_hints.get("scorer_hint")
     env_ok = True
-    if benchmark_name in expected_env:
-        env_ok = all(getattr(t.env_spec, "env_type", None) == expected_env[benchmark_name] for t in tasks_a)
+    if expected_env_type is not None:
+        env_ok = all(getattr(t.env_spec, "env_type", None) == expected_env_type for t in tasks_a)
     checks.append(
         {
             "name": "benchmark_semantic_env",
             "ok": env_ok,
             "benchmark": benchmark_name,
-            "expected_env_type": expected_env.get(benchmark_name),
-            "hint": expected_scorer_hint.get(benchmark_name),
+            "expected_env_type": expected_env_type,
+            "hint": expected_scorer_hint,
         }
     )
 

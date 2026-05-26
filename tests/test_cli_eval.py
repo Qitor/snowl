@@ -838,6 +838,11 @@ def test_eval_default_uses_plain_console_renderer(monkeypatch, tmp_path: Path) -
         return _Result()
 
     monkeypatch.setattr(cli_mod, "run_eval", _fake_run_eval)
+    # Also patch the canonical source since cli_commands imports run_eval directly
+    import snowl.eval as _eval_mod
+    import snowl.cli_commands as _cli_cmds
+    monkeypatch.setattr(_eval_mod, "run_eval", _fake_run_eval)
+    monkeypatch.setattr(_cli_cmds, "run_eval", _fake_run_eval)
     rc = main(["eval", str(tmp_path), "--no-web-monitor"])
     assert rc == 0
     assert seen["renderer_type"] == "ConsoleRenderer"
@@ -866,6 +871,11 @@ def test_eval_cli_ui_flag_enables_legacy_renderer(monkeypatch, tmp_path: Path) -
         return _Result()
 
     monkeypatch.setattr(cli_mod, "run_eval", _fake_run_eval)
+    # Also patch the canonical source since cli_commands imports run_eval directly
+    import snowl.eval as _eval_mod
+    import snowl.cli_commands as _cli_cmds
+    monkeypatch.setattr(_eval_mod, "run_eval", _fake_run_eval)
+    monkeypatch.setattr(_cli_cmds, "run_eval", _fake_run_eval)
     rc = main(["eval", str(tmp_path), "--cli-ui", "--no-web-monitor"])
     assert rc == 0
     assert seen["renderer_type"] == "LiveConsoleRenderer"
@@ -1021,6 +1031,12 @@ def test_eval_starts_managed_monitor_on_run_bootstrap(monkeypatch, tmp_path: Pat
 
     monkeypatch.setattr(cli_mod, "_ManagedWebMonitor", _FakeMonitor)
     monkeypatch.setattr(cli_mod, "run_eval", _fake_run_eval)
+    # Also patch the canonical source since cli_commands imports directly
+    import snowl.eval as _eval_mod
+    import snowl.cli_commands as _cli_cmds
+    monkeypatch.setattr(_eval_mod, "run_eval", _fake_run_eval)
+    monkeypatch.setattr(_cli_cmds, "run_eval", _fake_run_eval)
+    monkeypatch.setattr(_cli_cmds, "_ManagedWebMonitor", _FakeMonitor)
     monkeypatch.setattr(
         cli_mod.webbrowser,
         "open",
@@ -1075,6 +1091,12 @@ def test_eval_interrupt_stops_managed_monitor(monkeypatch, tmp_path: Path) -> No
 
     monkeypatch.setattr(cli_mod, "_ManagedWebMonitor", _FakeMonitor)
     monkeypatch.setattr(cli_mod, "run_eval", _fake_run_eval)
+    # Also patch the canonical source since cli_commands imports directly
+    import snowl.eval as _eval_mod
+    import snowl.cli_commands as _cli_cmds
+    monkeypatch.setattr(_eval_mod, "run_eval", _fake_run_eval)
+    monkeypatch.setattr(_cli_cmds, "run_eval", _fake_run_eval)
+    monkeypatch.setattr(_cli_cmds, "_ManagedWebMonitor", _FakeMonitor)
 
     rc = main(["eval", str(tmp_path)])
     assert rc == 130

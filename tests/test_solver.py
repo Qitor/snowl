@@ -209,7 +209,7 @@ class TestUseTools:
         solver = use_tools(spec)
         state = _fresh_state()
         state = await solver(state, _noop_generate)
-        tools = state.output["_solver_tools"]
+        tools = state.solver_tools
         assert len(tools) == 1
         assert tools[0].name == "my_tool"
 
@@ -225,8 +225,8 @@ class TestUseTools:
         solver = use_tools(spec).with_middleware(LoggingMiddleware())
         state = _fresh_state()
         state = await solver(state, _noop_generate)
-        assert "_solver_middleware" in state.output
-        assert len(state.output["_solver_middleware"]) == 1
+        assert state.solver_middleware is not None
+        assert len(state.solver_middleware) == 1
 
 
 class TestSubmitTool:
@@ -235,7 +235,7 @@ class TestSubmitTool:
         solver = submit_tool()
         state = _fresh_state()
         state = await solver(state, _noop_generate)
-        tools = state.output["_solver_tools"]
+        tools = state.solver_tools
         assert any(t.name == "submit" for t in tools)
 
 

@@ -140,6 +140,9 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
                 api_call_amplification=5.0,
                 recommended_max_running=6,
             ),
+            runtime_hints={
+                "extra_payload_keys": ["agentdojo_post_state", "agentdojo_state_diff"],
+            },
         ),
         factory=lambda **kwargs: AgentDojoBenchmarkAdapter(**kwargs),
     )
@@ -316,6 +319,11 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=False,
             sample_preview_mode="dialog",
             dashboard_tags=["jailbreak", "refusal"],
+            runtime_hints={
+                "is_docker_like": False,
+                "expected_env_type": "local",
+                "scorer_hint": "benchmarks.strongreject scorer (judge-based)",
+            },
         ),
         factory=lambda **kwargs: StrongRejectBenchmarkAdapter(**kwargs),
     )
@@ -331,6 +339,12 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=True,
             sample_preview_mode="code_trace",
             dashboard_tags=["coding", "terminal"],
+            runtime_hints={
+                "is_docker_like": True,
+                "container_slots_profile": {"max_slots": 4, "cpu_divisor": 2, "mem_per_slot_gb": 6},
+                "expected_env_type": "terminal",
+                "scorer_hint": "benchmarks.terminalbench scorer (unit-test results)",
+            },
         ),
         factory=lambda **kwargs: TerminalBenchBenchmarkAdapter(**kwargs),
     )
@@ -346,6 +360,14 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             higher_is_better=True,
             sample_preview_mode="gui_trace",
             dashboard_tags=["gui", "desktop", "agent_capability"],
+            runtime_hints={
+                "is_docker_like": True,
+                "container_slots_profile": {"max_slots": 2, "cpu_divisor": 4, "mem_per_slot_gb": 10},
+                "extra_payload_keys": ["osworld_score"],
+                "expected_env_type": "gui",
+                "default_gui_image": "happysixd/osworld-docker",
+                "scorer_hint": "benchmarks.osworld scorer (env evaluate score)",
+            },
         ),
         factory=lambda **kwargs: OSWorldBenchmarkAdapter(**kwargs),
     )

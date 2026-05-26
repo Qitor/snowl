@@ -7,7 +7,7 @@ Framework role:
 Runtime/usage wiring:
 - Provider selection happens through benchmark keys from task metadata.
 - TerminalBench and OSWorld providers are the concrete bridge from shared runtime APIs to benchmark runtime realities.
-- Key top-level symbols in this file: `ContainerSession`, `ContainerProviderContext`, `ContainerProvider`, `ContainerProviderRegistry`, `TerminalBenchProvider`, `OSWorldProvider`.
+- Key top-level symbols in this file: `ContainerSession`, `ContainerProviderContext`, `ContainerProvider`, `ContainerProviderRegistry`, `TerminalBenchProvider`, `OSWorldProvider` (lazy import).
 
 Change guardrails:
 - Keep benchmark-specific assumptions in this layer; do not leak them into global scheduler logic without contract changes.
@@ -22,7 +22,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
-from snowl.benchmarks.osworld.container import OSWorldContainerLauncher
 from snowl.core import EnvSpec
 from snowl.envs import GuiEnv, TerminalEnv
 from snowl.envs.substrate import CommandRunner, ContainerBackend
@@ -666,6 +665,8 @@ class OSWorldProvider:
         }
 
     async def prepare(self, context: ContainerProviderContext) -> ContainerSession:
+        from snowl.benchmarks.osworld.container import OSWorldContainerLauncher
+
         docker_path = context.ensure_docker_available(benchmark="osworld")
         launcher = OSWorldContainerLauncher(
             repo_root=Path(__file__).resolve().parents[2],

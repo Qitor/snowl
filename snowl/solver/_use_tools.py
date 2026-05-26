@@ -70,24 +70,24 @@ class UseToolsSolver:
         )
 
     async def __call__(self, state: AgentState, generate: Generate) -> AgentState:
-        output = dict(state.output or {})
         # Accumulate tools (don't overwrite existing ones)
-        existing_specs: list[ToolSpec] = list(output.get("_solver_tools", []))
+        existing_specs: list[ToolSpec] = list(state.solver_tools or [])
         existing_names = {s.name for s in existing_specs}
         for spec in self._tool_specs:
             if spec.name not in existing_names:
                 existing_specs.append(spec)
-        output["_solver_tools"] = existing_specs
+        state.solver_tools = existing_specs
 
         # Middleware
         if self._middlewares is not None:
-            output["_solver_middleware"] = list(self._middlewares)
+            state.solver_middleware = list(self._middlewares)
 
         # MCP servers
         if self._mcp_servers:
+            output = dict(state.output or {})
             output["_solver_mcp_servers"] = list(self._mcp_servers)
+            state.output = output
 
-        state.output = output
         return state
 
 

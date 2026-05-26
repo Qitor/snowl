@@ -49,17 +49,15 @@ class AgentVariantAdapter:
 
     async def run(self, state, context, tools=None):
         if self.solver_chain is not None:
-            output = dict(state.output or {})
-            output["_solver_context"] = context
+            state.solver_context = context
             if tools:
                 from snowl.core.tool import resolve_tool_spec
-                existing = list(output.get("_solver_tools", []))
+                existing = list(state.solver_tools or [])
                 for t in tools:
                     spec = resolve_tool_spec(t)
                     if spec.name not in {s.name for s in existing}:
                         existing.append(spec)
-                output["_solver_tools"] = existing
-            state.output = output
+                state.solver_tools = existing
 
             async def _noop_generate(**kwargs):
                 raise RuntimeError(

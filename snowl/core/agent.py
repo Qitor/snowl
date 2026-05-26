@@ -49,6 +49,10 @@ class AgentState:
     observations: list[Observation] = field(default_factory=list)
     output: dict[str, Any] | None = None
     stop_reason: StopReason | None = None
+    # Named attributes replacing magic keys in state.output
+    solver_tools: list[Any] | None = None
+    solver_context: dict[str, Any] | None = None
+    solver_middleware: list[Any] | None = None
 
 
 @dataclass(frozen=True)

@@ -550,9 +550,7 @@ class ReActAgent:
         tools: Sequence[Any] | None = None,
     ) -> AgentState:
         """Execute via internally-built Solver chain."""
-        output = dict(state.output or {})
-        output["_solver_context"] = context
-        state.output = output
+        state.solver_context = context
 
         solver_chain = self._build_solver_chain(tools)
 

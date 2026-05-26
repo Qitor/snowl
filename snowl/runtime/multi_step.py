@@ -40,15 +40,17 @@ class MultiStepExecutor:
         sample: dict[str, Any],
         context: AgentContext,
         tools: Sequence[ToolSpec] | None = None,
+        agents_map: dict[str, Agent] | None = None,
     ) -> list[StepResult]:
         """Execute all steps in order, early-exiting on min_reward failure.
 
         Args:
             task: The Task containing steps to execute.
-            agent: The Agent to run for each step.
+            agent: The default Agent to run for each step.
             sample: The sample data for this trial.
             context: The agent execution context.
             tools: Available tools for the agent.
+            agents_map: Optional mapping of agent_id -> Agent for per-step overrides.
 
         Returns:
             List of StepResult, one per executed step.
@@ -64,11 +66,18 @@ class MultiStepExecutor:
             state.messages.append({"role": "user", "content": str(user_input)})
 
         for i, step in enumerate(task.steps):
+            # Resolve agent: use step override if specified, else default
+            step_agent = agent
+            if step.agent_override and agents_map:
+                override = agents_map.get(step.agent_override)
+                if override is not None:
+                    step_agent = override
+
             step_result = await self._execute_step(
                 step=step,
                 step_index=i,
                 state=state,
-                agent=agent,
+                agent=step_agent,
                 context=context,
                 tools=tools,
             )

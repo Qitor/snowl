@@ -92,7 +92,12 @@ class GuiEnv:
         detach: bool = True,
         on_event: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
-        image = image or (self.env_spec.sandbox_spec.image if self.env_spec.sandbox_spec else None) or "happysixd/osworld-docker"
+        image = image or (self.env_spec.sandbox_spec.image if self.env_spec.sandbox_spec else None)
+        if not image:
+            raise ValueError(
+                "GuiEnv requires an image. Set image=, env_spec.sandbox_spec.image, "
+                "or configure runtime_hints.default_gui_image in the benchmark registry."
+            )
         if ports is None:
             ports = {
                 5000: int(self.config.get("server_port", 5000)),

@@ -268,7 +268,12 @@ def test_execute_trial_agentdojo_state_passthrough() -> None:
             return state
 
     req = TrialRequest(
-        task=_task(),
+        task=Task(
+            task_id="task-1",
+            env_spec=EnvSpec(env_type="local"),
+            sample_iter_factory=lambda: iter([]),
+            metadata={"benchmark": "agentdojo"},
+        ),
         agent=AgentDojoStateAgent(),
         scorer=PassScorer(),
         sample={"id": "s1", "input": "hello"},

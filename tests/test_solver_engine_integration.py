@@ -121,7 +121,7 @@ class TestAgentVariantSolverChain:
 class TestAgentSolverContext:
     @pytest.mark.asyncio
     async def test_reads_context_from_state(self):
-        """AgentSolver should read context from state.output['_solver_context']."""
+        """AgentSolver should read context from state.solver_context."""
         context = _make_context(task_id="real_task", sample_id="s42")
 
         class _ContextCheckingAgent:
@@ -134,7 +134,7 @@ class TestAgentSolverContext:
 
         bridge = AgentSolver(_ContextCheckingAgent())
         state = _fresh_state()
-        state.output = {"_solver_context": context}
+        state.solver_context = context
 
         result = await bridge(state, lambda **kw: None)
         assert result.output["task_id"] == "real_task"
@@ -142,7 +142,7 @@ class TestAgentSolverContext:
 
     @pytest.mark.asyncio
     async def test_falls_back_to_stub_context(self):
-        """Without _solver_context in state, AgentSolver creates a stub."""
+        """Without solver_context in state, AgentSolver creates a stub."""
         class _ContextAgent:
             agent_id = "ctx"
             async def run(self, state, ctx, tools=None):
@@ -157,7 +157,7 @@ class TestAgentSolverContext:
 
     @pytest.mark.asyncio
     async def test_reads_tools_from_state(self):
-        """AgentSolver should read tools from state.output['_solver_tools']."""
+        """AgentSolver should read tools from state.solver_tools."""
         from snowl.core.tool import ToolSpec, build_tool_spec
 
         def my_tool(x: int) -> int:
@@ -175,7 +175,7 @@ class TestAgentSolverContext:
 
         bridge = AgentSolver(_ToolCheckingAgent())
         state = _fresh_state()
-        state.output = {"_solver_tools": [spec]}
+        state.solver_tools = [spec]
         result = await bridge(state, lambda **kw: None)
         assert "my_tool" in result.output["tools"]
 

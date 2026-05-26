@@ -42,13 +42,11 @@ class SubmitToolSolver:
     solver_id: str = "submit_tool"
 
     async def __call__(self, state: AgentState, generate: Generate) -> AgentState:
-        output = dict(state.output or {})
-        existing_specs: list[ToolSpec] = list(output.get("_solver_tools", []))
+        existing_specs: list[ToolSpec] = list(state.solver_tools or [])
         existing_names = {s.name for s in existing_specs}
         if "submit" not in existing_names:
             existing_specs.append(_SUBMIT_TOOL_SPEC)
-        output["_solver_tools"] = existing_specs
-        state.output = output
+        state.solver_tools = existing_specs
         return state
 
 
