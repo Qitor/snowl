@@ -34,6 +34,19 @@ safety_assets = [
   "datasets<4.7.0",
   "huggingface_hub>=0.24",
 ]
+qitos = [
+  "qitos>=0.4.0",
+]
+langgraph = [
+  "langgraph>=0.2.0",
+]
+openai = [
+  "openai-agents>=0.1.0",
+]
+all = [
+  "snowl[qitos,langgraph,openai]",
+  "snowl-evals>=0.1.0",
+]
 osworld_eval = [
   "beautifulsoup4",
   "borb",

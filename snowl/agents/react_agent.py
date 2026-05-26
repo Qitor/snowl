@@ -83,9 +83,10 @@ class ReActAgent:
     ) -> AgentState:
         if not self._use_solver_chain:
             warnings.warn(
-                "ReActAgent with _use_solver_chain=False is deprecated. "
+                "ReActAgent with _use_solver_chain=False is deprecated since v0.2.0. "
                 "Set _use_solver_chain=True or use solver chains directly: "
-                "chain(system_message(...), use_tools(...), generate(...)).",
+                "chain(system_message(...), use_tools(...), generate(...)). "
+                "This option will be removed in v0.3.0.",
                 DeprecationWarning,
                 stacklevel=2,
             )

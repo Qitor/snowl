@@ -24,12 +24,14 @@ from snowl.model import (
 from snowl.runtime import TrialLimits, TrialOutcome, TrialRequest, execute_trial
 from snowl.registry import SnowlRegistry, get_registry
 from snowl.scorer import includes, match, model_as_judge_json, pattern
+from snowl.quick_eval import quick_eval, quick_eval_sync, QuickEvalResult
 
 __all__ = [
     "__version__",
     "ChatAgent",
     "LocalEnv",
     "LocalSandboxRuntime",
+    "QuickEvalResult",
     "ReActAgent",
     "OpenAICompatibleChatClient",
     "OpenAICompatibleConfig",
@@ -41,6 +43,8 @@ __all__ = [
     "execute_trial",
     "get_registry",
     "load_openai_compatible_config",
+    "quick_eval",
+    "quick_eval_sync",
     "tool",
     "includes",
     "match",
