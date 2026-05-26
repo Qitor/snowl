@@ -1,164 +1,129 @@
 # Quick Start
 
-Build and run your first evaluation project in under five minutes.
+Evaluate any agent in 3 lines of code — no project.yml required.
 
 ---
 
-## 1. Install Snowl
+## 1. Install
 
 ```bash
-pip install -e .
+pip install snowl
 ```
 
-## 2. Run a built-in benchmark
-
-The fastest way to see Snowl in action:
+With framework support:
 
 ```bash
-snowl eval examples/strongreject-official/project.yml --limit 5
+pip install snowl[qitos]       # QitOS agents
+pip install snowl[langgraph]   # LangGraph agents
+pip install snowl[openai]      # OpenAI Agents SDK
 ```
 
-You'll see a Rich-panel TUI with colored progress, model I/O, and scorer
-results scrolling in your terminal.
+## 2. Evaluate an Agent (Python API)
 
-## 3. Create your own project
+The simplest way to evaluate an agent is `quick_eval()`:
 
-Every Snowl evaluation project is a directory with four files:
+```python
+from snowl import quick_eval
+
+result = quick_eval(
+    agent=lambda msgs, tools: "I cannot help with that.",
+    benchmark="strongreject",
+    limit=10,
+)
+print(result)
+# QuickEvalResult: 80% pass rate (10 samples)
+#   Status: incorrect
+#   Scores: {'includes': 0.8}
+#   Tokens: 0  Duration: 1205ms
+```
+
+`agent` can be:
+
+- A **bare callable**: `lambda msgs, tools: "response"`
+- An **async function**: `async def my_agent(messages, tools) -> str`
+- An **Agent Protocol** instance: any object with `agent_id` and `async run(state, context, tools)`
+
+`scorer` can be a string name or a Scorer instance:
+
+```python
+result = quick_eval(agent=my_fn, samples=my_samples, scorer="match")
+result = quick_eval(agent=my_fn, benchmark="bfcl", scorer=my_custom_scorer)
+```
+
+## 3. Evaluate via CLI
+
+```bash
+# List available benchmarks
+snowl bench list
+
+# Run a built-in benchmark
+snowl bench run strongreject --project project.yml --split test --limit 10
+
+# Run a full evaluation project
+snowl eval project.yml
+
+# Retry failed trials
+snowl retry run-20260427T120000Z
+```
+
+## 4. Create an Evaluation Project
+
+For more control, create a project directory:
 
 ```
 my-project/
-  project.yml    # Configuration
+  project.yml    # Configuration (provider, models, runtime)
   agent.py       # Agent definition
   task.py        # Task definition
   scorer.py      # Scorer definition
 ```
 
-### project.yml
+Minimal `project.yml`:
 
 ```yaml
 project:
   name: my-eval
 
 provider:
-  id: my-provider
+  id: default
   kind: openai_compatible
-  base_url: https://api.example.com/v1
+  base_url: https://api.openai.com/v1
   api_key: sk-xxx
-  timeout: 120
 
 agent_matrix:
   models:
-    - id: my_model
-      model: my-model-v1
-      metadata:
-        company: acme
-        source_type: open_source
+    - id: gpt4o-mini
+      model: gpt-4o-mini
 
 eval:
   benchmark: strongreject
   split: test
-  code:
-    base_dir: .
-    task_module: ./task.py
-    agent_module: ./agent.py
-    scorer_module: ./scorer.py
   limit: 10
 
 runtime:
-  max_running_trials: 2
-  provider_budgets:
-    my-provider: 100
+  max_running_trials: 4
 ```
 
-### task.py
-
-```python
-from pathlib import Path
-from snowl.core import task as declare_task, Task
-from snowl.benchmarks.strongreject import StrongRejectBenchmarkAdapter
-from snowl.benchmarks.example_task import load_single_task
-from snowl.project_config import load_project_config
-
-PROJECT = load_project_config(Path(__file__).parent)
-
-@declare_task()
-def task() -> Task:
-    adapter = StrongRejectBenchmarkAdapter()
-    return load_single_task(
-        adapter,
-        split=PROJECT.eval.split or "test",
-        limit=PROJECT.eval.limit,
-    )
-```
-
-### agent.py
-
-```python
-from pathlib import Path
-from snowl.agents import ReActAgent, build_model_variants
-from snowl.core import agent as declare_agent
-from snowl.model import OpenAICompatibleChatClient, ProjectModelEntry, ProjectProviderConfig
-
-PROJECT_DIR = Path(__file__).resolve().parent
-
-def _build_react_agent(model_entry: ProjectModelEntry, provider: ProjectProviderConfig):
-    client = OpenAICompatibleChatClient(model_entry.config)
-    return ReActAgent(
-        model_client=client,
-        agent_id="react_agent",
-        max_steps=10,
-    )
-
-@declare_agent(agent_id="react_agent")
-def agents():
-    return build_model_variants(
-        base_dir=PROJECT_DIR,
-        agent_id="react_agent",
-        factory=_build_react_agent,
-    )
-```
-
-### scorer.py
-
-```python
-from snowl.core import Scorer, Score, ScoreContext, TaskResult
-
-class MyScorer:
-    scorer_id = "my_scorer"
-
-    def score(self, task_result: TaskResult, trace: dict, context: ScoreContext) -> dict[str, Score]:
-        output = task_result.final_output or ""
-        is_safe = "dangerous" not in str(output).lower()
-        return {
-            "safety": Score(value=1.0 if is_safe else 0.0, explanation="Output safety check"),
-        }
-
-scorer = MyScorer()
-```
-
-## 4. Run your project
+Run it:
 
 ```bash
 snowl eval ./my-project/project.yml
 ```
 
-## 5. Inspect results
+## 5. Inspect Results
 
 Results are written to `.snowl/runs/<run_id>/`:
 
 ```bash
-# View the aggregate metrics
-cat .snowl/runs/<run_id>/aggregate.json
-
-# View the HTML report
-open .snowl/runs/<run_id>/report.html
+cat .snowl/runs/<run_id>/outcomes.json    # per-sample results
+cat .snowl/runs/<run_id>/aggregate.json   # summary metrics
 ```
 
 ---
 
-## What's next?
+## Next Steps
 
 - [Project Anatomy](../tutorials/project-anatomy.md) — understand every field in `project.yml`
-- [Writing an Agent](../tutorials/writing-an-agent.md) — go beyond the default ReActAgent
-- [Writing a Scorer](../tutorials/writing-a-scorer.md) — build custom evaluation logic
+- [Writing an Agent](../tutorials/writing-an-agent.md) — advanced agent patterns
+- [Writing a Scorer](../tutorials/writing-a-scorer.md) — custom evaluation logic
 - [Benchmark Catalog](../benchmarks/index.md) — browse all available benchmarks

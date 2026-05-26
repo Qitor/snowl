@@ -679,6 +679,67 @@ def _load_outcomes(*args, **kwargs):
     return _impl(*args, **kwargs)
 
 
+def _cmd_quick_eval(
+    agent: str,
+    benchmark: str | None,
+    samples: str | None,
+    scorer: str,
+    limit: int | None,
+    max_tokens: int,
+) -> int:
+    """Handle the ``quick-eval`` CLI subcommand."""
+    import importlib
+
+    from snowl.quick_eval import quick_eval_sync
+
+    # Parse "module:function" agent spec
+    if ":" not in agent:
+        print(f"Error: --agent must be in module:function format (e.g. my_module:my_fn), got '{agent}'")
+        return 1
+    mod_path, fn_name = agent.rsplit(":", 1)
+    try:
+        mod = importlib.import_module(mod_path)
+    except ImportError as exc:
+        print(f"Error: could not import module '{mod_path}': {exc}")
+        return 1
+    agent_fn = getattr(mod, fn_name, None)
+    if agent_fn is None:
+        print(f"Error: module '{mod_path}' has no attribute '{fn_name}'")
+        return 1
+
+    # Load samples from JSON if provided
+    sample_list = None
+    if samples:
+        import json
+
+        try:
+            with open(samples) as f:
+                sample_list = json.load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"Error: could not load samples from '{samples}': {exc}")
+            return 1
+
+    if not benchmark and not sample_list:
+        print("Error: provide either --benchmark or --samples")
+        return 1
+
+    try:
+        result = quick_eval_sync(
+            agent=agent_fn,
+            benchmark=benchmark,
+            samples=sample_list,
+            scorer=scorer,
+            limit=limit,
+            max_tokens=max_tokens,
+        )
+    except Exception as exc:
+        print(f"Error: {exc}")
+        return 1
+
+    print(result)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="snowl")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1030,6 +1091,15 @@ def build_parser() -> argparse.ArgumentParser:
     lb_compare.add_argument("run_dir_a", help="Path to first run artifacts directory.")
     lb_compare.add_argument("run_dir_b", help="Path to second run artifacts directory.")
 
+    # --- quick-eval ---
+    qe_parser = sub.add_parser("quick-eval", help="Evaluate an agent in one command — no project.yml required.")
+    qe_parser.add_argument("--agent", required=True, help="Agent as module:function (e.g. my_module:my_fn).")
+    qe_parser.add_argument("--benchmark", default=None, help="Built-in benchmark name (e.g. strongreject).")
+    qe_parser.add_argument("--samples", default=None, help="Path to JSON file with sample dicts.")
+    qe_parser.add_argument("--scorer", default="includes", help="Scorer name. Default: includes.")
+    qe_parser.add_argument("--limit", type=int, default=None, help="Max number of samples to evaluate.")
+    qe_parser.add_argument("--max-tokens", type=int, default=256, help="Token limit for agent responses.")
+
     return parser
 
 
@@ -1210,6 +1280,16 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_leaderboard_list(domain=args.domain, top=args.top)
         if args.leaderboard_command == "compare":
             return _cmd_leaderboard_compare(args.run_dir_a, args.run_dir_b)
+
+    if args.command == "quick-eval":
+        return _cmd_quick_eval(
+            agent=args.agent,
+            benchmark=args.benchmark,
+            samples=args.samples,
+            scorer=args.scorer,
+            limit=args.limit,
+            max_tokens=args.max_tokens,
+        )
 
     parser.print_help()
     return 2
