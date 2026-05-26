@@ -112,6 +112,20 @@ def grouped(key: str, *, inner: MetricDefinition | None = None, description: str
     )
 
 
+def cost_efficiency(*, higher_is_better: bool = True, description: str = "") -> MetricDefinition:
+    """Cost efficiency metric: score per unit cost (USD).
+
+    Measures how much evaluation quality is achieved per dollar spent.
+    Useful for fair comparison between models with different pricing.
+    """
+    return MetricDefinition(
+        name="cost_efficiency",
+        aggregation="mean",
+        higher_is_better=higher_is_better,
+        description=description or "Score per unit cost (USD).",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Bootstrap stderr
 # ---------------------------------------------------------------------------

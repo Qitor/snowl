@@ -14,6 +14,7 @@ Change guardrails:
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -123,6 +124,11 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
         ),
         factory=lambda **kwargs: AgentBenchOSBenchmarkAdapter(**kwargs),
     )
+    warnings.warn(
+        "Built-in 'agentdojo' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     registry.register(
         name="agentdojo",
         info=BenchmarkInfo(
@@ -175,6 +181,11 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             dashboard_tags=["agent_safety", "tool_use", "refusal"],
         ),
         factory=lambda **kwargs: AgentHarmBenchmarkAdapter(mode="benign", **kwargs),
+    )
+    warnings.warn(
+        "Built-in 'agentsafetybench' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
+        DeprecationWarning,
+        stacklevel=2,
     )
     registry.register(
         name="agentsafetybench",
@@ -439,6 +450,11 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
         ),
         factory=lambda **kwargs: SevenLLMMCQBenchmarkAdapter(language="zh", **kwargs),
     )
+    warnings.warn(
+        "Built-in 'toolemu' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     registry.register(
         name="toolemu",
         info=BenchmarkInfo(
@@ -574,6 +590,11 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
         ),
         factory=lambda **kwargs: CyBenchBenchmarkAdapter(**kwargs),
     )
+    warnings.warn(
+        "Built-in 'humaneval' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     registry.register(
         name="humaneval",
         info=BenchmarkInfo(
@@ -605,6 +626,11 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             ),
             factory=lambda subset=subset, **kwargs: SWEBenchBenchmarkAdapter(subset=subset, **kwargs),
         )
+    warnings.warn(
+        "Built-in 'math' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     registry.register(
         name="math",
         info=BenchmarkInfo(
@@ -619,6 +645,11 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             dashboard_tags=["math", "reasoning", "stem"],
         ),
         factory=lambda **kwargs: MATHBenchmarkAdapter(**kwargs),
+    )
+    warnings.warn(
+        "Built-in 'webarena' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
+        DeprecationWarning,
+        stacklevel=2,
     )
     registry.register(
         name="webarena",

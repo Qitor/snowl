@@ -679,6 +679,11 @@ def _load_outcomes(*args, **kwargs):
     return _impl(*args, **kwargs)
 
 
+def _cmd_check(*args, **kwargs):
+    from snowl.cli_modules.check import _cmd_check as _impl
+    return _impl(*args, **kwargs)
+
+
 def _cmd_quick_eval(
     agent: str,
     benchmark: str | None,
@@ -1091,6 +1096,9 @@ def build_parser() -> argparse.ArgumentParser:
     lb_compare.add_argument("run_dir_a", help="Path to first run artifacts directory.")
     lb_compare.add_argument("run_dir_b", help="Path to second run artifacts directory.")
 
+    # --- check ---
+    sub.add_parser("check", help="Run installation health checks.")
+
     # --- quick-eval ---
     qe_parser = sub.add_parser("quick-eval", help="Evaluate an agent in one command — no project.yml required.")
     qe_parser.add_argument("--agent", required=True, help="Agent as module:function (e.g. my_module:my_fn).")
@@ -1290,6 +1298,9 @@ def main(argv: list[str] | None = None) -> int:
             limit=args.limit,
             max_tokens=args.max_tokens,
         )
+
+    if args.command == "check":
+        return _cmd_check()
 
     parser.print_help()
     return 2
