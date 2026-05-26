@@ -712,9 +712,34 @@ def default_container_provider_registry() -> ContainerProviderRegistry:
     global _DEFAULT_PROVIDER_REGISTRY
     if _DEFAULT_PROVIDER_REGISTRY is None:
         registry = ContainerProviderRegistry()
+        # Built-in providers
         registry.register("terminalbench", TerminalBenchProvider())
         registry.register("osworld", OSWorldProvider())
         registry.register("compose_terminal", ComposeTerminalProvider())
         registry.register("docker_container", DockerContainerProvider())
+        # Discover plugin providers via entry_points
+        _discover_plugin_providers(registry)
         _DEFAULT_PROVIDER_REGISTRY = registry
     return _DEFAULT_PROVIDER_REGISTRY
+
+
+def _discover_plugin_providers(registry: ContainerProviderRegistry) -> None:
+    """Discover ContainerProvider plugins from the ``snowl.container_providers`` entry point group."""
+    try:
+        from importlib.metadata import entry_points
+    except ImportError:
+        return
+
+    try:
+        eps = entry_points(group="snowl.container_providers")
+    except Exception:
+        return
+
+    for ep in eps:
+        try:
+            provider_cls = ep.load()
+            provider = provider_cls()
+            if hasattr(provider, "name"):
+                registry.register(ep.name, provider)
+        except Exception:
+            pass

@@ -74,7 +74,7 @@ def _init_scorer_factories() -> None:
         return
     from snowl.scorer import includes, match, pattern, model_as_judge_json
     from snowl.scorer.choice import choice_answer
-    from snowl.scorer.agent import answer_match, function_call_match
+    from snowl.scorer.agent import answer_match, function_call_match, injection_score_matrix
     _SCORER_FACTORIES.update({
         "includes": includes,
         "match": match,
@@ -83,6 +83,7 @@ def _init_scorer_factories() -> None:
         "choice_answer": choice_answer,
         "answer_match": answer_match,
         "function_call_match": function_call_match,
+        "injection_score_matrix": injection_score_matrix,
     })
 
 

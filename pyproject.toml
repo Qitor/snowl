@@ -92,6 +92,8 @@ qitos = "snowl.adapters.qitos:QitOSAdapter"
 docker = "snowl.envs.provider:DockerProvider"
 local = "snowl.envs.provider:LocalProvider"
 
+[project.entry-points."snowl.container_providers"]
+
 [project.urls]
 Homepage = "https://github.com/Qitor/snowl"
 Repository = "https://github.com/Qitor/snowl"
