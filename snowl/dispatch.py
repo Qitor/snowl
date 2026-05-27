@@ -58,7 +58,7 @@ from snowl.project_config import (
 )
 from snowl.runtime import TrialOutcome
 from snowl.runtime.container_lifecycle import RuntimeContainerLifecycleManager
-from snowl.runtime.policy import RuntimePolicy, benchmark_name_for_task
+from snowl.runtime.policy import RuntimePolicy, benchmark_name_for_task, _get_benchmark_profile_from_registry
 from snowl.runtime.recovery import RecoveryManager, recovery_retry_allowed
 from snowl.runtime.resource_scheduler import ResourceScheduler
 from snowl.runtime.results import outcome_from_serialized, to_serializable_outcome
@@ -503,6 +503,11 @@ async def run_eval_with_components(
     if provider_budgets is None and max_model_calls is not None:
         provider_budgets = {"default": max_model_calls}
 
+    # Resolve concurrency profile from benchmark registry for the caller
+    _benchmark_names = sorted({benchmark_name_for_task(t) for t in tasks})
+    _benchmark_hint = _benchmark_names[0] if len(_benchmark_names) == 1 else None
+    _concurrency_profile = _get_benchmark_profile_from_registry(_benchmark_hint) if _benchmark_hint else None
+
     budget_resolution = RuntimePolicy().resolve(
         tasks=tasks,
         project_config=project_config,
@@ -512,6 +517,7 @@ async def run_eval_with_components(
         max_builds=max_builds,
         max_scoring_tasks=max_scoring_tasks,
         provider_budgets=provider_budgets,
+        concurrency_profile=_concurrency_profile,
     )
     budgets = budget_resolution.as_dict()
     docker_like = bool(budgets["docker_like"])

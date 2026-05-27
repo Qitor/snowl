@@ -9,7 +9,7 @@ from typing import Any, Mapping, Sequence
 
 from snowl.benchmarks.base import BenchmarkInfo
 from snowl.benchmarks.base_adapter import BaseBenchmarkAdapter
-from snowl.benchmarks.utils import read_json_array, stable_benchmark_id
+from snowl.benchmarks.utils import normalize_tool_schemas, read_json_array, stable_benchmark_id
 from snowl.core import EnvSpec
 from snowl.errors import SnowlValidationError
 
@@ -154,30 +154,7 @@ def _coerce_bool(value: Any) -> bool:
 
 
 def _tool_schemas(raw: Any) -> list[dict[str, Any]]:
-    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes, bytearray)):
-        return []
-    out: list[dict[str, Any]] = []
-    for item in raw:
-        if not isinstance(item, Mapping):
-            continue
-        fn = item.get("function") if isinstance(item.get("function"), Mapping) else item
-        name = str(fn.get("name") or "").strip()
-        if not name:
-            continue
-        parameters = fn.get("parameters")
-        if not isinstance(parameters, Mapping):
-            parameters = {"type": "object", "properties": {}, "additionalProperties": False}
-        out.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": str(fn.get("description") or f"Tool {name}."),
-                    "parameters": dict(parameters),
-                },
-            }
-        )
-    return out
+    return normalize_tool_schemas(raw, default_description_prefix="Tool")
 
 
 def _default_suite_tools(suite: str) -> list[dict[str, Any]]:

@@ -10,7 +10,7 @@ from typing import Any, Mapping, Sequence
 
 from snowl.benchmarks.base import BenchmarkInfo
 from snowl.benchmarks.base_adapter import BaseBenchmarkAdapter
-from snowl.benchmarks.utils import read_json_array, stable_benchmark_id
+from snowl.benchmarks.utils import normalize_tool_schemas, read_json_array, stable_benchmark_id
 from snowl.core import EnvSpec
 from snowl.errors import SnowlValidationError
 
@@ -140,30 +140,7 @@ def _single_turn_messages(question: Any) -> list[dict[str, str]]:
 
 
 def _tool_schemas(raw_tools: Any) -> list[dict[str, Any]]:
-    if not isinstance(raw_tools, Sequence) or isinstance(raw_tools, (str, bytes, bytearray)):
-        return []
-    out: list[dict[str, Any]] = []
-    for item in raw_tools:
-        if not isinstance(item, Mapping):
-            continue
-        fn = item.get("function") if isinstance(item.get("function"), Mapping) else item
-        name = str(fn.get("name") or "").strip()
-        if not name:
-            continue
-        parameters = fn.get("parameters")
-        if not isinstance(parameters, Mapping):
-            parameters = {"type": "object", "properties": {}, "additionalProperties": False}
-        out.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": str(fn.get("description") or f"Function {name}."),
-                    "parameters": dict(parameters),
-                },
-            }
-        )
-    return out
+    return normalize_tool_schemas(raw_tools, default_description_prefix="Function")
 
 
 def _expected_calls(raw: Any) -> list[dict[str, Any]]:

@@ -485,7 +485,12 @@ def default_container_provider_registry() -> ContainerProviderRegistry:
 
 
 def _discover_plugin_providers(registry: ContainerProviderRegistry) -> None:
-    """Discover ContainerProvider plugins from the ``snowl.container_providers`` entry point group."""
+    """Discover ContainerProvider plugins from the ``snowl.container_providers`` entry point group.
+
+    Entry points should point to ``register_providers(registry)`` callables that
+    receive the registry and register their providers — the same convention used by
+    the ``snowl.benchmarks`` entry point group.
+    """
     try:
         from importlib.metadata import entry_points
     except ImportError:
@@ -498,9 +503,7 @@ def _discover_plugin_providers(registry: ContainerProviderRegistry) -> None:
 
     for ep in eps:
         try:
-            provider_cls = ep.load()
-            provider = provider_cls()
-            if hasattr(provider, "name"):
-                registry.register(ep.name, provider)
+            register_fn = ep.load()
+            register_fn(registry)
         except Exception:
             pass

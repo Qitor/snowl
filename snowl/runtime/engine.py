@@ -939,15 +939,15 @@ def _inject_execution_middleware(prepared: PreparedTrial, mode: str, config: dic
         from snowl.tools.emulated_tool import EmulatedToolWrapper
         from snowl.tools.middleware import MiddlewareChain
         from snowl.model import OpenAICompatibleChatClient
+        from snowl.model.openai_compatible import OpenAICompatibleConfig
         emulator_model = config.get("emulator_model", "gpt-4o-mini")
         # Build emulator client from provider config if available
-        base_url = config.get("emulator_base_url")
-        api_key = config.get("emulator_api_key")
-        emulator_client = OpenAICompatibleChatClient(
+        emulator_config = OpenAICompatibleConfig(
+            base_url=config.get("emulator_base_url", ""),
+            api_key=config.get("emulator_api_key", ""),
             model=emulator_model,
-            base_url=base_url,
-            api_key=api_key,
         )
+        emulator_client = OpenAICompatibleChatClient(emulator_config)
         wrapper = EmulatedToolWrapper(
             emulator_client=emulator_client,
             simulator_type=config.get("simulator_type", "std_thought"),

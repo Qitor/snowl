@@ -102,9 +102,9 @@ tool.py ─────────→ errors
 | **HIGH** | `snowl/agents/react_agent.py:24` | `ReActAgent` requires `OpenAICompatibleChatClient` instead of `ChatModelClient` protocol |
 | **HIGH** | `snowl/agents/chat_agent.py:22` | `ChatAgent` requires `OpenAICompatibleChatClient` instead of `ChatModelClient` protocol |
 | **HIGH** | `snowl/tools/emulated_tool.py:28` | `EmulatedToolWrapper` requires `OpenAICompatibleChatClient` instead of `ChatModelClient` protocol |
-| **MEDIUM** | `snowl/runtime/policy.py:9` | Runtime imports `BenchmarkConcurrencyProfile` from benchmarks (reversed dependency direction) |
-| **MEDIUM** | `snowl/runtime/policy.py:90-97` | Runtime queries benchmark registry at runtime (deferred circular import) |
-| **MEDIUM** | `snowl/runtime/container_providers.py:25` | Runtime imports `OSWorldContainerLauncher` from a specific benchmark |
+| **MEDIUM** | ~~`snowl/runtime/policy.py:9`~~ | ~~Runtime imports `BenchmarkConcurrencyProfile` from benchmarks (reversed dependency direction)~~ **RESOLVED**: `BenchmarkConcurrencyProfile` now only imported under `TYPE_CHECKING`; `resolve()` accepts it as a parameter |
+| **MEDIUM** | ~~`snowl/runtime/policy.py:90-97`~~ | ~~Runtime queries benchmark registry at runtime (deferred circular import)~~ **RESOLVED**: `resolve()` receives `concurrency_profile` from caller (dispatch.py); fallback helper `_get_benchmark_profile_from_registry()` is optional |
+| **MEDIUM** | ~~`snowl/runtime/container_providers.py:25`~~ | ~~Runtime imports `OSWorldContainerLauncher` from a specific benchmark~~ **RESOLVED**: Provider entry_points now use `register_providers(registry)` convention; no benchmark imports in runtime |
 | **MEDIUM** | `snowl/runtime/engine.py:961` | ~~Engine checks `output.get("osworld_score")`~~ **RESOLVED**: replaced with generic `_get_extra_payload_keys()` that reads from benchmark registry |
 | **LOW** | `snowl/tools/stateful_executor.py:53-408` | ~~AgentDojo-specific tool implementations in shared `snowl/tools/` package~~ **RESOLVED**: moved to `snowl/benchmarks/agentdojo/tools.py` |
 | **LOW** | `snowl/benchmarks/base_adapter.py:46-48` | `benchmark_info()` does deferred import of registry (semantic coupling) |
@@ -115,7 +115,7 @@ tool.py ─────────→ errors
 |-------------|-----------|-----|
 | `_run_coro_sync()` | ~~`scorer/model_judge.py:30-52`, `scorer/grade_judge.py:20-40`~~ **RESOLVED**: extracted to `scorer/_sync_bridge.py` |
 | Template rendering | ~~`scorer/model_judge.py` (`_render_template`), `scorer/grade_judge.py` (`render_prompt_template`)~~ **RESOLVED**: unified to `scorer/_prompt.py:render_judge_prompt()` |
-| `_tool_schemas()` | `benchmarks/bfcl/adapter.py`, `benchmarks/agentdojo/adapter.py` | Extract to `benchmarks/utils.py` |
+| `_tool_schemas()` | ~~`benchmarks/bfcl/adapter.py`, `benchmarks/agentdojo/adapter.py`~~ **RESOLVED**: extracted to `benchmarks/utils.py:normalize_tool_schemas()` |
 
 ### 1.6 Overly Large Files
 
@@ -131,7 +131,7 @@ tool.py ─────────→ errors
 |------|----------|--------|
 | **CRITICAL** | `examples/strongreject-official/project.yml:9` | Contains API key `sk-irodedqyvgqjdilarnwmrixfwigoxvaenmcfnjmfvbaxrkxm` |
 | **CRITICAL** | `examples/wmdp-cyber-eval/project.yml:9` | Same leaked API key |
-| **HIGH** | `snowl/runtime/engine.py:779-783` | `OpenAICompatibleChatClient` instantiated with wrong constructor signature — latent runtime bug |
+| **HIGH** | ~~`snowl/runtime/engine.py:779-783`~~ | ~~`OpenAICompatibleChatClient` instantiated with wrong constructor signature — latent runtime bug~~ **RESOLVED**: Fixed to use `OpenAICompatibleConfig` dataclass |
 
 ### 1.8 Test Organization
 
@@ -349,16 +349,11 @@ Adapter tests should:
 - **Files**: `snowl/runtime/engine.py`
 - **Remaining concern**: Engine still does deferred import of benchmark registry (MEDIUM coupling noted in Part 1.4)
 
-#### P1.4: Remove benchmark-specific container providers from runtime
+#### P1.4: ~~Remove benchmark-specific container providers from runtime~~ RESOLVED
 
-- **Problem**: `container_providers.py` imports `OSWorldContainerLauncher` from a specific benchmark
-- **Files**: `snowl/runtime/container_providers.py`
-- **Why it matters**: Adding a benchmark with containers shouldn't require modifying runtime code
-- **Violates core/adapters?**: Yes — runtime depends on specific benchmark
-- **Risk level**: Medium (requires registration mechanism)
-- **Strategy**: Add a container provider registry in runtime; benchmarks register their providers
-- **Validation**: `pytest tests/test_container_runtime_providers.py -v`
-- **Public behavior change**: Container provider registration becomes explicit
+- **Problem**: ~~`container_providers.py` imports `OSWorldContainerLauncher` from a specific benchmark~~
+- **Resolution**: Container provider entry_points now use the `register_providers(registry)` convention (matching the benchmark entry_points pattern). `_discover_plugin_providers` calls `register_fn(registry)` instead of trying to instantiate provider classes with zero-arg constructors. TerminalBench and OSWorld providers from snowl-evals are now correctly discovered at runtime.
+- **Files**: `snowl/runtime/container_providers.py`, `snowl-evals/snowl_evals/terminalbench/provider.py`, `snowl-evals/snowl_evals/osworld/provider.py`
 
 #### P1.5: ~~Move AgentDojo tool implementations out of shared tools/~~ RESOLVED
 
@@ -376,23 +371,21 @@ Adapter tests should:
 
 - **Resolution**: Created `snowl/scorer/_prompt.py` with shared `render_judge_prompt()`. Both `model_judge.py` and `grade_judge.py` now import from it.
 
-#### P2.3: Extract shared `_tool_schemas()` to benchmarks/utils
+#### P2.3: ~~Extract shared `_tool_schemas()` to benchmarks/utils~~ RESOLVED
 
-- **Files**: `snowl/benchmarks/bfcl/adapter.py`, `snowl/benchmarks/agentdojo/adapter.py`
-- **Strategy**: Add `tool_schemas_from_descriptions()` to `snowl/benchmarks/utils.py`
+- **Resolution**: Created `normalize_tool_schemas()` in `snowl/benchmarks/utils.py`. Both `bfcl/adapter.py` and `agentdojo/adapter.py` now delegate to it with `default_description_prefix` parameter.
 
-#### P2.4: Fix runtime engine latent bug in middleware injection
+#### P2.4: ~~Fix runtime engine latent bug in middleware injection~~ RESOLVED
 
-- **Problem**: `engine.py:779-783` calls `OpenAICompatibleChatClient(model=, base_url=, api_key=)` but constructor takes `config: OpenAICompatibleConfig`
+- **Problem**: ~~`engine.py:779-783` calls `OpenAICompatibleChatClient(model=, base_url=, api_key=)` but constructor takes `config: OpenAICompatibleConfig`~~
+- **Resolution**: Fixed to construct `OpenAICompatibleConfig` first and pass it to `OpenAICompatibleChatClient(config)`.
 - **Files**: `snowl/runtime/engine.py`
-- **Strategy**: Fix constructor call to use `OpenAICompatibleConfig`
-- **Validation**: Test the emulated execution path
 
-#### P2.5: Decouple RuntimePolicy from benchmark registry
+#### P2.5: ~~Decouple RuntimePolicy from benchmark registry~~ RESOLVED
 
-- **Problem**: `policy.py` imports `BenchmarkConcurrencyProfile` and queries registry at runtime
-- **Files**: `snowl/runtime/policy.py`
-- **Strategy**: Accept `BenchmarkConcurrencyProfile` as a parameter rather than looking it up; have the caller (eval/cli) resolve it from the registry
+- **Problem**: ~~`policy.py` imports `BenchmarkConcurrencyProfile` and queries registry at runtime~~
+- **Resolution**: `BenchmarkConcurrencyProfile` import moved to `TYPE_CHECKING` only. `RuntimePolicy.resolve()` now accepts `concurrency_profile` as an explicit parameter. The caller (`dispatch.py`) resolves the profile from the registry and passes it in. A fallback helper `_get_benchmark_profile_from_registry()` remains for convenience but is not called by default.
+- **Files**: `snowl/runtime/policy.py`, `snowl/dispatch.py`
 
 ### P3 — Long-Term Architecture Evolution
 
@@ -430,10 +423,13 @@ The following P0 and P1 items are safe to implement now:
 
 ### Intentionally Not Changed
 
-- P1.3 (OSWorld score in engine): Requires understanding OSWorld scoring pipeline deeply; risk of breaking OSWorld eval
-- P1.4 (Container provider registry): Requires designing a registration API; too large for this phase
-- P1.5 (AgentDojo tools in stateful_executor): Requires coordinating with AgentDojo adapter; needs integration testing
-- All P2 and P3 items: Deferred to subsequent PRs
+- P1.3 (OSWorld score in engine): ~~Requires understanding OSWorld scoring pipeline deeply~~ **RESOLVED**
+- P1.4 (Container provider registry): ~~Requires designing a registration API~~ **RESOLVED**: entry_points use `register_providers(registry)` convention
+- P1.5 (AgentDojo tools in stateful_executor): ~~Requires coordinating with AgentDojo adapter~~ **RESOLVED**: moved to `benchmarks/agentdojo/tools.py`
+- P2.3 (`_tool_schemas` duplication): **RESOLVED**: extracted to `benchmarks/utils.py:normalize_tool_schemas()`
+- P2.4 (Middleware injection bug): **RESOLVED**: fixed `OpenAICompatibleChatClient` constructor call
+- P2.5 (RuntimePolicy coupling): **RESOLVED**: `resolve()` accepts `concurrency_profile` parameter
+- All P3 items: Deferred to subsequent PRs
 
 ---
 
@@ -451,10 +447,10 @@ The following P0 and P1 items are safe to implement now:
 
 ### Should Have (P1)
 
-- [ ] Agents decoupled from concrete model client
-- [ ] EmulatedToolWrapper decoupled from concrete model client
-- [ ] No benchmark-specific logic in runtime engine
-- [ ] No benchmark-specific imports in runtime container providers
+- [x] Agents decoupled from concrete model client
+- [x] EmulatedToolWrapper decoupled from concrete model client
+- [x] No benchmark-specific logic in runtime engine
+- [x] No benchmark-specific imports in runtime container providers
 - [ ] CHANGELOG.md exists
 - [ ] `docs/testing.md`, `docs/development.md`, `docs/compatibility.md`, `docs/release_process.md` exist
 - [ ] `docs/public_api.md`, `docs/extension_points.md` exist
@@ -462,7 +458,7 @@ The following P0 and P1 items are safe to implement now:
 
 ### Nice to Have (P2-P3)
 
-- [ ] No duplicated utilities across adapters
+- [x] No duplicated utilities across adapters
 - [ ] CLI decomposed into subcommands
 - [ ] Runtime engine decomposed into phases
 - [ ] Lazy benchmark registration

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-from snowl.benchmarks.base import BenchmarkConcurrencyProfile
 from snowl.core import Task
 from snowl.project_config import ProjectConfig
+
+if TYPE_CHECKING:
+    from snowl.benchmarks.base import BenchmarkConcurrencyProfile
 
 
 @dataclass(frozen=True)
@@ -103,14 +105,11 @@ def benchmark_name_for_task(task: Task) -> str:
     return value or "custom"
 
 
-def _get_benchmark_profile(tasks: list[Task]) -> BenchmarkConcurrencyProfile | None:
-    """Look up the concurrency profile from the benchmark registry for the given tasks."""
-    if not tasks:
-        return None
-    benchmark_names = sorted({benchmark_name_for_task(t) for t in tasks})
-    if len(benchmark_names) != 1:
-        return None  # Mixed benchmarks; no single profile applies
-    benchmark_name = benchmark_names[0]
+def _get_benchmark_profile_from_registry(benchmark_name: str) -> BenchmarkConcurrencyProfile | None:
+    """Look up the concurrency profile from the benchmark registry for a benchmark name.
+
+    This is a convenience helper for callers that don't have a pre-resolved profile.
+    """
     try:
         from snowl.benchmarks.registry import get_default_benchmark_registry
         registry = get_default_benchmark_registry()
@@ -164,6 +163,7 @@ class RuntimePolicy:
         max_builds: int | None,
         max_scoring_tasks: int | None,
         provider_budgets: dict[str, int] | None,
+        concurrency_profile: BenchmarkConcurrencyProfile | None = None,
     ) -> RuntimeBudgetResolution:
         runtime_cfg = project_config.runtime if project_config is not None else None
         explicit_running = max_running_trials is not None
@@ -205,7 +205,11 @@ class RuntimePolicy:
             max_running_trials = 1
 
         # Apply benchmark concurrency profile if available and no explicit overrides
-        profile = _get_benchmark_profile(tasks)
+        profile = concurrency_profile
+        if profile is None:
+            # Fall back to registry lookup when no profile is provided
+            if benchmark_hint and benchmark_hint != "mixed":
+                profile = _get_benchmark_profile_from_registry(benchmark_hint)
         if profile is not None:
             if profile.recommended_max_running is not None and not explicit_running and not docker_like:
                 max_running_trials = min(max_running_trials, profile.recommended_max_running)

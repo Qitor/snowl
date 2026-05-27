@@ -6,7 +6,7 @@ import pytest
 
 from snowl.benchmarks.base import BenchmarkConcurrencyProfile, BenchmarkInfo
 from snowl.core import EnvSpec, Task
-from snowl.runtime.policy import RuntimePolicy, _get_benchmark_profile
+from snowl.runtime.policy import RuntimePolicy, _get_benchmark_profile_from_registry
 
 
 def _task_with_benchmark(benchmark_name: str) -> Task:
@@ -66,13 +66,12 @@ def test_benchmark_info_without_profile():
 
 
 # ---------------------------------------------------------------------------
-# _get_benchmark_profile
+# _get_benchmark_profile_from_registry
 # ---------------------------------------------------------------------------
 
 
 def test_get_benchmark_profile_returns_toolemu_profile():
-    task = _task_with_benchmark("toolemu")
-    profile = _get_benchmark_profile([task])
+    profile = _get_benchmark_profile_from_registry("toolemu")
     assert profile is not None
     assert profile.name == "toolemu"
     assert profile.recommended_max_running == 3
@@ -80,27 +79,14 @@ def test_get_benchmark_profile_returns_toolemu_profile():
 
 
 def test_get_benchmark_profile_returns_agentdojo_profile():
-    task = _task_with_benchmark("agentdojo")
-    profile = _get_benchmark_profile([task])
+    profile = _get_benchmark_profile_from_registry("agentdojo")
     assert profile is not None
     assert profile.name == "agentdojo"
     assert profile.recommended_max_running == 6
 
 
-def test_get_benchmark_profile_returns_none_for_mixed_benchmarks():
-    tasks = [_task_with_benchmark("toolemu"), _task_with_benchmark("agentdojo")]
-    profile = _get_benchmark_profile(tasks)
-    assert profile is None  # Mixed; no single profile applies
-
-
 def test_get_benchmark_profile_returns_none_for_unknown_benchmark():
-    task = _task_with_benchmark("nonexistent_bench")
-    profile = _get_benchmark_profile([task])
-    assert profile is None
-
-
-def test_get_benchmark_profile_returns_none_for_empty_tasks():
-    profile = _get_benchmark_profile([])
+    profile = _get_benchmark_profile_from_registry("nonexistent_bench")
     assert profile is None
 
 
@@ -112,6 +98,7 @@ def test_get_benchmark_profile_returns_none_for_empty_tasks():
 def test_runtime_policy_applies_profile_max_running():
     """When no explicit override, profile recommended_max_running is applied."""
     task = _task_with_benchmark("toolemu")
+    profile = _get_benchmark_profile_from_registry("toolemu")
     policy = RuntimePolicy()
     resolution = policy.resolve(
         tasks=[task],
@@ -122,6 +109,7 @@ def test_runtime_policy_applies_profile_max_running():
         max_builds=None,
         max_scoring_tasks=None,
         provider_budgets=None,
+        concurrency_profile=profile,
     )
     # ToolEmu profile recommends max_running=3, which should cap the default
     assert resolution.max_running_trials <= 3
@@ -130,6 +118,7 @@ def test_runtime_policy_applies_profile_max_running():
 def test_runtime_policy_explicit_override_wins():
     """When an explicit --max-running-trials is provided, it takes precedence."""
     task = _task_with_benchmark("toolemu")
+    profile = _get_benchmark_profile_from_registry("toolemu")
     policy = RuntimePolicy()
     resolution = policy.resolve(
         tasks=[task],
@@ -140,6 +129,7 @@ def test_runtime_policy_explicit_override_wins():
         max_builds=None,
         max_scoring_tasks=None,
         provider_budgets=None,
+        concurrency_profile=profile,
     )
     assert resolution.max_running_trials == 10
 
@@ -147,6 +137,7 @@ def test_runtime_policy_explicit_override_wins():
 def test_runtime_policy_adds_scorer_provider_budget():
     """When profile has scorer_uses_provider, scorer provider is added to budget."""
     task = _task_with_benchmark("toolemu")
+    profile = _get_benchmark_profile_from_registry("toolemu")
     policy = RuntimePolicy()
     resolution = policy.resolve(
         tasks=[task],
@@ -157,6 +148,7 @@ def test_runtime_policy_adds_scorer_provider_budget():
         max_builds=None,
         max_scoring_tasks=None,
         provider_budgets=None,
+        concurrency_profile=profile,
     )
     assert "openai" in resolution.provider_budgets
 
@@ -174,6 +166,7 @@ def test_runtime_policy_no_profile_no_change():
         max_builds=None,
         max_scoring_tasks=None,
         provider_budgets=None,
+        # No concurrency_profile — should use defaults
     )
     # Default: min(8, cpu_count) — should NOT be capped by any profile
     assert resolution.max_running_trials >= 1
