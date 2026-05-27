@@ -144,4 +144,50 @@ class _QitOSAgent:
             )
 
         adapter = QitOSAdapter()
-        return adapter.wrap_result(result, state)
+        new_state = adapter.wrap_result(result, state)
+
+        # Enrich trace events with per-step details from EngineResult
+        trace_events: list[dict[str, Any]] = list(new_state.output.get("trace_events", []) if isinstance(new_state.output, dict) else [])
+
+        if hasattr(result, "step_summaries"):
+            for i, step in enumerate(result.step_summaries or []):
+                evt: dict[str, Any] = {"event": "agent.qitos.step", "step_index": i}
+
+                # Tool call info
+                if hasattr(step, "tool_name") and step.tool_name:
+                    evt["tool_name"] = step.tool_name
+                    if hasattr(step, "tool_args"):
+                        evt["tool_args"] = step.tool_args
+                elif hasattr(step, "action") and hasattr(step.action, "tool_name"):
+                    evt["tool_name"] = step.action.tool_name
+                    if hasattr(step.action, "arguments"):
+                        evt["tool_args"] = step.action.arguments
+
+                # Observation / result
+                if hasattr(step, "observation") and step.observation:
+                    obs_text = str(step.observation)
+                    evt["observation_preview"] = obs_text[:500]
+                elif hasattr(step, "result") and step.result:
+                    evt["result_preview"] = str(step.result)[:500]
+
+                # Decision / thought
+                if hasattr(step, "thought") and step.thought:
+                    evt["thought"] = str(step.thought)[:500]
+                elif hasattr(step, "summary") and step.summary:
+                    evt["summary"] = str(step.summary)[:500]
+
+                trace_events.append(evt)
+
+        # Usage extraction from EngineResult
+        usage_info = new_state.output.get("usage", {}) if isinstance(new_state.output, dict) else {}
+        if hasattr(result, "usage") and result.usage:
+            u = result.usage
+            usage_info["input_tokens"] = getattr(u, "input_tokens", 0) or usage_info.get("input_tokens", 0)
+            usage_info["output_tokens"] = getattr(u, "output_tokens", 0) or usage_info.get("output_tokens", 0)
+            usage_info["total_tokens"] = getattr(u, "total_tokens", 0) or usage_info.get("total_tokens", 0)
+
+        if isinstance(new_state.output, dict):
+            new_state.output["trace_events"] = trace_events
+            new_state.output["usage"] = usage_info
+
+        return new_state

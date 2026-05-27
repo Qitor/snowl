@@ -63,10 +63,30 @@ class _OpenAIAgentsAgent:
             usage_info["output_tokens"] = getattr(resp_usage, "output_tokens", 0) or 0
             usage_info["total_tokens"] = getattr(resp_usage, "total_tokens", 0) or 0
 
-        trace_events = [{
+        # Enrich trace events with per-tool-call details from response output items
+        trace_events: list[dict[str, Any]] = [{
             "event": "agent.openai_agents.call",
             "model": self.model,
         }]
+
+        output_items = getattr(response, "output", None)
+        if isinstance(output_items, (list, tuple)):
+            for item in output_items:
+                item_type = getattr(item, "type", "")
+                if item_type == "function_call":
+                    fn = getattr(item, "function", None) or {}
+                    trace_events.append({
+                        "event": "agent.openai_agents.tool_call",
+                        "tool_name": getattr(fn, "name", None) or (fn.get("name") if isinstance(fn, dict) else ""),
+                        "tool_args": getattr(fn, "arguments", None) or (fn.get("arguments") if isinstance(fn, dict) else {}),
+                        "call_id": getattr(item, "id", None) or getattr(item, "call_id", None),
+                    })
+                elif item_type == "function_call_output":
+                    trace_events.append({
+                        "event": "agent.openai_agents.tool_result",
+                        "call_id": getattr(item, "call_id", None),
+                        "result_preview": str(getattr(item, "output", ""))[:500],
+                    })
 
         state.messages.append({"role": "assistant", "content": content})
         state.output = {
@@ -100,3 +120,48 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
         model = kwargs.pop("model", "gpt-4.1-mini")
         agent_id = kwargs.pop("agent_id", "openai_agents")
         return _OpenAIAgentsAgent(client, model=model, agent_id=agent_id, **kwargs)
+
+    def unwrap_state(self, snowl_state: AgentState) -> Any:
+        """Convert Snowl AgentState to OpenAI messages list."""
+        return [dict(m) for m in snowl_state.messages]
+
+    def wrap_result(self, framework_result: Any, snowl_state: AgentState) -> AgentState:
+        """Convert OpenAI response to Snowl AgentState."""
+        content = getattr(framework_result, "output_text", "") or str(framework_result)
+        return AgentState(
+            messages=snowl_state.messages + [{"role": "assistant", "content": content}],
+            output=content,
+            stop_reason=StopReason.COMPLETED,
+        )
+
+    def wrap_tools(self, snowl_tools: list[Any] | None = None) -> list[dict[str, Any]] | None:
+        """Convert Snowl tool specs to OpenAI function tool format.
+
+        Each Snowl ToolSpec with name/description/parameters is converted to an
+        OpenAI function definition dict. Returns None if no tools provided.
+        """
+        if not snowl_tools:
+            return None
+
+        openai_tools: list[dict[str, Any]] = []
+        for tool in snowl_tools:
+            if isinstance(tool, dict):
+                openai_tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": tool.get("name", ""),
+                        "description": tool.get("description", ""),
+                        "parameters": tool.get("parameters", {"type": "object", "properties": {}}),
+                    },
+                })
+            elif hasattr(tool, "name"):
+                openai_tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": getattr(tool, "name", ""),
+                        "description": getattr(tool, "description", ""),
+                        "parameters": getattr(tool, "parameters", {"type": "object", "properties": {}}),
+                    },
+                })
+
+        return openai_tools or None

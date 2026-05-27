@@ -112,7 +112,7 @@ def _cmd_leaderboard_publish(run_dir: str) -> int:
     return 0
 
 
-def _cmd_leaderboard_list(*, domain: str | None = None, top: int = 20) -> int:
+def _cmd_leaderboard_list(*, domain: str | None = None, top: int = 20, cost_aware: bool = False) -> int:
     """List leaderboard entries."""
     import json
     from pathlib import Path
@@ -153,13 +153,24 @@ def _cmd_leaderboard_list(*, domain: str | None = None, top: int = 20) -> int:
         print("No leaderboard entries found.")
         return 0
 
-    print(f"{'Rank':<5} {'Model':<30} {'Benchmark':<20} {'Score':<10}")
-    print("-" * 65)
-    for i, entry in enumerate(entries[:top], start=1):
-        model = entry.get("model", "?")[:28]
-        benchmark = entry.get("benchmark", "?")[:18]
-        score = _sort_key(entry)
-        print(f"{i:<5} {model:<30} {benchmark:<20} {score:<10.4f}")
+    if cost_aware:
+        print(f"{'Rank':<5} {'Model':<30} {'Benchmark':<20} {'Score':<10} {'CostEff':<12}")
+        print("-" * 77)
+        for i, entry in enumerate(entries[:top], start=1):
+            model = entry.get("model", "?")[:28]
+            benchmark = entry.get("benchmark", "?")[:18]
+            score = _sort_key(entry)
+            ce = entry.get("cost_efficiency")
+            ce_str = f"{ce:.6f}" if ce is not None else "N/A"
+            print(f"{i:<5} {model:<30} {benchmark:<20} {score:<10.4f} {ce_str:<12}")
+    else:
+        print(f"{'Rank':<5} {'Model':<30} {'Benchmark':<20} {'Score':<10}")
+        print("-" * 65)
+        for i, entry in enumerate(entries[:top], start=1):
+            model = entry.get("model", "?")[:28]
+            benchmark = entry.get("benchmark", "?")[:18]
+            score = _sort_key(entry)
+            print(f"{i:<5} {model:<30} {benchmark:<20} {score:<10.4f}")
 
     return 0
 

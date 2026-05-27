@@ -22,6 +22,7 @@ from snowl.scorer.agent import (
     CanaryLeakScorer,
     CheckpointScoreScorer,
     CommandCheckScorer,
+    CostNormalizedScorer,
     FunctionCallMatchScorer,
     InjectionScoreMatrix,
     StateTransitionScorer,
@@ -31,6 +32,7 @@ from snowl.scorer.agent import (
     canary_leak,
     checkpoint_score,
     command_check,
+    cost_normalized,
     function_call_match,
     grouped_metrics,
     injection_score_matrix,
@@ -68,6 +70,7 @@ from snowl.scorer.trace import (
 
 __all__ = [
     "AnswerMatchScorer",
+    "CostNormalizedScorer",
     "CanaryLeakScorer",
     "CheckpointScoreScorer",
     "CommandCheckScorer",
@@ -99,6 +102,7 @@ __all__ = [
     "checkpoint_score",
     "choice_answer",
     "command_check",
+    "cost_normalized",
     "function_call_match",
     "grouped_metrics",
     "includes",

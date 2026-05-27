@@ -1092,6 +1092,7 @@ def build_parser() -> argparse.ArgumentParser:
     lb_list = leaderboard_sub.add_parser("list", help="List leaderboard entries.")
     lb_list.add_argument("--domain", default=None, help="Filter by domain.")
     lb_list.add_argument("--top", type=int, default=20, help="Show top N entries.")
+    lb_list.add_argument("--cost-aware", action="store_true", default=False, help="Show cost-efficiency column when available.")
     lb_compare = leaderboard_sub.add_parser("compare", help="Compare two runs on the leaderboard.")
     lb_compare.add_argument("run_dir_a", help="Path to first run artifacts directory.")
     lb_compare.add_argument("run_dir_b", help="Path to second run artifacts directory.")
@@ -1285,7 +1286,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.leaderboard_command == "publish":
             return _cmd_leaderboard_publish(args.run_dir)
         if args.leaderboard_command == "list":
-            return _cmd_leaderboard_list(domain=args.domain, top=args.top)
+            return _cmd_leaderboard_list(domain=args.domain, top=args.top, cost_aware=args.cost_aware)
         if args.leaderboard_command == "compare":
             return _cmd_leaderboard_compare(args.run_dir_a, args.run_dir_b)
 

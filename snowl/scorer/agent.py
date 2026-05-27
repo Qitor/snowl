@@ -141,14 +141,28 @@ class ToolTracePolicyScorer:
     forbidden_arg_patterns: tuple[str, ...] = ()
     max_calls: int | None = None
     scorer_id: str = "tool_trace_policy"
+    config: Any = None  # ToolTracePolicyConfig | None — shared with PolicyEnforcementMiddleware
+
+    def _resolved_config(self, context: ScoreContext) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], int | None]:
+        """Resolve effective policy from config object or individual fields (with context fallback)."""
+        if self.config is not None:
+            cfg = self.config
+            required = tuple(cfg.required_tools or tuple(context.sample_metadata.get("required_tools") or ()))
+            forbidden = tuple(cfg.forbidden_tools or tuple(context.sample_metadata.get("forbidden_tools") or ()))
+            patterns = tuple(cfg.forbidden_arg_patterns or tuple(context.sample_metadata.get("forbidden_arg_patterns") or ()))
+            max_calls = cfg.max_calls
+        else:
+            required = tuple(self.required_tools or tuple(context.sample_metadata.get("required_tools") or ()))
+            forbidden = tuple(self.forbidden_tools or tuple(context.sample_metadata.get("forbidden_tools") or ()))
+            patterns = tuple(self.forbidden_arg_patterns or tuple(context.sample_metadata.get("forbidden_arg_patterns") or ()))
+            max_calls = self.max_calls
+        return required, forbidden, patterns, max_calls
 
     def score(self, task_result: TaskResult, trace: Mapping[str, Any], context: ScoreContext) -> dict[str, Score]:
         _ = task_result
         calls = tool_calls(trace)
         names = [call.name for call in calls]
-        required = tuple(self.required_tools or tuple(context.sample_metadata.get("required_tools") or ()))
-        forbidden = tuple(self.forbidden_tools or tuple(context.sample_metadata.get("forbidden_tools") or ()))
-        patterns = tuple(self.forbidden_arg_patterns or tuple(context.sample_metadata.get("forbidden_arg_patterns") or ()))
+        required, forbidden, patterns, max_calls = self._resolved_config(context)
         failures: list[str] = []
         for name in required:
             if name not in names:
@@ -156,8 +170,8 @@ class ToolTracePolicyScorer:
         for name in forbidden:
             if name in names:
                 failures.append(f"forbidden tool called {name}")
-        if self.max_calls is not None and len(calls) > self.max_calls:
-            failures.append(f"tool call count {len(calls)} exceeds {self.max_calls}")
+        if max_calls is not None and len(calls) > max_calls:
+            failures.append(f"tool call count {len(calls)} exceeds {max_calls}")
         rendered_args = "\n".join(json.dumps(call.arguments, ensure_ascii=False, sort_keys=True) for call in calls)
         for pattern in patterns:
             if re.search(pattern, rendered_args):
@@ -577,8 +591,70 @@ def judge_rubric(**kwargs: Any) -> RegexGradeJudgeScorer:
     return regex_grade_judge(**kwargs)
 
 
+@dataclass(frozen=True)
+class CostNormalizedScorer:
+    """Wraps a base scorer and normalizes its score by estimated cost.
+
+    Produces ``cost_efficiency`` metric = raw_score / estimated_cost_usd when cost > 0,
+    otherwise 0.0.
+    """
+
+    base_scorer: Any = None  # Scorer with .score() method | None (falls back to raw score)
+    metric_name: str = "cost_efficiency"
+    scorer_id: str = "cost_normalized"
+
+    def score(self, task_result: TaskResult, trace: Mapping[str, Any], context: ScoreContext) -> dict[str, Score]:
+        # Resolve raw score
+        if self.base_scorer is not None and hasattr(self.base_scorer, "score"):
+            base_scores = self.base_scorer.score(task_result, trace, context)
+            # Use first score value as raw
+            raw_value = next(iter(base_scores.values())).value if base_scores else 0.0
+        else:
+            # Fall back to extracting a numeric score from task_result
+            raw_value = 0.0
+            output = task_result.final_output
+            if isinstance(output, Mapping):
+                for key in ("score", "accuracy", "value"):
+                    if key in output:
+                        try:
+                            raw_value = float(output[key])
+                            break
+                        except (TypeError, ValueError):
+                            pass
+
+        # Resolve cost
+        cost = self._resolve_cost(task_result, context)
+        efficiency = raw_value / cost if cost > 0 else 0.0
+
+        return {
+            self.metric_name: Score(
+                value=round(efficiency, 6),
+                explanation=f"Cost efficiency: {raw_value:.4f} score / ${cost:.6f}" if cost > 0 else "No cost data available.",
+                metadata={"raw_score": raw_value, "estimated_cost_usd": cost},
+            )
+        }
+
+    @staticmethod
+    def _resolve_cost(task_result: TaskResult, context: ScoreContext) -> float:
+        """Resolve estimated cost from usage or metadata."""
+        if task_result.usage and task_result.usage.estimated_cost_usd is not None:
+            return float(task_result.usage.estimated_cost_usd)
+        cost = context.sample_metadata.get("estimated_cost_usd")
+        if cost is not None:
+            try:
+                return float(cost)
+            except (TypeError, ValueError):
+                pass
+        return 0.0
+
+
+def cost_normalized(**kwargs: Any) -> CostNormalizedScorer:
+    return CostNormalizedScorer(**kwargs)
+
+
 __all__ = [
     "AnswerMatchScorer",
+    "CostNormalizedScorer",
     "FunctionCallMatchScorer",
     "ToolTracePolicyScorer",
     "CommandCheckScorer",
@@ -586,14 +662,17 @@ __all__ = [
     "CanaryLeakScorer",
     "StateTransitionScorer",
     "CheckpointScoreScorer",
+    "InjectionScoreMatrix",
     "answer_match",
-    "function_call_match",
-    "tool_trace_policy",
-    "command_check",
-    "workspace_diff",
     "canary_leak",
-    "state_transition",
     "checkpoint_score",
+    "command_check",
+    "cost_normalized",
+    "function_call_match",
     "grouped_metrics",
+    "injection_score_matrix",
     "judge_rubric",
+    "state_transition",
+    "tool_trace_policy",
+    "workspace_diff",
 ]

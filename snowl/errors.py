@@ -12,3 +12,19 @@ Change guardrails:
 
 class SnowlValidationError(ValueError):
     """Raised when user-provided contracts violate Snowl schemas."""
+
+
+class PolicyViolationError(Exception):
+    """Raised when a tool call violates runtime policy enforcement.
+
+    Attributes:
+        tool_name: The tool that triggered the violation.
+        violation_type: Category of violation (e.g. 'forbidden_tool', 'max_calls_exceeded').
+        detail: Human-readable description of the violation.
+    """
+
+    def __init__(self, tool_name: str, violation_type: str, detail: str = "") -> None:
+        self.tool_name = tool_name
+        self.violation_type = violation_type
+        self.detail = detail
+        super().__init__(f"Policy violation on '{tool_name}': {violation_type} — {detail}")

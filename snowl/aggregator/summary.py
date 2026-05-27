@@ -123,6 +123,7 @@ class LeaderboardRow:
     primary_metric_mean: float
     rank: int
     benchmarks_evaluated: int
+    cost_efficiency: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -302,7 +303,11 @@ def compute_risk_index(
 
 
 def aggregate_leaderboard_rows(benchmark_rows: list[BenchmarkRow]) -> list[LeaderboardRow]:
-    """Build ranked leaderboard rows per (model, domain, benchmark_type)."""
+    """Build ranked leaderboard rows per (model, domain, benchmark_type).
+
+    When cost data is available in benchmark row metadata (``estimated_cost_usd``),
+    a ``cost_efficiency`` field is computed as ``score / dollar``.
+    """
     groups: dict[tuple[str | None, str, str], list[BenchmarkRow]] = {}
     for row in benchmark_rows:
         if not row.model:
@@ -316,6 +321,21 @@ def aggregate_leaderboard_rows(benchmark_rows: list[BenchmarkRow]) -> list[Leade
         benchmarks_evaluated = len({r.benchmark for r in b_rows})
         metadata = b_rows[0].metadata if b_rows else {}
 
+        # Compute cost_efficiency when cost data is available
+        cost_efficiency = None
+        total_cost = 0.0
+        has_cost = False
+        for r in b_rows:
+            cost_val = r.metric_means.get("estimated_cost_usd") or r.metadata.get("estimated_cost_usd")
+            if cost_val is not None:
+                try:
+                    total_cost += float(cost_val)
+                    has_cost = True
+                except (TypeError, ValueError):
+                    pass
+        if has_cost and total_cost > 0:
+            cost_efficiency = round(metric_mean / total_cost, 6)
+
         rows.append(LeaderboardRow(
             model=model,
             domain=domain,
@@ -323,6 +343,7 @@ def aggregate_leaderboard_rows(benchmark_rows: list[BenchmarkRow]) -> list[Leade
             primary_metric_mean=round(metric_mean, 4),
             rank=0,  # assigned below
             benchmarks_evaluated=benchmarks_evaluated,
+            cost_efficiency=cost_efficiency,
             metadata=metadata,
         ))
 
@@ -343,6 +364,7 @@ def aggregate_leaderboard_rows(benchmark_rows: list[BenchmarkRow]) -> list[Leade
                 primary_metric_mean=row.primary_metric_mean,
                 rank=i,
                 benchmarks_evaluated=row.benchmarks_evaluated,
+                cost_efficiency=row.cost_efficiency,
                 metadata=row.metadata,
             )
 
