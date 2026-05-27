@@ -46,6 +46,7 @@ class QuickEvalResult:
     estimated_cost_usd: float | None = None
     score_per_dollar: float | None = None
     output_dir: str | None = None
+    first_error: str | None = None
 
     def __str__(self) -> str:
         lines = [
@@ -58,6 +59,8 @@ class QuickEvalResult:
             lines.append(f"  Cost: ${self.estimated_cost_usd:.4f}")
         if self.score_per_dollar is not None:
             lines.append(f"  Score/$: {self.score_per_dollar:.2f}")
+        if self.first_error is not None:
+            lines.append(f"  Error: {self.first_error}")
         return "\n".join(lines)
 
 
@@ -264,6 +267,7 @@ async def quick_eval(
     total_working_ms = 0
     success_count = 0
     error_count = 0
+    first_error: str | None = None
     aggregate_scores: dict[str, list[float]] = {}
 
     for sample in sample_list:
@@ -277,10 +281,10 @@ async def quick_eval(
             ))
             trial_elapsed = int((time.monotonic() - trial_start) * 1000)
 
-            # Agent execution time from TaskResult.Timing (excludes scoring)
+            # Agent execution time from TaskResult.Timing (excludes scoring and wait)
             timing = outcome.task_result.timing
             if timing is not None:
-                total_working_ms += getattr(timing, "duration_ms", 0) or 0
+                total_working_ms += getattr(timing, "working_time_ms", None) or getattr(timing, "duration_ms", 0) or 0
             else:
                 total_working_ms += trial_elapsed
 
@@ -298,8 +302,10 @@ async def quick_eval(
             for key, score in outcome.scores.items():
                 aggregate_scores.setdefault(key, []).append(float(score.value))
 
-        except Exception:
+        except Exception as exc:
             error_count += 1
+            if first_error is None:
+                first_error = str(exc)[:200]
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
 
@@ -338,6 +344,7 @@ async def quick_eval(
         sample_count=total,
         estimated_cost_usd=cost_usd,
         score_per_dollar=spd,
+        first_error=first_error,
     )
 
 

@@ -33,6 +33,12 @@ class Timing:
     started_at_ms: int
     ended_at_ms: int
     duration_ms: int
+    wait_time_ms: int = 0
+
+    @property
+    def working_time_ms(self) -> int:
+        """Duration excluding wait time (rate-limit backoff, slot admission)."""
+        return max(0, self.duration_ms - self.wait_time_ms)
 
 
 @dataclass(frozen=True)

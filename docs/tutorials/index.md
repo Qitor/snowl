@@ -57,6 +57,10 @@ name. See [Writing a Scorer](writing-a-scorer.md).
 
 | Tutorial | What you'll learn |
 |----------|-------------------|
+| [Your First Evaluation](first-eval.md) | Install, configure, and run your first evaluation in 5 minutes |
+| [Scoring Deep Dive](scoring-deep-dive.md) | Built-in scorers, LLM judges, cost efficiency, score normalization |
+| [Runtime](runtime.md) | RuntimePolicy, concurrency, middleware, containers, MCP servers |
+| [CLI](cli.md) | Command-line tools: eval, quick-eval, check, leaderboard, registry |
 | [Project Anatomy](project-anatomy.md) | Every field in `project.yml` and how the four files connect |
 | [Writing an Agent](writing-an-agent.md) | Minimal agent, ReAct agent, agents with tool middleware |
 | [Writing a Task](writing-a-task.md) | Loading benchmarks, filtering, custom task factories |

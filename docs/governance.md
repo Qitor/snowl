@@ -407,6 +407,38 @@ Adapter tests should:
 - **Resolution**: All adapter factory lambdas replaced with `_lazy_factory()` calls. Adapters are now imported on first use via `registry.create()`, not at module import time. Only `CsvBenchmarkAdapter` and `JsonlBenchmarkAdapter` remain eagerly imported (zero-dependency generic adapters).
 - **Files**: `snowl/benchmarks/registry.py`
 
+#### P3.5: Deprecated benchmark shim removal
+
+- **Problem**: 14 deprecated benchmark registrations in `registry.py` still pointed to local `snowl.benchmarks.*` paths with `DeprecationWarning`s. These benchmarks have been fully migrated to snowl-evals and should be discovered via entry_points.
+- **Resolution**: Removed all 14 deprecated registrations and their `warnings.warn()` blocks from `register_builtin_benchmarks()`. Plugin discovery via `_discover_plugin_benchmarks()` now handles these benchmarks from snowl-evals entry_points.
+- **Files**: `snowl/benchmarks/registry.py`
+
+### P4 — Feature Completeness
+
+#### P4.1: Working time vs wall time separation
+
+- **Problem**: `Timing` only had `duration_ms` (wall time). `working_time_ms` in `QuickEvalResult` fell back to wall time, so rate-limit wait/retry backoff inflated the metric.
+- **Resolution**: Added `wait_time_ms: int = 0` to `Timing` dataclass with `working_time_ms` property (`duration_ms - wait_time_ms`). `OpenAICompatibleChatClient.generate()` now tracks slot admission wait and retry backoff time. `quick_eval()` uses `timing.working_time_ms`.
+- **Files**: `snowl/core/task_result.py`, `snowl/model/openai_compatible.py`, `snowl/quick_eval.py`
+
+#### P4.2: Canary auto-integration
+
+- **Problem**: Canary stripping required manual `strip_canaries=True` opt-in in `quick_eval()`. Benchmarks that inject canaries should auto-strip.
+- **Resolution**: Added `has_canary: bool = False` to `BenchmarkInfo`. Expanded `strip_canary_from_sample()` to handle `messages` format (list of dicts with `content` key). Engine's `prepare_trial_phase()` now auto-strips canaries when `_benchmark_has_canary(task)` returns True.
+- **Files**: `snowl/benchmarks/base.py`, `snowl/canary.py`, `snowl/runtime/engine.py`, `snowl/benchmarks/registry.py`
+
+#### P4.3: Friendly error on missing API key
+
+- **Problem**: `quick_eval()` silently swallowed all exceptions. Users got no feedback when API keys were missing.
+- **Resolution**: Added `first_error: str | None = None` to `QuickEvalResult`. The trial loop now captures the first exception message and includes it in the result.
+- **Files**: `snowl/quick_eval.py`
+
+#### P4.4: Missing tutorials
+
+- **Problem**: Several docs referenced in governance checklist didn't exist yet.
+- **Resolution**: Created four new tutorials: `docs/tutorials/first-eval.md`, `docs/tutorials/scoring-deep-dive.md`, `docs/tutorials/runtime.md`, `docs/tutorials/cli.md`. Updated `docs/tutorials/index.md` to include them.
+- **Files**: `docs/tutorials/first-eval.md`, `docs/tutorials/scoring-deep-dive.md`, `docs/tutorials/runtime.md`, `docs/tutorials/cli.md`, `docs/tutorials/index.md`
+
 ---
 
 ## Part 4: Governance Implementation (Phase 4 Changes)
@@ -464,7 +496,15 @@ The following P0 and P1 items are safe to implement now:
 - [ ] CLI decomposed into subcommands
 - [ ] Runtime engine decomposed into phases
 - [x] Lazy benchmark registration
+- [x] Deprecated benchmark shim removal (all 14 migrated to snowl-evals entry_points)
 - [ ] Public API stability test
+
+### Feature Completeness (P4)
+
+- [x] Working time vs wall time separation (`Timing.wait_time_ms`, `Timing.working_time_ms`)
+- [x] Canary auto-integration (`BenchmarkInfo.has_canary`, engine auto-strip)
+- [x] Friendly error on missing API key (`QuickEvalResult.first_error`)
+- [x] Missing tutorials (first-eval, scoring-deep-dive, runtime, cli)
 
 ---
 

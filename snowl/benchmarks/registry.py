@@ -14,11 +14,10 @@ Change guardrails:
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from snowl.benchmarks.base import BenchmarkAdapter, BenchmarkConcurrencyProfile, BenchmarkInfo
+from snowl.benchmarks.base import BenchmarkAdapter, BenchmarkInfo
 from snowl.benchmarks.csv_adapter import CsvBenchmarkAdapter
 from snowl.benchmarks.jsonl_adapter import JsonlBenchmarkAdapter
 from snowl.errors import SnowlValidationError
@@ -98,34 +97,6 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
         ),
         factory=_lazy_factory("snowl.benchmarks.agent_bench_os", "AgentBenchOSBenchmarkAdapter"),
     )
-    warnings.warn(
-        "Built-in 'agentdojo' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    registry.register(
-        name="agentdojo",
-        info=BenchmarkInfo(
-            name="agentdojo",
-            description="AgentDojo benchmark adapter.",
-            domain="agentic_safety",
-            benchmark_type="safety",
-            family="agentdojo",
-            primary_metric="agentdojo_score",
-            higher_is_better=True,
-            sample_preview_mode="tool_trace",
-            dashboard_tags=["prompt_injection", "tool_use", "stateful"],
-            concurrency_profile=BenchmarkConcurrencyProfile(
-                name="agentdojo",
-                api_call_amplification=5.0,
-                recommended_max_running=6,
-            ),
-            runtime_hints={
-                "extra_payload_keys": ["agentdojo_post_state", "agentdojo_state_diff"],
-            },
-        ),
-        factory=_lazy_factory("snowl.benchmarks.agentdojo", "AgentDojoBenchmarkAdapter"),
-    )
     registry.register(
         name="agentharm",
         info=BenchmarkInfo(
@@ -155,29 +126,6 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             dashboard_tags=["agent_safety", "tool_use", "refusal"],
         ),
         factory=_lazy_factory("snowl.benchmarks.agentharm", "AgentHarmBenchmarkAdapter", mode="benign"),
-    )
-    warnings.warn(
-        "Built-in 'agentsafetybench' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    registry.register(
-        name="agentsafetybench",
-        info=BenchmarkInfo(
-            name="agentsafetybench",
-            description="Agent-SafetyBench: LLM agent safety with tool-use environments.",
-            display_name="Agent-SafetyBench",
-            short_description="LLM agent safety benchmark with tool-use environments",
-            domain="agentic_safety",
-            benchmark_type="safety",
-            family="agentsafetybench",
-            primary_metric="agentsafetybench_safety",
-            higher_is_better=True,
-            sample_preview_mode="tool_trace",
-            dashboard_tags=["agent_safety", "tool_use", "stateful"],
-            middleware_hints={"type": "agentsafetybench", "execution_mode": "dynamic_env"},
-        ),
-        factory=_lazy_factory("snowl.benchmarks.agentsafetybench", "AgentSafetyBenchBenchmarkAdapter"),
     )
     registry.register(
         name="bfcl",
@@ -309,60 +257,6 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
         ),
         factory=_lazy_factory("snowl.benchmarks.strongreject", "StrongRejectBenchmarkAdapter"),
     )
-    warnings.warn(
-        "Built-in 'terminalbench' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    registry.register(
-        name="terminalbench",
-        info=BenchmarkInfo(
-            name="terminalbench",
-            description="Terminal-Bench benchmark adapter.",
-            domain="cyber_offense",
-            benchmark_type="capability",
-            family="terminalbench",
-            primary_metric="pass_rate",
-            higher_is_better=True,
-            sample_preview_mode="code_trace",
-            dashboard_tags=["coding", "terminal"],
-            runtime_hints={
-                "is_docker_like": True,
-                "container_slots_profile": {"max_slots": 4, "cpu_divisor": 2, "mem_per_slot_gb": 6},
-                "expected_env_type": "terminal",
-                "scorer_hint": "benchmarks.terminalbench scorer (unit-test results)",
-            },
-        ),
-        factory=_lazy_factory("snowl.benchmarks.terminalbench", "TerminalBenchBenchmarkAdapter"),
-    )
-    warnings.warn(
-        "Built-in 'osworld' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    registry.register(
-        name="osworld",
-        info=BenchmarkInfo(
-            name="osworld",
-            description="OSWorld benchmark adapter.",
-            domain="cyber_offense",
-            benchmark_type="capability",
-            family="osworld",
-            primary_metric="success_rate",
-            higher_is_better=True,
-            sample_preview_mode="gui_trace",
-            dashboard_tags=["gui", "desktop", "agent_capability"],
-            runtime_hints={
-                "is_docker_like": True,
-                "container_slots_profile": {"max_slots": 2, "cpu_divisor": 4, "mem_per_slot_gb": 10},
-                "extra_payload_keys": ["osworld_score"],
-                "expected_env_type": "gui",
-                "default_gui_image": "happysixd/osworld-docker",
-                "scorer_hint": "benchmarks.osworld scorer (env evaluate score)",
-            },
-        ),
-        factory=_lazy_factory("snowl.benchmarks.osworld", "OSWorldBenchmarkAdapter"),
-    )
     registry.register(
         name="sec_qa_v1",
         info=BenchmarkInfo(
@@ -431,33 +325,6 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
         ),
         factory=_lazy_factory("snowl.benchmarks.sevenllm", "SevenLLMMCQBenchmarkAdapter", language="zh"),
     )
-    warnings.warn(
-        "Built-in 'toolemu' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    registry.register(
-        name="toolemu",
-        info=BenchmarkInfo(
-            name="toolemu",
-            description="ToolEmu benchmark adapter.",
-            domain="agentic_safety",
-            benchmark_type="safety",
-            family="toolemu",
-            primary_metric="risk_rate",
-            higher_is_better=False,
-            sample_preview_mode="tool_trace",
-            dashboard_tags=["tool_use", "agent_risk"],
-            concurrency_profile=BenchmarkConcurrencyProfile(
-                name="toolemu",
-                api_call_amplification=30.0,
-                recommended_max_running=3,
-                scorer_uses_provider=True,
-                scorer_provider_id="openai",
-            ),
-        ),
-        factory=_lazy_factory("snowl.benchmarks.toolemu", "ToolEmuBenchmarkAdapter"),
-    )
     registry.register(
         name="wmdp-cyber",
         info=BenchmarkInfo(
@@ -523,169 +390,6 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             dashboard_tags=["situational_awareness", "deception"],
         ),
         factory=_lazy_factory("snowl.benchmarks.mask", "MASKBenchmarkAdapter"),
-    )
-    warnings.warn(
-        "Built-in 'tau_bench_airline' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    registry.register(
-        name="tau_bench_airline",
-        info=BenchmarkInfo(
-            name="tau_bench_airline",
-            description="Tau-Bench airline domain policy compliance.",
-            domain="agentic_capability",
-            benchmark_type="capability",
-            family="tau_bench",
-            primary_metric="policy_compliance",
-            higher_is_better=True,
-            sample_preview_mode="dialog",
-            dashboard_tags=["policy_compliance", "tool_use", "multi_turn"],
-            mcp_hints={"supported_servers": ["airline_api"], "recommended_transport": "stdio"},
-        ),
-        factory=_lazy_factory("snowl.benchmarks.tau_bench", "TauBenchBenchmarkAdapter", domain="airline"),
-    )
-    warnings.warn(
-        "Built-in 'tau_bench_retail' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    registry.register(
-        name="tau_bench_retail",
-        info=BenchmarkInfo(
-            name="tau_bench_retail",
-            description="Tau-Bench retail domain policy compliance.",
-            domain="agentic_capability",
-            benchmark_type="capability",
-            family="tau_bench",
-            primary_metric="policy_compliance",
-            higher_is_better=True,
-            sample_preview_mode="dialog",
-            dashboard_tags=["policy_compliance", "tool_use", "multi_turn"],
-            mcp_hints={"supported_servers": ["retail_api"], "recommended_transport": "stdio"},
-        ),
-        factory=_lazy_factory("snowl.benchmarks.tau_bench", "TauBenchBenchmarkAdapter", domain="retail"),
-    )
-    warnings.warn(
-        "Built-in 'cybench' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    registry.register(
-        name="cybench",
-        info=BenchmarkInfo(
-            name="cybench",
-            description="CyBench cybersecurity CTF benchmark.",
-            domain="cyber_offense",
-            benchmark_type="capability",
-            family="cybench",
-            primary_metric="flag_accuracy",
-            higher_is_better=True,
-            sample_preview_mode="code_trace",
-            dashboard_tags=["ctf", "cybersecurity", "terminal"],
-        ),
-        factory=_lazy_factory("snowl.benchmarks.cybench", "CyBenchBenchmarkAdapter"),
-    )
-    warnings.warn(
-        "Built-in 'humaneval' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    registry.register(
-        name="humaneval",
-        info=BenchmarkInfo(
-            name="humaneval",
-            description="HumanEval code generation benchmark.",
-            domain="agentic_capability",
-            benchmark_type="capability",
-            family="humaneval",
-            primary_metric="pass_at_1",
-            higher_is_better=True,
-            sample_preview_mode="code_trace",
-            dashboard_tags=["coding", "code_generation", "python"],
-        ),
-        factory=_lazy_factory("snowl.benchmarks.humaneval", "HumanEvalBenchmarkAdapter"),
-    )
-    warnings.warn(
-        "Built-in 'swe_bench_*' adapters will be removed in v0.3.0; install snowl-evals for the canonical version.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    for subset in ("lite", "verified"):
-        registry.register(
-            name=f"swe_bench_{subset}",
-            info=BenchmarkInfo(
-                name=f"swe_bench_{subset}",
-                description=f"SWE-Bench {subset} software engineering benchmark.",
-                domain="agentic_capability",
-                benchmark_type="capability",
-                family="swe_bench",
-                primary_metric="resolved",
-                higher_is_better=True,
-                sample_preview_mode="code_trace",
-                dashboard_tags=["coding", "software_engineering", "patch"],
-            ),
-            factory=_lazy_factory("snowl.benchmarks.swe_bench", "SWEBenchBenchmarkAdapter", subset=subset),
-        )
-    warnings.warn(
-        "Built-in 'math' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    registry.register(
-        name="math",
-        info=BenchmarkInfo(
-            name="math",
-            description="MATH mathematical reasoning benchmark.",
-            domain="agentic_capability",
-            benchmark_type="capability",
-            family="math",
-            primary_metric="accuracy",
-            higher_is_better=True,
-            sample_preview_mode="qa",
-            dashboard_tags=["math", "reasoning", "stem"],
-        ),
-        factory=_lazy_factory("snowl.benchmarks.math_bench", "MATHBenchmarkAdapter"),
-    )
-    warnings.warn(
-        "Built-in 'webarena' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    registry.register(
-        name="webarena",
-        info=BenchmarkInfo(
-            name="webarena",
-            description="WebArena web interaction benchmark.",
-            domain="agentic_capability",
-            benchmark_type="capability",
-            family="webarena",
-            primary_metric="success_rate",
-            higher_is_better=True,
-            sample_preview_mode="gui_trace",
-            dashboard_tags=["web", "browser", "agent_capability"],
-        ),
-        factory=_lazy_factory("snowl.benchmarks.webarena", "WebArenaBenchmarkAdapter"),
-    )
-    warnings.warn(
-        "Built-in 'cybergym' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    registry.register(
-        name="cybergym",
-        info=BenchmarkInfo(
-            name="cybergym",
-            description="CyberGym security capability benchmark.",
-            domain="cyber_offense",
-            benchmark_type="capability",
-            family="cybergym",
-            primary_metric="flag_accuracy",
-            higher_is_better=True,
-            sample_preview_mode="code_trace",
-            dashboard_tags=["ctf", "cybersecurity", "capability"],
-        ),
-        factory=_lazy_factory("snowl.benchmarks.cybergym", "CyberGymBenchmarkAdapter"),
     )
     registry.register(
         name="gaia",

@@ -74,21 +74,42 @@ def strip_canary_from_sample(
     input_key: str = "input",
     extra_patterns: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Strip canary markers from a sample's input field.
+    """Strip canary markers from a sample's input field or messages.
 
-    Returns a new dict with the input field cleaned. The original sample
+    Handles both ``{"input": "text"}`` and ``{"messages": [...]}`` formats.
+    For messages, strips canary markers from each message's ``content`` field.
+
+    Returns a new dict with canary markers removed. The original sample
     is not modified.
 
     Args:
-        sample: Sample dict with an ``input`` key (or ``input_key``).
-        input_key: The key containing the text to strip.
+        sample: Sample dict with an ``input`` key, ``input_key``, or ``messages`` list.
+        input_key: The key containing the text to strip (for simple string inputs).
         extra_patterns: Additional regex patterns to strip.
 
     Returns:
         New sample dict with canary-stripped input.
     """
     sample = dict(sample)
+
+    # Handle messages format: list of dicts with "content" key
+    messages = sample.get("messages")
+    if isinstance(messages, list):
+        stripped_messages = []
+        for msg in messages:
+            if isinstance(msg, dict):
+                content = msg.get("content")
+                if isinstance(content, str) and content:
+                    msg = dict(msg)
+                    msg["content"] = strip_canary(content, extra_patterns=extra_patterns)
+                stripped_messages.append(msg)
+            else:
+                stripped_messages.append(msg)
+        sample["messages"] = stripped_messages
+
+    # Handle simple string input
     text = sample.get(input_key)
     if isinstance(text, str) and text:
         sample[input_key] = strip_canary(text, extra_patterns=extra_patterns)
+
     return sample

@@ -82,6 +82,7 @@ class BenchmarkInfo:
     risk_domains: tuple[RiskDomain, ...] = ()
     mcp_hints: dict[str, Any] = field(default_factory=dict)
     runtime_hints: dict[str, Any] = field(default_factory=dict)
+    has_canary: bool = False
 
     def __post_init__(self) -> None:
         if not self.display_name:

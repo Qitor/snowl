@@ -226,7 +226,11 @@ class OpenAICompatibleChatClient:
         payload.update(generation_kwargs)
 
         started_at = int(time.time() * 1000)
+        wait_time_ms = 0
+        # Measure slot admission wait
+        slot_start = time.monotonic()
         async with (await self._acquire_model_slot()):
+            wait_time_ms += int((time.monotonic() - slot_start) * 1000)
             attempt = 0
             while True:
                 try:
@@ -237,7 +241,7 @@ class OpenAICompatibleChatClient:
                     ended_at = int(time.time() * 1000)
                     if self.__class__._global_success_reporter is not None:
                         self.__class__._global_success_reporter(self._config.provider_id)
-                    return self._normalize_response(data, started_at, ended_at)
+                    return self._normalize_response(data, started_at, ended_at, wait_time_ms=wait_time_ms)
                 except (httpx.HTTPError, httpx.TimeoutException) as exc:
                     detail = self._format_exception(exc)
                     retryable = self._is_retryable_error(exc)
@@ -255,7 +259,9 @@ class OpenAICompatibleChatClient:
                         retry_after = self._parse_retry_after(exc.response)
                         if retry_after is not None:
                             backoff = max(backoff, retry_after)
+                    backoff_ms = int(backoff * 1000)
                     await asyncio.sleep(backoff)
+                    wait_time_ms += backoff_ms
                     attempt += 1
 
     @staticmethod
@@ -334,6 +340,8 @@ class OpenAICompatibleChatClient:
         data: dict[str, Any],
         started_at: int,
         ended_at: int,
+        *,
+        wait_time_ms: int = 0,
     ) -> ModelResponse:
         choices = data.get("choices") or []
         if not choices:
@@ -360,6 +368,7 @@ class OpenAICompatibleChatClient:
             started_at_ms=started_at,
             ended_at_ms=ended_at,
             duration_ms=max(0, ended_at - started_at),
+            wait_time_ms=wait_time_ms,
         )
 
         return ModelResponse(message=message, usage=usage, timing=timing, raw=data)

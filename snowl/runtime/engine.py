@@ -180,6 +180,25 @@ def _get_extra_payload_keys(task: Task) -> list[str]:
     return []
 
 
+def _benchmark_has_canary(task: Task) -> bool:
+    """Check if the benchmark declares has_canary=True."""
+    metadata = getattr(task, "metadata", None)
+    if not isinstance(metadata, Mapping):
+        return False
+    bench_name = str(metadata.get("benchmark") or metadata.get("benchmark_name") or "").strip().lower()
+    if not bench_name or bench_name == "custom":
+        return False
+    try:
+        from snowl.benchmarks.registry import get_default_benchmark_registry
+        registry = get_default_benchmark_registry()
+        for entry in registry.list():
+            if entry.info.name == bench_name:
+                return entry.info.has_canary
+    except Exception:
+        pass
+    return False
+
+
 def _sample_declared_tool_names(sample: Mapping[str, Any]) -> list[str]:
     metadata = sample.get("metadata")
     if not isinstance(metadata, Mapping):
@@ -446,6 +465,11 @@ async def prepare_trial_phase(request: TrialRequest) -> PreparedTrial:
     variant_model = getattr(request.agent, "model", None)
     emit = _emit_factory(request)
     sample_for_runtime = dict(request.sample)
+
+    # Auto-strip canary markers if the benchmark declares has_canary
+    if _benchmark_has_canary(request.task):
+        from snowl.canary import strip_canary_from_sample
+        sample_for_runtime = strip_canary_from_sample(sample_for_runtime)
 
     emit(
         {
