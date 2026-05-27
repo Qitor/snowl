@@ -401,9 +401,11 @@ Adapter tests should:
 
 - Currently in `snowl/model/base.py`. If agents and scorers both need it as a protocol, it could live in core as `snowl.core.protocol.ChatModelClient`.
 
-#### P3.4: Lazy benchmark registration
+#### P3.4: ~~Lazy benchmark registration~~ RESOLVED
 
-- `register_builtin_benchmarks()` eagerly imports all 20+ adapters. Use entry_points or lazy imports to reduce import time.
+- **Problem**: ~~`register_builtin_benchmarks()` eagerly imports all 20+ adapters~~
+- **Resolution**: All adapter factory lambdas replaced with `_lazy_factory()` calls. Adapters are now imported on first use via `registry.create()`, not at module import time. Only `CsvBenchmarkAdapter` and `JsonlBenchmarkAdapter` remain eagerly imported (zero-dependency generic adapters).
+- **Files**: `snowl/benchmarks/registry.py`
 
 ---
 
@@ -451,17 +453,17 @@ The following P0 and P1 items are safe to implement now:
 - [x] EmulatedToolWrapper decoupled from concrete model client
 - [x] No benchmark-specific logic in runtime engine
 - [x] No benchmark-specific imports in runtime container providers
-- [ ] CHANGELOG.md exists
-- [ ] `docs/testing.md`, `docs/development.md`, `docs/compatibility.md`, `docs/release_process.md` exist
-- [ ] `docs/public_api.md`, `docs/extension_points.md` exist
-- [ ] `.github/pull_request_template.md` exists
+- [x] CHANGELOG.md exists
+- [x] `docs/testing.md`, `docs/development.md`, `docs/compatibility.md`, `docs/release_process.md` exist
+- [x] `docs/public_api.md`, `docs/extension_points.md` exist
+- [x] `.github/pull_request_template.md` exists
 
 ### Nice to Have (P2-P3)
 
 - [x] No duplicated utilities across adapters
 - [ ] CLI decomposed into subcommands
 - [ ] Runtime engine decomposed into phases
-- [ ] Lazy benchmark registration
+- [x] Lazy benchmark registration
 - [ ] Public API stability test
 
 ---

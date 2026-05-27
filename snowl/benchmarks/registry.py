@@ -19,34 +19,8 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from snowl.benchmarks.base import BenchmarkAdapter, BenchmarkConcurrencyProfile, BenchmarkInfo
-from snowl.benchmarks.agent_bench_os import AgentBenchOSBenchmarkAdapter
-from snowl.benchmarks.agentdojo import AgentDojoBenchmarkAdapter
-from snowl.benchmarks.agentsafetybench import AgentSafetyBenchBenchmarkAdapter
-from snowl.benchmarks.agentharm import AgentHarmBenchmarkAdapter
-from snowl.benchmarks.bfcl import BFCLBenchmarkAdapter
-from snowl.benchmarks.coconot import CoconotBenchmarkAdapter
 from snowl.benchmarks.csv_adapter import CsvBenchmarkAdapter
-from snowl.benchmarks.cybermetric import CyberMetricBenchmarkAdapter
-from snowl.benchmarks.fortress import FortressBenchmarkAdapter
-from snowl.benchmarks.ipi_coding_agent import IPICodingAgentBenchmarkAdapter
 from snowl.benchmarks.jsonl_adapter import JsonlBenchmarkAdapter
-from snowl.benchmarks.mask import MASKBenchmarkAdapter
-from snowl.benchmarks.osworld import OSWorldBenchmarkAdapter
-from snowl.benchmarks.sec_qa import SecQABenchmarkAdapter
-from snowl.benchmarks.sevenllm import SevenLLMMCQBenchmarkAdapter
-from snowl.benchmarks.strongreject import StrongRejectBenchmarkAdapter
-from snowl.benchmarks.terminalbench import TerminalBenchBenchmarkAdapter
-from snowl.benchmarks.toolemu import ToolEmuBenchmarkAdapter
-from snowl.benchmarks.wmdp import WMDPBenchmarkAdapter
-from snowl.benchmarks.xstest import XSTestBenchmarkAdapter
-from snowl.benchmarks.tau_bench import TauBenchBenchmarkAdapter
-from snowl.benchmarks.cybench import CyBenchBenchmarkAdapter
-from snowl.benchmarks.humaneval import HumanEvalBenchmarkAdapter
-from snowl.benchmarks.math_bench import MATHBenchmarkAdapter
-from snowl.benchmarks.swe_bench import SWEBenchBenchmarkAdapter
-from snowl.benchmarks.cybergym import CyberGymBenchmarkAdapter
-from snowl.benchmarks.gaia import GAIABenchmarkAdapter
-from snowl.benchmarks.webarena import WebArenaBenchmarkAdapter
 from snowl.errors import SnowlValidationError
 
 
@@ -122,7 +96,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             sample_preview_mode="code_trace",
             dashboard_tags=["terminal", "tool_use", "os"],
         ),
-        factory=lambda **kwargs: AgentBenchOSBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.agent_bench_os", "AgentBenchOSBenchmarkAdapter"),
     )
     warnings.warn(
         "Built-in 'agentdojo' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
@@ -150,7 +124,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
                 "extra_payload_keys": ["agentdojo_post_state", "agentdojo_state_diff"],
             },
         ),
-        factory=lambda **kwargs: AgentDojoBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.agentdojo", "AgentDojoBenchmarkAdapter"),
     )
     registry.register(
         name="agentharm",
@@ -165,7 +139,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             sample_preview_mode="tool_trace",
             dashboard_tags=["agent_safety", "tool_use", "refusal"],
         ),
-        factory=lambda **kwargs: AgentHarmBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.agentharm", "AgentHarmBenchmarkAdapter"),
     )
     registry.register(
         name="agentharm_benign",
@@ -180,7 +154,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             sample_preview_mode="tool_trace",
             dashboard_tags=["agent_safety", "tool_use", "refusal"],
         ),
-        factory=lambda **kwargs: AgentHarmBenchmarkAdapter(mode="benign", **kwargs),
+        factory=_lazy_factory("snowl.benchmarks.agentharm", "AgentHarmBenchmarkAdapter", mode="benign"),
     )
     warnings.warn(
         "Built-in 'agentsafetybench' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
@@ -203,7 +177,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             dashboard_tags=["agent_safety", "tool_use", "stateful"],
             middleware_hints={"type": "agentsafetybench", "execution_mode": "dynamic_env"},
         ),
-        factory=lambda **kwargs: AgentSafetyBenchBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.agentsafetybench", "AgentSafetyBenchBenchmarkAdapter"),
     )
     registry.register(
         name="bfcl",
@@ -218,7 +192,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             sample_preview_mode="tool_trace",
             dashboard_tags=["function_calling", "tool_use"],
         ),
-        factory=lambda **kwargs: BFCLBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.bfcl", "BFCLBenchmarkAdapter"),
     )
     registry.register(
         name="coconot",
@@ -233,7 +207,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             sample_preview_mode="dialog",
             dashboard_tags=["noncompliance", "refusal"],
         ),
-        factory=lambda **kwargs: CoconotBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.coconot", "CoconotBenchmarkAdapter"),
     )
     registry.register(
         name="jsonl",
@@ -264,7 +238,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             sample_preview_mode="code_trace",
             dashboard_tags=["prompt_injection", "coding", "tool_use"],
         ),
-        factory=lambda **kwargs: IPICodingAgentBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.ipi_coding_agent", "IPICodingAgentBenchmarkAdapter"),
     )
     for dataset_name in ("CyberMetric-80", "CyberMetric-500", "CyberMetric-2000", "CyberMetric-10000"):
         adapter_name = f"cybermetric_{dataset_name.rsplit('-', 1)[-1]}"
@@ -283,10 +257,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
                 sample_preview_mode="qa",
                 dashboard_tags=["mcq", "cybersecurity"],
             ),
-            factory=lambda dataset_name=dataset_name, **kwargs: CyberMetricBenchmarkAdapter(
-                dataset_name=dataset_name,
-                **kwargs,
-            ),
+            factory=_lazy_factory("snowl.benchmarks.cybermetric", "CyberMetricBenchmarkAdapter", dataset_name=dataset_name),
         )
     registry.register(
         name="fortress_adversarial",
@@ -301,7 +272,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             sample_preview_mode="dialog",
             dashboard_tags=["safeguards", "refusal"],
         ),
-        factory=lambda **kwargs: FortressBenchmarkAdapter(mode="adversarial", **kwargs),
+        factory=_lazy_factory("snowl.benchmarks.fortress", "FortressBenchmarkAdapter", mode="adversarial"),
     )
     registry.register(
         name="fortress_benign",
@@ -316,7 +287,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             sample_preview_mode="dialog",
             dashboard_tags=["safeguards", "refusal"],
         ),
-        factory=lambda **kwargs: FortressBenchmarkAdapter(mode="benign", **kwargs),
+        factory=_lazy_factory("snowl.benchmarks.fortress", "FortressBenchmarkAdapter", mode="benign"),
     )
     registry.register(
         name="strongreject",
@@ -336,7 +307,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
                 "scorer_hint": "benchmarks.strongreject scorer (judge-based)",
             },
         ),
-        factory=lambda **kwargs: StrongRejectBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.strongreject", "StrongRejectBenchmarkAdapter"),
     )
     warnings.warn(
         "Built-in 'terminalbench' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
@@ -362,7 +333,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
                 "scorer_hint": "benchmarks.terminalbench scorer (unit-test results)",
             },
         ),
-        factory=lambda **kwargs: TerminalBenchBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.terminalbench", "TerminalBenchBenchmarkAdapter"),
     )
     warnings.warn(
         "Built-in 'osworld' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
@@ -390,7 +361,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
                 "scorer_hint": "benchmarks.osworld scorer (env evaluate score)",
             },
         ),
-        factory=lambda **kwargs: OSWorldBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.osworld", "OSWorldBenchmarkAdapter"),
     )
     registry.register(
         name="sec_qa_v1",
@@ -407,7 +378,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             sample_preview_mode="qa",
             dashboard_tags=["mcq", "cybersecurity"],
         ),
-        factory=lambda **kwargs: SecQABenchmarkAdapter(variant="secqa_v1", **kwargs),
+        factory=_lazy_factory("snowl.benchmarks.sec_qa", "SecQABenchmarkAdapter", variant="secqa_v1"),
     )
     registry.register(
         name="sec_qa_v2",
@@ -424,7 +395,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             sample_preview_mode="qa",
             dashboard_tags=["mcq", "cybersecurity"],
         ),
-        factory=lambda **kwargs: SecQABenchmarkAdapter(variant="secqa_v2", **kwargs),
+        factory=_lazy_factory("snowl.benchmarks.sec_qa", "SecQABenchmarkAdapter", variant="secqa_v2"),
     )
     registry.register(
         name="sevenllm_mcq_en",
@@ -441,7 +412,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             sample_preview_mode="qa",
             dashboard_tags=["mcq", "cybersecurity", "en"],
         ),
-        factory=lambda **kwargs: SevenLLMMCQBenchmarkAdapter(language="en", **kwargs),
+        factory=_lazy_factory("snowl.benchmarks.sevenllm", "SevenLLMMCQBenchmarkAdapter", language="en"),
     )
     registry.register(
         name="sevenllm_mcq_zh",
@@ -458,7 +429,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             sample_preview_mode="qa",
             dashboard_tags=["mcq", "cybersecurity", "zh"],
         ),
-        factory=lambda **kwargs: SevenLLMMCQBenchmarkAdapter(language="zh", **kwargs),
+        factory=_lazy_factory("snowl.benchmarks.sevenllm", "SevenLLMMCQBenchmarkAdapter", language="zh"),
     )
     warnings.warn(
         "Built-in 'toolemu' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
@@ -485,7 +456,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
                 scorer_provider_id="openai",
             ),
         ),
-        factory=lambda **kwargs: ToolEmuBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.toolemu", "ToolEmuBenchmarkAdapter"),
     )
     registry.register(
         name="wmdp-cyber",
@@ -502,7 +473,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             sample_preview_mode="qa",
             dashboard_tags=["mcq", "cybersecurity"],
         ),
-        factory=lambda **kwargs: WMDPBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.wmdp", "WMDPBenchmarkAdapter"),
     )
     registry.register(
         name="wmdp-chem",
@@ -519,7 +490,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             sample_preview_mode="qa",
             dashboard_tags=["mcq", "chemistry"],
         ),
-        factory=lambda **kwargs: WMDPBenchmarkAdapter(variant="wmdp-chem", **kwargs),
+        factory=_lazy_factory("snowl.benchmarks.wmdp", "WMDPBenchmarkAdapter", variant="wmdp-chem"),
     )
     registry.register(
         name="xstest",
@@ -534,7 +505,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             sample_preview_mode="dialog",
             dashboard_tags=["refusal", "overrefusal"],
         ),
-        factory=lambda **kwargs: XSTestBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.xstest", "XSTestBenchmarkAdapter"),
     )
     registry.register(
         name="mask",
@@ -551,7 +522,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             sample_preview_mode="dialog",
             dashboard_tags=["situational_awareness", "deception"],
         ),
-        factory=lambda **kwargs: MASKBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.mask", "MASKBenchmarkAdapter"),
     )
     warnings.warn(
         "Built-in 'tau_bench_airline' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
@@ -572,7 +543,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             dashboard_tags=["policy_compliance", "tool_use", "multi_turn"],
             mcp_hints={"supported_servers": ["airline_api"], "recommended_transport": "stdio"},
         ),
-        factory=lambda **kwargs: TauBenchBenchmarkAdapter(domain="airline", **kwargs),
+        factory=_lazy_factory("snowl.benchmarks.tau_bench", "TauBenchBenchmarkAdapter", domain="airline"),
     )
     warnings.warn(
         "Built-in 'tau_bench_retail' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
@@ -593,7 +564,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             dashboard_tags=["policy_compliance", "tool_use", "multi_turn"],
             mcp_hints={"supported_servers": ["retail_api"], "recommended_transport": "stdio"},
         ),
-        factory=lambda **kwargs: TauBenchBenchmarkAdapter(domain="retail", **kwargs),
+        factory=_lazy_factory("snowl.benchmarks.tau_bench", "TauBenchBenchmarkAdapter", domain="retail"),
     )
     warnings.warn(
         "Built-in 'cybench' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
@@ -613,7 +584,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             sample_preview_mode="code_trace",
             dashboard_tags=["ctf", "cybersecurity", "terminal"],
         ),
-        factory=lambda **kwargs: CyBenchBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.cybench", "CyBenchBenchmarkAdapter"),
     )
     warnings.warn(
         "Built-in 'humaneval' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
@@ -633,7 +604,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             sample_preview_mode="code_trace",
             dashboard_tags=["coding", "code_generation", "python"],
         ),
-        factory=lambda **kwargs: HumanEvalBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.humaneval", "HumanEvalBenchmarkAdapter"),
     )
     warnings.warn(
         "Built-in 'swe_bench_*' adapters will be removed in v0.3.0; install snowl-evals for the canonical version.",
@@ -654,7 +625,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
                 sample_preview_mode="code_trace",
                 dashboard_tags=["coding", "software_engineering", "patch"],
             ),
-            factory=lambda subset=subset, **kwargs: SWEBenchBenchmarkAdapter(subset=subset, **kwargs),
+            factory=_lazy_factory("snowl.benchmarks.swe_bench", "SWEBenchBenchmarkAdapter", subset=subset),
         )
     warnings.warn(
         "Built-in 'math' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
@@ -674,7 +645,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             sample_preview_mode="qa",
             dashboard_tags=["math", "reasoning", "stem"],
         ),
-        factory=lambda **kwargs: MATHBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.math_bench", "MATHBenchmarkAdapter"),
     )
     warnings.warn(
         "Built-in 'webarena' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
@@ -694,7 +665,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             sample_preview_mode="gui_trace",
             dashboard_tags=["web", "browser", "agent_capability"],
         ),
-        factory=lambda **kwargs: WebArenaBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.webarena", "WebArenaBenchmarkAdapter"),
     )
     warnings.warn(
         "Built-in 'cybergym' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
@@ -714,7 +685,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             sample_preview_mode="code_trace",
             dashboard_tags=["ctf", "cybersecurity", "capability"],
         ),
-        factory=lambda **kwargs: CyberGymBenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.cybergym", "CyberGymBenchmarkAdapter"),
     )
     registry.register(
         name="gaia",
@@ -729,7 +700,7 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             sample_preview_mode="qa",
             dashboard_tags=["reasoning", "tool_use", "multi_modal"],
         ),
-        factory=lambda **kwargs: GAIABenchmarkAdapter(**kwargs),
+        factory=_lazy_factory("snowl.benchmarks.gaia", "GAIABenchmarkAdapter"),
     )
     # Discover plugin benchmarks from entry_points (e.g., snowl-evals)
     _discover_plugin_benchmarks(registry)
