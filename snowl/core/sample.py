@@ -62,6 +62,10 @@ class Sample:
         """Dict-style access for backward compatibility."""
         return self.to_dict()[key]
 
+    def get(self, key: str, default: Any = None) -> Any:
+        """Dict-compatible get() for backward compatibility."""
+        return self.to_dict().get(key, default)
+
     def keys(self) -> list[str]:
         """Dict-compatible keys() for ``dict(sample)`` support."""
         return list(self.to_dict().keys())
