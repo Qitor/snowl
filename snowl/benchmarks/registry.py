@@ -338,6 +338,11 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
         ),
         factory=lambda **kwargs: StrongRejectBenchmarkAdapter(**kwargs),
     )
+    warnings.warn(
+        "Built-in 'terminalbench' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     registry.register(
         name="terminalbench",
         info=BenchmarkInfo(
@@ -358,6 +363,11 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             },
         ),
         factory=lambda **kwargs: TerminalBenchBenchmarkAdapter(**kwargs),
+    )
+    warnings.warn(
+        "Built-in 'osworld' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
+        DeprecationWarning,
+        stacklevel=2,
     )
     registry.register(
         name="osworld",
@@ -543,6 +553,11 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
         ),
         factory=lambda **kwargs: MASKBenchmarkAdapter(**kwargs),
     )
+    warnings.warn(
+        "Built-in 'tau_bench_airline' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     registry.register(
         name="tau_bench_airline",
         info=BenchmarkInfo(
@@ -559,6 +574,11 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
         ),
         factory=lambda **kwargs: TauBenchBenchmarkAdapter(domain="airline", **kwargs),
     )
+    warnings.warn(
+        "Built-in 'tau_bench_retail' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     registry.register(
         name="tau_bench_retail",
         info=BenchmarkInfo(
@@ -574,6 +594,11 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             mcp_hints={"supported_servers": ["retail_api"], "recommended_transport": "stdio"},
         ),
         factory=lambda **kwargs: TauBenchBenchmarkAdapter(domain="retail", **kwargs),
+    )
+    warnings.warn(
+        "Built-in 'cybench' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
+        DeprecationWarning,
+        stacklevel=2,
     )
     registry.register(
         name="cybench",
@@ -609,6 +634,11 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             dashboard_tags=["coding", "code_generation", "python"],
         ),
         factory=lambda **kwargs: HumanEvalBenchmarkAdapter(**kwargs),
+    )
+    warnings.warn(
+        "Built-in 'swe_bench_*' adapters will be removed in v0.3.0; install snowl-evals for the canonical version.",
+        DeprecationWarning,
+        stacklevel=2,
     )
     for subset in ("lite", "verified"):
         registry.register(
@@ -665,6 +695,11 @@ def register_builtin_benchmarks(registry: BenchmarkRegistry | None = None) -> Be
             dashboard_tags=["web", "browser", "agent_capability"],
         ),
         factory=lambda **kwargs: WebArenaBenchmarkAdapter(**kwargs),
+    )
+    warnings.warn(
+        "Built-in 'cybergym' adapter will be removed in v0.3.0; install snowl-evals for the canonical version.",
+        DeprecationWarning,
+        stacklevel=2,
     )
     registry.register(
         name="cybergym",

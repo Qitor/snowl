@@ -3,16 +3,25 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import pytest
+
 from snowl.runtime.container_contract import resolve_runtime_container_spec
 from snowl.runtime.container_providers import (
     ContainerProviderContext,
     ContainerProviderRegistry,
     ContainerSession,
     DockerContainerProvider,
-    OSWorldProvider,
-    TerminalBenchProvider,
     default_container_provider_registry,
 )
+
+# TerminalBenchProvider and OSWorldProvider migrated to snowl-evals
+# Import them from snowl_evals when available; skip tests otherwise
+try:
+    from snowl_evals.terminalbench.provider import TerminalBenchProvider
+    from snowl_evals.osworld.provider import OSWorldProvider
+    _HAS_PLUGINS = True
+except ImportError:
+    _HAS_PLUGINS = False
 from snowl.runtime.container_runtime import ContainerRuntime
 
 
@@ -133,13 +142,13 @@ def test_container_runtime_requires_contract_for_container_prepare() -> None:
     assert runtime.prepare() is None
 
 
-def test_default_provider_registry_contains_terminalbench_and_osworld() -> None:
+def test_default_provider_registry_contains_builtin_providers() -> None:
     registry = default_container_provider_registry()
-    assert registry.resolve("terminalbench") is not None
-    assert registry.resolve("osworld") is not None
     assert registry.resolve("docker_container") is not None
+    assert registry.resolve("compose_terminal") is not None
 
 
+@pytest.mark.skipif(not _HAS_PLUGINS, reason="snowl-evals plugins not installed")
 def test_terminalbench_provider_emits_compatible_lifecycle_events(monkeypatch, tmp_path: Path) -> None:
     compose_file = tmp_path / "docker-compose.yaml"
     compose_file.write_text("services: {client: {image: busybox}}\n", encoding="utf-8")
@@ -188,6 +197,7 @@ def test_terminalbench_provider_emits_compatible_lifecycle_events(monkeypatch, t
             }
 
     monkeypatch.setattr("snowl.runtime.container_providers.TerminalEnv", _FakeTerminalEnv)
+    monkeypatch.setattr("snowl_evals.terminalbench.provider.TerminalEnv", _FakeTerminalEnv)
     monkeypatch.setattr("snowl.runtime.container_providers.shutil.which", lambda _name: "/usr/bin/docker")
 
     provider = TerminalBenchProvider()
@@ -241,6 +251,7 @@ def test_terminalbench_provider_emits_compatible_lifecycle_events(monkeypatch, t
     assert "runtime.env.command.finish" in names
 
 
+@pytest.mark.skipif(not _HAS_PLUGINS, reason="snowl-evals plugins not installed")
 def test_terminalbench_provider_isolates_resources_per_variant(monkeypatch, tmp_path: Path) -> None:
     compose_file = tmp_path / "docker-compose.yaml"
     compose_file.write_text("services: {client: {image: busybox}}\n", encoding="utf-8")
@@ -263,6 +274,7 @@ def test_terminalbench_provider_isolates_resources_per_variant(monkeypatch, tmp_
             return {"event": "terminal.compose.down", "exit_code": 0, "duration_ms": 1, "stdout": "", "stderr": ""}
 
     monkeypatch.setattr("snowl.runtime.container_providers.TerminalEnv", _FakeTerminalEnv)
+    monkeypatch.setattr("snowl_evals.terminalbench.provider.TerminalEnv", _FakeTerminalEnv)
     monkeypatch.setattr("snowl.runtime.container_providers.shutil.which", lambda _name: "/usr/bin/docker")
 
     provider = TerminalBenchProvider()
@@ -428,6 +440,7 @@ def test_docker_container_provider_lifecycle_with_mock_backend(monkeypatch, tmp_
     assert any("docker rm -f container-123" in call for call in rendered)
 
 
+@pytest.mark.skipif(not _HAS_PLUGINS, reason="snowl-evals plugins not installed")
 def test_osworld_provider_prepare_and_close_emit_events(monkeypatch) -> None:
     events: list[dict[str, object]] = []
 
@@ -449,6 +462,7 @@ def test_osworld_provider_prepare_and_close_emit_events(monkeypatch) -> None:
             return type("Prepared", (), {"env": _FakeGuiEnv(), "metadata": {"image": "img"}})()
 
     monkeypatch.setattr("snowl.benchmarks.osworld.container.OSWorldContainerLauncher", _FakeLauncher)
+    monkeypatch.setattr("snowl_evals.osworld.container.OSWorldContainerLauncher", _FakeLauncher)
     monkeypatch.setattr("snowl.runtime.container_providers.shutil.which", lambda _name: "/usr/bin/docker")
 
     provider = OSWorldProvider()
