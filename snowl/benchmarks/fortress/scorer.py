@@ -12,8 +12,8 @@ from snowl.scorer.grade_judge import (
     JudgeClientFactory,
     RegexGradeJudgeScorer,
     _response_content,
-    _run_coro_sync,
 )
+from snowl.scorer._sync_bridge import run_coro_sync
 from snowl.scorer.base import default_output_extractor, run_extractor
 
 
@@ -132,7 +132,7 @@ class FortressAdversarialScorer:
                 client = self.client_factory(model_name)
             else:
                 raise RuntimeError("FortressAdversarialScorer requires client_factory or clients.")
-            response = _run_coro_sync(
+            response = run_coro_sync(
                 client.generate(
                     [
                         {"role": "system", "content": ADVERSARIAL_SYSTEM},

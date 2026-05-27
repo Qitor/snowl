@@ -105,16 +105,16 @@ tool.py ─────────→ errors
 | **MEDIUM** | `snowl/runtime/policy.py:9` | Runtime imports `BenchmarkConcurrencyProfile` from benchmarks (reversed dependency direction) |
 | **MEDIUM** | `snowl/runtime/policy.py:90-97` | Runtime queries benchmark registry at runtime (deferred circular import) |
 | **MEDIUM** | `snowl/runtime/container_providers.py:25` | Runtime imports `OSWorldContainerLauncher` from a specific benchmark |
-| **MEDIUM** | `snowl/runtime/engine.py:961` | Engine checks `output.get("osworld_score")` — benchmark-specific logic in generic engine |
-| **LOW** | `snowl/tools/stateful_executor.py:53-408` | AgentDojo-specific tool implementations in shared `snowl/tools/` package |
+| **MEDIUM** | `snowl/runtime/engine.py:961` | ~~Engine checks `output.get("osworld_score")`~~ **RESOLVED**: replaced with generic `_get_extra_payload_keys()` that reads from benchmark registry |
+| **LOW** | `snowl/tools/stateful_executor.py:53-408` | ~~AgentDojo-specific tool implementations in shared `snowl/tools/` package~~ **RESOLVED**: moved to `snowl/benchmarks/agentdojo/tools.py` |
 | **LOW** | `snowl/benchmarks/base_adapter.py:46-48` | `benchmark_info()` does deferred import of registry (semantic coupling) |
 
 ### 1.5 Duplicate Abstractions
 
 | Duplication | Locations | Fix |
 |-------------|-----------|-----|
-| `_run_coro_sync()` | `scorer/model_judge.py:30-52`, `scorer/grade_judge.py:20-40` | Extract to `scorer/_sync_bridge.py` |
-| Template rendering | `scorer/model_judge.py` (`_render_template`), `scorer/grade_judge.py` (`render_prompt_template`) | Unify to single implementation in `scorer/grade_judge.py` |
+| `_run_coro_sync()` | ~~`scorer/model_judge.py:30-52`, `scorer/grade_judge.py:20-40`~~ **RESOLVED**: extracted to `scorer/_sync_bridge.py` |
+| Template rendering | ~~`scorer/model_judge.py` (`_render_template`), `scorer/grade_judge.py` (`render_prompt_template`)~~ **RESOLVED**: unified to `scorer/_prompt.py:render_judge_prompt()` |
 | `_tool_schemas()` | `benchmarks/bfcl/adapter.py`, `benchmarks/agentdojo/adapter.py` | Extract to `benchmarks/utils.py` |
 
 ### 1.6 Overly Large Files
@@ -342,16 +342,12 @@ Adapter tests should:
 - **Validation**: `pytest tests/test_emulated_tool.py -v`
 - **Public behavior change**: Type annotation only
 
-#### P1.3: Remove benchmark-specific logic from runtime engine
+#### P1.3: ~~Remove benchmark-specific logic from runtime engine~~ RESOLVED
 
-- **Problem**: `engine.py:961` checks `output.get("osworld_score")` — benchmark-specific in generic engine
+- **Problem**: ~~`engine.py:961` checks `output.get("osworld_score")` — benchmark-specific in generic engine~~
+- **Resolution**: Replaced with generic `_get_extra_payload_keys()` that reads key names from benchmark registry at runtime. No benchmark-specific key names hardcoded in engine.
 - **Files**: `snowl/runtime/engine.py`
-- **Why it matters**: Every benchmark shouldn't need engine modifications
-- **Violates core/adapters?**: Yes — runtime depends on benchmark details
-- **Risk level**: Medium
-- **Strategy**: Move OSWorld score extraction to OSWorld's scorer; use generic payload passthrough in engine
-- **Validation**: `pytest tests/test_osworld_benchmark.py tests/test_runtime_engine.py -v`
-- **Public behavior change**: OSWorld scores may appear in different payload location (document in CHANGELOG)
+- **Remaining concern**: Engine still does deferred import of benchmark registry (MEDIUM coupling noted in Part 1.4)
 
 #### P1.4: Remove benchmark-specific container providers from runtime
 
@@ -364,28 +360,21 @@ Adapter tests should:
 - **Validation**: `pytest tests/test_container_runtime_providers.py -v`
 - **Public behavior change**: Container provider registration becomes explicit
 
-#### P1.5: Move AgentDojo tool implementations out of shared tools/
+#### P1.5: ~~Move AgentDojo tool implementations out of shared tools/~~ RESOLVED
 
-- **Problem**: `stateful_executor.py` contains AgentDojo banking/travel tools
-- **Files**: `snowl/tools/stateful_executor.py`, `snowl/benchmarks/agentdojo/`
-- **Why it matters**: Adapter-specific code in shared infrastructure package
-- **Violates core/adapters?**: Yes
-- **Risk level**: Low
-- **Strategy**: Move tool implementations to `snowl/benchmarks/agentdojo/tools.py`; `stateful_executor.py` keeps only the generic sentinel pattern
-- **Validation**: `pytest tests/test_tool_middleware.py -v`
-- **Public behavior change**: Import path changes for AgentDojo tool implementations
+- **Problem**: ~~`stateful_executor.py` contains AgentDojo banking/travel tools~~
+- **Resolution**: Moved to `snowl/benchmarks/agentdojo/tools.py`. `stateful_executor.py` retains backward-compatible `__getattr__` re-exports.
+- **Files**: `snowl/tools/stateful_executor.py`, `snowl/benchmarks/agentdojo/tools.py`
 
 ### P2 — Good Cleanup
 
-#### P2.1: Extract duplicated `_run_coro_sync()` to shared utility
+#### P2.1: ~~Extract duplicated `_run_coro_sync()` to shared utility~~ RESOLVED
 
-- **Files**: `snowl/scorer/model_judge.py`, `snowl/scorer/grade_judge.py`
-- **Strategy**: Create `snowl/scorer/_sync_bridge.py` with shared implementation
+- **Resolution**: Created `snowl/scorer/_sync_bridge.py` with shared `run_coro_sync()`. Both `model_judge.py` and `grade_judge.py` now import from it.
 
-#### P2.2: Unify template rendering logic
+#### P2.2: ~~Unify template rendering logic~~ RESOLVED
 
-- **Files**: `snowl/scorer/model_judge.py`, `snowl/scorer/grade_judge.py`
-- **Strategy**: Use `render_prompt_template` from `grade_judge.py` as the canonical implementation; have `model_judge.py` delegate to it
+- **Resolution**: Created `snowl/scorer/_prompt.py` with shared `render_judge_prompt()`. Both `model_judge.py` and `grade_judge.py` now import from it.
 
 #### P2.3: Extract shared `_tool_schemas()` to benchmarks/utils
 

@@ -491,7 +491,7 @@ class InjectionScoreMatrix:
         return self._evaluate(prompt, response)
 
     def _judge_evaluate(self, prompt: str, response: str) -> dict[str, float]:
-        from snowl.scorer.model_judge import _run_coro_sync
+        from snowl.scorer._sync_bridge import run_coro_sync
         client = self.judge_client
         if client is None and self.client_factory is not None:
             client = self.client_factory(self.judge_model)
@@ -506,7 +506,7 @@ class InjectionScoreMatrix:
             result = await client.chat(messages=messages)
             return self._parse_dims(result)
 
-        return _run_coro_sync(_call())
+        return run_coro_sync(_call())
 
     def _heuristic_evaluate(self, prompt: str, response: str) -> dict[str, float]:
         """Rule-based fallback when no judge model is available."""

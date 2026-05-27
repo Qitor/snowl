@@ -13,7 +13,6 @@ Change guardrails:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 from dataclasses import asdict
@@ -23,81 +22,10 @@ from typing import Any, Callable, Mapping
 from snowl.core import Score, ScoreContext, TaskResult
 from snowl.errors import SnowlValidationError
 from snowl.model import ChatModelClient
+from snowl.scorer._sync_bridge import run_coro_sync
+from snowl.scorer._prompt import render_judge_prompt
 
 JudgeClientFactory = Callable[[str], ChatModelClient]
-
-
-def _run_coro_sync(coro: Any) -> Any:
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-
-    result_box: dict[str, Any] = {}
-    error_box: dict[str, BaseException] = {}
-
-    def _runner() -> None:
-        try:
-            result_box["result"] = asyncio.run(coro)
-        except BaseException as exc:  # pragma: no cover - defensive
-            error_box["error"] = exc
-
-    import threading
-
-    thread = threading.Thread(target=_runner, daemon=True)
-    thread.start()
-    thread.join()
-    if "error" in error_box:
-        raise error_box["error"]
-    return result_box.get("result")
-
-
-_TEMPLATE_RE = re.compile(r"\{([^{}]+)\}")
-
-
-def _format_scalar(value: Any) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, (dict, list, tuple)):
-        return json.dumps(value, ensure_ascii=False)
-    return str(value)
-
-
-def _resolve_path(expr: str, variables: Mapping[str, Any]) -> Any:
-    if expr in variables:
-        return variables[expr]
-    parts = [p for p in expr.split(".") if p]
-    if not parts:
-        raise KeyError(expr)
-
-    cur: Any = variables
-    for part in parts:
-        if isinstance(cur, Mapping):
-            if part not in cur:
-                raise KeyError(expr)
-            cur = cur[part]
-            continue
-        if hasattr(cur, part):
-            cur = getattr(cur, part)
-            continue
-        raise KeyError(expr)
-    return cur
-
-
-def _render_template(template: str, variables: Mapping[str, Any], *, strict: bool) -> str:
-    def _repl(match: re.Match[str]) -> str:
-        expr = match.group(1).strip()
-        try:
-            value = _resolve_path(expr, variables)
-        except KeyError:
-            if strict:
-                raise SnowlValidationError(
-                    f"Unknown placeholder '{expr}' in judge prompt template."
-                )
-            return match.group(0)
-        return _format_scalar(value)
-
-    return _TEMPLATE_RE.sub(_repl, template)
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:
@@ -246,12 +174,12 @@ class ModelAsJudgeJSONScorer:
         context: ScoreContext,
     ) -> dict[str, Score]:
         variables = self._build_template_variables(task_result, trace, context)
-        system_prompt = _render_template(
+        system_prompt = render_judge_prompt(
             self.system_prompt_template,
             variables,
             strict=self.strict_templates,
         )
-        user_prompt = _render_template(
+        user_prompt = render_judge_prompt(
             self.user_prompt_template,
             variables,
             strict=self.strict_templates,
@@ -264,7 +192,7 @@ class ModelAsJudgeJSONScorer:
         raw_text = ""
         parsed: dict[str, Any] | None = None
         try:
-            response = _run_coro_sync(client.generate(messages, model=self.model_name))
+            response = run_coro_sync(client.generate(messages, model=self.model_name))
             raw_text = self._extract_content(response)
             parsed = _extract_json_object(raw_text)
             if self.schema is not None:
@@ -310,12 +238,12 @@ class ModelAsJudgeJSONScorer:
     ) -> dict[str, Score]:
         """Async-native scoring that calls the judge model directly without thread shims."""
         variables = self._build_template_variables(task_result, trace, context)
-        system_prompt = _render_template(
+        system_prompt = render_judge_prompt(
             self.system_prompt_template,
             variables,
             strict=self.strict_templates,
         )
-        user_prompt = _render_template(
+        user_prompt = render_judge_prompt(
             self.user_prompt_template,
             variables,
             strict=self.strict_templates,

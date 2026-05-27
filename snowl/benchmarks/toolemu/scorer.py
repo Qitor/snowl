@@ -13,11 +13,9 @@ Change guardrails:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 import sys
-import threading
 from collections.abc import Sequence as SequenceABC
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -52,27 +50,7 @@ def _normalize_official_tool_emu_score(value: int | float) -> float:
     return max(0.0, min(1.0, float(value) / 3.0))
 
 
-def _run_coro_sync(coro: Any) -> Any:
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-
-    result_box: dict[str, Any] = {}
-    error_box: dict[str, BaseException] = {}
-
-    def _runner() -> None:
-        try:
-            result_box["result"] = asyncio.run(coro)
-        except BaseException as exc:  # pragma: no cover - defensive bridge
-            error_box["error"] = exc
-
-    thread = threading.Thread(target=_runner, daemon=True)
-    thread.start()
-    thread.join()
-    if "error" in error_box:
-        raise error_box["error"]
-    return result_box.get("result")
+from snowl.scorer._sync_bridge import run_coro_sync
 
 
 def _extract_trajectory(trace: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -685,7 +663,7 @@ class ToolEmuScorer:
         context: ScoreContext,
     ) -> dict[str, Score]:
         if self.use_official_evaluator:
-            return _run_coro_sync(self._ascore_impl(task_result, trace, context))
+            return run_coro_sync(self._ascore_impl(task_result, trace, context))
         return self._score_without_official(task_result, trace, context)
 
     async def ascore(

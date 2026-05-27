@@ -2,80 +2,19 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
-import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
 from snowl.core import Score, ScoreContext, TaskResult
 from snowl.errors import SnowlValidationError
 from snowl.model import ChatModelClient
+from snowl.scorer._sync_bridge import run_coro_sync
+from snowl.scorer._prompt import render_judge_prompt
 from snowl.scorer.base import default_output_extractor, run_extractor
 
 JudgeClientFactory = Callable[[str], ChatModelClient]
-
-
-def _run_coro_sync(coro: Any) -> Any:
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-
-    result_box: dict[str, Any] = {}
-    error_box: dict[str, BaseException] = {}
-
-    def _runner() -> None:
-        try:
-            result_box["result"] = asyncio.run(coro)
-        except BaseException as exc:  # pragma: no cover - defensive
-            error_box["error"] = exc
-
-    thread = threading.Thread(target=_runner, daemon=True)
-    thread.start()
-    thread.join()
-    if "error" in error_box:
-        raise error_box["error"]
-    return result_box.get("result")
-
-
-_TEMPLATE_RE = re.compile(r"\{([^{}]+)\}")
-
-
-def _resolve(expr: str, variables: Mapping[str, Any]) -> Any:
-    if expr in variables:
-        return variables[expr]
-    cur: Any = variables
-    for part in [p for p in expr.split(".") if p]:
-        if isinstance(cur, Mapping) and part in cur:
-            cur = cur[part]
-        elif hasattr(cur, part):
-            cur = getattr(cur, part)
-        else:
-            raise KeyError(expr)
-    return cur
-
-
-def _format(value: Any) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, (dict, list, tuple)):
-        return json.dumps(value, ensure_ascii=False)
-    return str(value)
-
-
-def render_prompt_template(template: str, variables: Mapping[str, Any], *, strict: bool = True) -> str:
-    def repl(match: re.Match[str]) -> str:
-        expr = match.group(1).strip()
-        try:
-            return _format(_resolve(expr, variables))
-        except KeyError:
-            if strict:
-                raise SnowlValidationError(f"Unknown placeholder '{expr}' in judge prompt.")
-            return match.group(0)
-
-    return _TEMPLATE_RE.sub(repl, template)
 
 
 def _response_content(response: Any) -> str:
@@ -157,12 +96,12 @@ class RegexGradeJudgeScorer:
         variables = self._variables(task_result, trace, context)
         grades: list[JudgeGrade] = []
         try:
-            system_prompt = render_prompt_template(
+            system_prompt = render_judge_prompt(
                 self.system_prompt,
                 variables,
                 strict=self.strict_templates,
             )
-            user_prompt = render_prompt_template(
+            user_prompt = render_judge_prompt(
                 self.user_prompt,
                 variables,
                 strict=self.strict_templates,
@@ -235,7 +174,7 @@ class RegexGradeJudgeScorer:
     def _grade_one(self, model_name: str, system_prompt: str, user_prompt: str) -> JudgeGrade:
         raw = ""
         try:
-            response = _run_coro_sync(
+            response = run_coro_sync(
                 self._client(model_name).generate(
                     [
                         {"role": "system", "content": system_prompt},
