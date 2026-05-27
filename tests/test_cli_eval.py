@@ -513,25 +513,28 @@ runtime:
 
 
 def test_cli_web_monitor_missing_deps_returns_2(monkeypatch, tmp_path: Path) -> None:
-    import snowl.cli as cli_mod
+    import snowl.cli_modules.web as _web_mod
     from snowl.web.runtime import WebRuntimeError
 
-    monkeypatch.setattr(cli_mod, "ensure_next_runtime", lambda log=None: (_ for _ in ()).throw(WebRuntimeError("node missing")))
+    monkeypatch.setattr(_web_mod, "ensure_next_runtime", lambda log=None: (_ for _ in ()).throw(WebRuntimeError("node missing")))
     rc = main(["web", "monitor", "--project", str(tmp_path)])
     assert rc == 2
 
 
 def test_auto_web_monitor_prints_url_when_port_is_ready(monkeypatch, tmp_path: Path, capsys) -> None:
     import snowl.cli as cli_mod
+    import snowl.cli_modules.monitor as _monitor_mod
+    import snowl.cli_modules.util as _util_mod
 
-    monkeypatch.setattr(cli_mod.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(cli_mod, "_expected_web_monitor_cache_key", lambda: "k1")
-    monkeypatch.setattr(cli_mod, "_port_listening", lambda host, port, timeout_sec=0.25: True)
-    monkeypatch.setattr(
-        cli_mod,
-        "_monitor_health",
-        lambda host, port, timeout_sec=0.35: {"project_dir": str(tmp_path), "monitor_runtime": "next", "cache_key": "k1"},
-    )
+    _fake_cache_key = lambda: "k1"
+    _fake_port_listening = lambda host, port, timeout_sec=0.25: True
+    _fake_health = lambda host, port, timeout_sec=0.35: {"project_dir": str(tmp_path), "monitor_runtime": "next", "cache_key": "k1"}
+    monkeypatch.setattr(_monitor_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(_util_mod, "_expected_web_monitor_cache_key", _fake_cache_key)
+    monkeypatch.setattr(_monitor_mod, "_expected_web_monitor_cache_key", _fake_cache_key)
+    monkeypatch.setattr(_util_mod, "_port_listening", _fake_port_listening)
+    monkeypatch.setattr(_monitor_mod, "_port_listening", _fake_port_listening)
+    monkeypatch.setattr(_monitor_mod, "_monitor_health", _fake_health)
     cli_mod._maybe_autostart_web_monitor(
         project=str(tmp_path),
         host="127.0.0.1",
@@ -545,9 +548,11 @@ def test_auto_web_monitor_prints_url_when_port_is_ready(monkeypatch, tmp_path: P
 
 def test_managed_monitor_waits_for_health_before_returning_url(monkeypatch, tmp_path: Path) -> None:
     import snowl.cli as cli_mod
+    import snowl.cli_modules.monitor as _monitor_mod
+    import snowl.cli_modules.util as _util_mod
 
     health = {"calls": 0}
-    monkeypatch.setattr(cli_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(_monitor_mod.sys.stdout, "isatty", lambda: True)
 
     class _P:
         pid = 8123
@@ -555,9 +560,13 @@ def test_managed_monitor_waits_for_health_before_returning_url(monkeypatch, tmp_
         def poll(self):
             return None
 
-    monkeypatch.setattr(cli_mod, "_next_available_port", lambda host, start_port, max_tries=32: 8765)
-    monkeypatch.setattr(cli_mod.subprocess, "Popen", lambda *args, **kwargs: _P())
-    monkeypatch.setattr(cli_mod, "_port_listening", lambda host, port, timeout_sec=0.25: True)
+    _fake_next_port = lambda host, start_port, max_tries=32: 8765
+    _fake_port_listening = lambda host, port, timeout_sec=0.25: True
+    monkeypatch.setattr(_util_mod, "_next_available_port", _fake_next_port)
+    monkeypatch.setattr(_monitor_mod, "_next_available_port", _fake_next_port)
+    monkeypatch.setattr(_monitor_mod.subprocess, "Popen", lambda *args, **kwargs: _P())
+    monkeypatch.setattr(_util_mod, "_port_listening", _fake_port_listening)
+    monkeypatch.setattr(_monitor_mod, "_port_listening", _fake_port_listening)
 
     def _fake_health(host, port, timeout_sec=0.35):
         _ = (host, port, timeout_sec)
@@ -566,11 +575,12 @@ def test_managed_monitor_waits_for_health_before_returning_url(monkeypatch, tmp_
             return None
         return {"ok": True}
 
-    monkeypatch.setattr(cli_mod, "_monitor_health", _fake_health)
+    monkeypatch.setattr(_monitor_mod, "_monitor_health", _fake_health)
     monkeypatch.setenv("SNOWL_WEB_MONITOR_READY_TIMEOUT_SEC", "1.0")
     monkeypatch.setenv("SNOWL_WEB_MONITOR_READY_POLL_SEC", "0.1")
     monkeypatch.setenv("SNOWL_WEB_MONITOR_READY_SETTLE_SEC", "0")
-    monkeypatch.setattr(cli_mod.time, "sleep", lambda _x: None)
+    monkeypatch.setattr(_monitor_mod.time, "sleep", lambda _x: None)
+    monkeypatch.setattr(_util_mod.time, "sleep", lambda _x: None)
 
     ticks = {"n": 0.0}
 
@@ -578,7 +588,8 @@ def test_managed_monitor_waits_for_health_before_returning_url(monkeypatch, tmp_
         ticks["n"] += 0.1
         return ticks["n"]
 
-    monkeypatch.setattr(cli_mod.time, "time", _fake_time)
+    monkeypatch.setattr(_monitor_mod.time, "time", _fake_time)
+    monkeypatch.setattr(_util_mod.time, "time", _fake_time)
 
     monitor = cli_mod._ManagedWebMonitor(
         project=str(tmp_path),
@@ -593,7 +604,7 @@ def test_managed_monitor_waits_for_health_before_returning_url(monkeypatch, tmp_
 
 
 def test_cli_web_monitor_prints_url(monkeypatch, tmp_path: Path, capsys) -> None:
-    import snowl.cli as cli_mod
+    import snowl.cli_modules.web as _web_mod
 
     launched: dict[str, object] = {}
 
@@ -603,8 +614,8 @@ def test_cli_web_monitor_prints_url(monkeypatch, tmp_path: Path, capsys) -> None
         source_dir = tmp_path / "src"
         source_mode = "repo"
 
-    monkeypatch.setattr(cli_mod, "ensure_next_runtime", lambda log=None: _Runtime())
-    monkeypatch.setattr(cli_mod, "ensure_next_build", lambda runtime, log=None: None)
+    monkeypatch.setattr(_web_mod, "ensure_next_runtime", lambda log=None: _Runtime())
+    monkeypatch.setattr(_web_mod, "ensure_next_build", lambda runtime, log=None: None)
 
     def _fake_run(cmd, cwd=None, env=None, check=False):
         launched["cmd"] = list(cmd)
@@ -615,7 +626,7 @@ def test_cli_web_monitor_prints_url(monkeypatch, tmp_path: Path, capsys) -> None
             returncode = 0
         return _Done()
 
-    monkeypatch.setattr(cli_mod.subprocess, "run", _fake_run)
+    monkeypatch.setattr(_web_mod.subprocess, "run", _fake_run)
 
     rc = main(["web", "monitor", "--project", str(tmp_path), "--host", "127.0.0.1", "--port", "9999"])
     out = capsys.readouterr().out
@@ -634,7 +645,7 @@ def test_cli_web_monitor_prints_url(monkeypatch, tmp_path: Path, capsys) -> None
 
 
 def test_cli_web_monitor_dev_mode_skips_build(monkeypatch, tmp_path: Path, capsys) -> None:
-    import snowl.cli as cli_mod
+    import snowl.cli_modules.web as _web_mod
 
     class _Runtime:
         app_dir = tmp_path
@@ -642,7 +653,7 @@ def test_cli_web_monitor_dev_mode_skips_build(monkeypatch, tmp_path: Path, capsy
         source_dir = tmp_path / "src"
         source_mode = "repo"
 
-    monkeypatch.setattr(cli_mod, "ensure_next_runtime", lambda log=None: _Runtime())
+    monkeypatch.setattr(_web_mod, "ensure_next_runtime", lambda log=None: _Runtime())
     called = {"build": 0}
 
     def _fake_build(runtime, log=None):
@@ -656,8 +667,8 @@ def test_cli_web_monitor_dev_mode_skips_build(monkeypatch, tmp_path: Path, capsy
         assert cmd[2] == "dev"
         return _Done()
 
-    monkeypatch.setattr(cli_mod, "ensure_next_build", _fake_build)
-    monkeypatch.setattr(cli_mod.subprocess, "run", _fake_run)
+    monkeypatch.setattr(_web_mod, "ensure_next_build", _fake_build)
+    monkeypatch.setattr(_web_mod.subprocess, "run", _fake_run)
     monkeypatch.setenv("SNOWL_WEB_DEV", "1")
 
     rc = main(["web", "monitor", "--project", str(tmp_path), "--host", "127.0.0.1", "--port", "8876"])
@@ -669,21 +680,24 @@ def test_cli_web_monitor_dev_mode_skips_build(monkeypatch, tmp_path: Path, capsy
 
 def test_autostart_stale_monitor_same_project_uses_fallback(monkeypatch, tmp_path: Path, capsys) -> None:
     import snowl.cli as cli_mod
+    import snowl.cli_modules.monitor as _monitor_mod
+    import snowl.cli_modules.util as _util_mod
 
-    monkeypatch.setattr(cli_mod.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(cli_mod, "_expected_web_monitor_cache_key", lambda: "new-cache")
-    monkeypatch.setattr(
-        cli_mod,
-        "_port_listening",
-        lambda host, port, timeout_sec=0.25: bool(int(port) in {8765}),
-    )
-    monkeypatch.setattr(
-        cli_mod,
-        "_monitor_health",
-        lambda host, port, timeout_sec=0.35: {"project_dir": str(tmp_path), "monitor_runtime": "next", "cache_key": "old-cache"},
-    )
-    monkeypatch.setattr(cli_mod, "_try_stop_monitor_process", lambda pid, host, port, timeout_sec=2.0: False)
-    monkeypatch.setattr(cli_mod, "_try_free_port_listener", lambda host, port, timeout_sec=2.0: False)
+    _fake_cache_key = lambda: "new-cache"
+    _fake_port_listening = lambda host, port, timeout_sec=0.25: bool(int(port) in {8765})
+    _fake_health = lambda host, port, timeout_sec=0.35: {"project_dir": str(tmp_path), "monitor_runtime": "next", "cache_key": "old-cache"}
+    _fake_stop = lambda pid, host, port, timeout_sec=2.0: False
+    _fake_free = lambda host, port, timeout_sec=2.0: False
+    monkeypatch.setattr(_monitor_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(_util_mod, "_expected_web_monitor_cache_key", _fake_cache_key)
+    monkeypatch.setattr(_monitor_mod, "_expected_web_monitor_cache_key", _fake_cache_key)
+    monkeypatch.setattr(_util_mod, "_port_listening", _fake_port_listening)
+    monkeypatch.setattr(_monitor_mod, "_port_listening", _fake_port_listening)
+    monkeypatch.setattr(_monitor_mod, "_monitor_health", _fake_health)
+    monkeypatch.setattr(_util_mod, "_try_stop_monitor_process", _fake_stop)
+    monkeypatch.setattr(_monitor_mod, "_try_stop_monitor_process", _fake_stop)
+    monkeypatch.setattr(_util_mod, "_try_free_port_listener", _fake_free)
+    monkeypatch.setattr(_monitor_mod, "_try_free_port_listener", _fake_free)
 
     launched = {}
 
@@ -696,15 +710,15 @@ def test_autostart_stale_monitor_same_project_uses_fallback(monkeypatch, tmp_pat
         launched["cmd"] = list(cmd)
         return _P()
 
-    monkeypatch.setattr(cli_mod.subprocess, "Popen", _fake_popen)
-    monkeypatch.setattr(cli_mod.time, "sleep", lambda _x: None)
+    monkeypatch.setattr(_monitor_mod.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(_monitor_mod.time, "sleep", lambda _x: None)
     ticks = {"n": 0}
 
     def _fake_time() -> float:
         ticks["n"] += 1
         return ticks["n"] * 0.5
 
-    monkeypatch.setattr(cli_mod.time, "time", _fake_time)
+    monkeypatch.setattr(_monitor_mod.time, "time", _fake_time)
 
     cli_mod._maybe_autostart_web_monitor(
         project=str(tmp_path),
@@ -721,9 +735,15 @@ def test_autostart_stale_monitor_same_project_uses_fallback(monkeypatch, tmp_pat
 
 def test_autostart_stale_monitor_same_project_reclaims_same_port(monkeypatch, tmp_path: Path, capsys) -> None:
     import snowl.cli as cli_mod
+    import snowl.cli_modules.monitor as _monitor_mod
+    import snowl.cli_modules.util as _util_mod
 
-    monkeypatch.setattr(cli_mod.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(cli_mod, "_expected_web_monitor_cache_key", lambda: "new-cache")
+    _fake_cache_key = lambda: "new-cache"
+    _fake_stop = lambda pid, host, port, timeout_sec=2.0: False
+    _fake_health = lambda host, port, timeout_sec=0.35: {"project_dir": str(tmp_path), "monitor_runtime": "next", "cache_key": "old-cache"}
+    monkeypatch.setattr(_monitor_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(_util_mod, "_expected_web_monitor_cache_key", _fake_cache_key)
+    monkeypatch.setattr(_monitor_mod, "_expected_web_monitor_cache_key", _fake_cache_key)
 
     state = {"occupied": True}
 
@@ -733,13 +753,11 @@ def test_autostart_stale_monitor_same_project_reclaims_same_port(monkeypatch, tm
             return bool(state["occupied"])
         return False
 
-    monkeypatch.setattr(cli_mod, "_port_listening", _fake_port_listening)
-    monkeypatch.setattr(
-        cli_mod,
-        "_monitor_health",
-        lambda host, port, timeout_sec=0.35: {"project_dir": str(tmp_path), "monitor_runtime": "next", "cache_key": "old-cache"},
-    )
-    monkeypatch.setattr(cli_mod, "_try_stop_monitor_process", lambda pid, host, port, timeout_sec=2.0: False)
+    monkeypatch.setattr(_util_mod, "_port_listening", _fake_port_listening)
+    monkeypatch.setattr(_monitor_mod, "_port_listening", _fake_port_listening)
+    monkeypatch.setattr(_monitor_mod, "_monitor_health", _fake_health)
+    monkeypatch.setattr(_util_mod, "_try_stop_monitor_process", _fake_stop)
+    monkeypatch.setattr(_monitor_mod, "_try_stop_monitor_process", _fake_stop)
 
     def _fake_free(host, port, timeout_sec=2.0):
         _ = (host, timeout_sec)
@@ -748,7 +766,8 @@ def test_autostart_stale_monitor_same_project_reclaims_same_port(monkeypatch, tm
             return True
         return False
 
-    monkeypatch.setattr(cli_mod, "_try_free_port_listener", _fake_free)
+    monkeypatch.setattr(_util_mod, "_try_free_port_listener", _fake_free)
+    monkeypatch.setattr(_monitor_mod, "_try_free_port_listener", _fake_free)
 
     launched = {}
 
@@ -761,15 +780,15 @@ def test_autostart_stale_monitor_same_project_reclaims_same_port(monkeypatch, tm
         launched["cmd"] = list(cmd)
         return _P()
 
-    monkeypatch.setattr(cli_mod.subprocess, "Popen", _fake_popen)
-    monkeypatch.setattr(cli_mod.time, "sleep", lambda _x: None)
+    monkeypatch.setattr(_monitor_mod.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(_monitor_mod.time, "sleep", lambda _x: None)
     ticks = {"n": 0}
 
     def _fake_time() -> float:
         ticks["n"] += 1
         return ticks["n"] * 0.5
 
-    monkeypatch.setattr(cli_mod.time, "time", _fake_time)
+    monkeypatch.setattr(_monitor_mod.time, "time", _fake_time)
 
     cli_mod._maybe_autostart_web_monitor(
         project=str(tmp_path),
@@ -785,23 +804,27 @@ def test_autostart_stale_monitor_same_project_reclaims_same_port(monkeypatch, tm
 
 def test_autostart_prints_starting_url_when_bootstrap_slow(monkeypatch, tmp_path: Path, capsys) -> None:
     import snowl.cli as cli_mod
+    import snowl.cli_modules.monitor as _monitor_mod
+    import snowl.cli_modules.util as _util_mod
 
-    monkeypatch.setattr(cli_mod.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(cli_mod, "_port_listening", lambda host, port, timeout_sec=0.25: False)
+    _fake_port_listening = lambda host, port, timeout_sec=0.25: False
+    monkeypatch.setattr(_monitor_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(_util_mod, "_port_listening", _fake_port_listening)
+    monkeypatch.setattr(_monitor_mod, "_port_listening", _fake_port_listening)
 
     class _P:
         def __init__(self) -> None:
             self.pid = 3030
 
-    monkeypatch.setattr(cli_mod.subprocess, "Popen", lambda *args, **kwargs: _P())
-    monkeypatch.setattr(cli_mod.time, "sleep", lambda _x: None)
+    monkeypatch.setattr(_monitor_mod.subprocess, "Popen", lambda *args, **kwargs: _P())
+    monkeypatch.setattr(_monitor_mod.time, "sleep", lambda _x: None)
     ticks = {"n": 0}
 
     def _fake_time() -> float:
         ticks["n"] += 1
         return ticks["n"] * 0.6
 
-    monkeypatch.setattr(cli_mod.time, "time", _fake_time)
+    monkeypatch.setattr(_monitor_mod.time, "time", _fake_time)
 
     cli_mod._maybe_autostart_web_monitor(
         project=str(tmp_path),
@@ -841,8 +864,10 @@ def test_eval_default_uses_plain_console_renderer(monkeypatch, tmp_path: Path) -
     # Also patch the canonical source since cli_commands imports run_eval directly
     import snowl.eval as _eval_mod
     import snowl.cli_commands as _cli_cmds
+    import snowl.cli_modules.eval as _eval_impl_mod
     monkeypatch.setattr(_eval_mod, "run_eval", _fake_run_eval)
     monkeypatch.setattr(_cli_cmds, "run_eval", _fake_run_eval)
+    monkeypatch.setattr(_eval_impl_mod, "run_eval", _fake_run_eval)
     rc = main(["eval", str(tmp_path), "--no-web-monitor"])
     assert rc == 0
     assert seen["renderer_type"] == "ConsoleRenderer"
@@ -874,8 +899,10 @@ def test_eval_cli_ui_flag_enables_legacy_renderer(monkeypatch, tmp_path: Path) -
     # Also patch the canonical source since cli_commands imports run_eval directly
     import snowl.eval as _eval_mod
     import snowl.cli_commands as _cli_cmds
+    import snowl.cli_modules.eval as _eval_impl_mod
     monkeypatch.setattr(_eval_mod, "run_eval", _fake_run_eval)
     monkeypatch.setattr(_cli_cmds, "run_eval", _fake_run_eval)
+    monkeypatch.setattr(_eval_impl_mod, "run_eval", _fake_run_eval)
     rc = main(["eval", str(tmp_path), "--cli-ui", "--no-web-monitor"])
     assert rc == 0
     assert seen["renderer_type"] == "LiveConsoleRenderer"
@@ -883,18 +910,15 @@ def test_eval_cli_ui_flag_enables_legacy_renderer(monkeypatch, tmp_path: Path) -
 
 def test_autostart_web_monitor_uses_fallback_port_for_other_project(monkeypatch, tmp_path: Path, capsys) -> None:
     import snowl.cli as cli_mod
+    import snowl.cli_modules.monitor as _monitor_mod
+    import snowl.cli_modules.util as _util_mod
 
-    monkeypatch.setattr(cli_mod.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(
-        cli_mod,
-        "_port_listening",
-        lambda host, port, timeout_sec=0.25: bool(int(port) in {8765, 8766}),
-    )
-    monkeypatch.setattr(
-        cli_mod,
-        "_monitor_health",
-        lambda host, port, timeout_sec=0.35: {"project_dir": "/tmp/another-project"} if int(port) == 8765 else None,
-    )
+    _fake_port_listening = lambda host, port, timeout_sec=0.25: bool(int(port) in {8765, 8766})
+    _fake_health = lambda host, port, timeout_sec=0.35: {"project_dir": "/tmp/another-project"} if int(port) == 8765 else None
+    monkeypatch.setattr(_monitor_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(_util_mod, "_port_listening", _fake_port_listening)
+    monkeypatch.setattr(_monitor_mod, "_port_listening", _fake_port_listening)
+    monkeypatch.setattr(_monitor_mod, "_monitor_health", _fake_health)
     launched = {}
 
     class _P:
@@ -906,13 +930,13 @@ def test_autostart_web_monitor_uses_fallback_port_for_other_project(monkeypatch,
         launched["cmd"] = list(cmd)
         return _P()
 
-    monkeypatch.setattr(cli_mod.subprocess, "Popen", _fake_popen)
-    monkeypatch.setattr(cli_mod.time, "sleep", lambda _x: None)
+    monkeypatch.setattr(_monitor_mod.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(_monitor_mod.time, "sleep", lambda _x: None)
     ticks = {"n": 0}
     def _fake_time() -> float:
         ticks["n"] += 1
         return ticks["n"] * 0.5
-    monkeypatch.setattr(cli_mod.time, "time", _fake_time)
+    monkeypatch.setattr(_monitor_mod.time, "time", _fake_time)
 
     cli_mod._maybe_autostart_web_monitor(
         project=str(tmp_path),
@@ -929,18 +953,15 @@ def test_autostart_web_monitor_uses_fallback_port_for_other_project(monkeypatch,
 
 def test_autostart_web_monitor_legacy_same_project_uses_fallback(monkeypatch, tmp_path: Path, capsys) -> None:
     import snowl.cli as cli_mod
+    import snowl.cli_modules.monitor as _monitor_mod
+    import snowl.cli_modules.util as _util_mod
 
-    monkeypatch.setattr(cli_mod.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(
-        cli_mod,
-        "_port_listening",
-        lambda host, port, timeout_sec=0.25: bool(int(port) in {8765, 8766}),
-    )
-    monkeypatch.setattr(
-        cli_mod,
-        "_monitor_health",
-        lambda host, port, timeout_sec=0.35: {"project_dir": str(tmp_path)} if int(port) == 8765 else None,
-    )
+    _fake_port_listening = lambda host, port, timeout_sec=0.25: bool(int(port) in {8765, 8766})
+    _fake_health = lambda host, port, timeout_sec=0.35: {"project_dir": str(tmp_path)} if int(port) == 8765 else None
+    monkeypatch.setattr(_monitor_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(_util_mod, "_port_listening", _fake_port_listening)
+    monkeypatch.setattr(_monitor_mod, "_port_listening", _fake_port_listening)
+    monkeypatch.setattr(_monitor_mod, "_monitor_health", _fake_health)
     launched = {}
 
     class _P:
@@ -952,15 +973,15 @@ def test_autostart_web_monitor_legacy_same_project_uses_fallback(monkeypatch, tm
         launched["cmd"] = list(cmd)
         return _P()
 
-    monkeypatch.setattr(cli_mod.subprocess, "Popen", _fake_popen)
-    monkeypatch.setattr(cli_mod.time, "sleep", lambda _x: None)
+    monkeypatch.setattr(_monitor_mod.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(_monitor_mod.time, "sleep", lambda _x: None)
     ticks = {"n": 0}
 
     def _fake_time() -> float:
         ticks["n"] += 1
         return ticks["n"] * 0.5
 
-    monkeypatch.setattr(cli_mod.time, "time", _fake_time)
+    monkeypatch.setattr(_monitor_mod.time, "time", _fake_time)
 
     cli_mod._maybe_autostart_web_monitor(
         project=str(tmp_path),
@@ -1034,9 +1055,12 @@ def test_eval_starts_managed_monitor_on_run_bootstrap(monkeypatch, tmp_path: Pat
     # Also patch the canonical source since cli_commands imports directly
     import snowl.eval as _eval_mod
     import snowl.cli_commands as _cli_cmds
+    import snowl.cli_modules.eval as _eval_impl_mod
     monkeypatch.setattr(_eval_mod, "run_eval", _fake_run_eval)
     monkeypatch.setattr(_cli_cmds, "run_eval", _fake_run_eval)
     monkeypatch.setattr(_cli_cmds, "_ManagedWebMonitor", _FakeMonitor)
+    monkeypatch.setattr(_eval_impl_mod, "run_eval", _fake_run_eval)
+    monkeypatch.setattr(_eval_impl_mod, "_ManagedWebMonitor", _FakeMonitor)
     monkeypatch.setattr(
         cli_mod.webbrowser,
         "open",
@@ -1094,9 +1118,12 @@ def test_eval_interrupt_stops_managed_monitor(monkeypatch, tmp_path: Path) -> No
     # Also patch the canonical source since cli_commands imports directly
     import snowl.eval as _eval_mod
     import snowl.cli_commands as _cli_cmds
+    import snowl.cli_modules.eval as _eval_impl_mod
     monkeypatch.setattr(_eval_mod, "run_eval", _fake_run_eval)
     monkeypatch.setattr(_cli_cmds, "run_eval", _fake_run_eval)
     monkeypatch.setattr(_cli_cmds, "_ManagedWebMonitor", _FakeMonitor)
+    monkeypatch.setattr(_eval_impl_mod, "run_eval", _fake_run_eval)
+    monkeypatch.setattr(_eval_impl_mod, "_ManagedWebMonitor", _FakeMonitor)
 
     rc = main(["eval", str(tmp_path)])
     assert rc == 130

@@ -1,23 +1,8 @@
-"""Minimal provider-agnostic chat model client protocol used by agents and scorers.
+"""Backward-compat re-export of ChatModelClient from core.
 
-Framework role:
-- Defines the async `generate(messages, **kwargs)` contract so callers can swap provider implementations cleanly.
-
-Runtime/usage wiring:
-- Implemented by `OpenAICompatibleChatClient` and consumed by built-in agents/model-judge scorer.
-
-Change guardrails:
-- Keep protocol surface narrow and stable to avoid coupling agents/scorers to provider-specific APIs.
+The canonical definition now lives in ``snowl.core.protocols``.
+This module re-exports it so that existing ``from snowl.model.base import ChatModelClient``
+and ``from snowl.model import ChatModelClient`` continue to work.
 """
 
-from __future__ import annotations
-
-from typing import Any, Mapping, Protocol
-
-
-class ChatModelClient(Protocol):
-    async def generate(
-        self,
-        messages: list[Mapping[str, Any]],
-        **generation_kwargs: Any,
-    ) -> Any: ...
+from snowl.core.protocols import ChatModelClient  # noqa: F401

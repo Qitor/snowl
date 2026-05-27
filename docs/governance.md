@@ -389,17 +389,23 @@ Adapter tests should:
 
 ### P3 — Long-Term Architecture Evolution
 
-#### P3.1: Decompose CLI into subcommand modules
+#### P3.1: ~~Decompose CLI into subcommand modules~~ RESOLVED
 
-- `cli.py` is 2,100+ lines. Decompose into `cli/eval.py`, `cli/bench.py`, `cli/web.py`, etc.
+- **Problem**: `cli.py` was 1,311 lines with 545 lines of duplicated helper code and inline command implementations.
+- **Resolution**: Removed 545 lines of dead duplicated helpers (already in `cli_modules/`). Extracted `_cmd_quick_eval` to `cli_modules/quick_eval.py`. Moved `cli_commands.py` to `cli_modules/eval.py`. Modularized `build_parser()` into `cli_modules/parsers/` package with per-command parser builders. Result: `cli.py` reduced from 1,311 → 250 lines (thin dispatcher + backward-compat re-exports).
+- **Files**: `snowl/cli.py`, `snowl/cli_modules/parsers/`, `snowl/cli_modules/quick_eval.py`, `snowl/cli_modules/eval.py`
 
-#### P3.2: Decompose runtime engine
+#### P3.2: ~~Decompose runtime engine~~ RESOLVED
 
-- `engine.py` is 1,355 lines. Split into `engine/prepare.py`, `engine/execute.py`, `engine/score.py`, `engine/finalize.py`
+- **Problem**: `engine.py` was 1,751 lines as a single monolithic file.
+- **Resolution**: Replaced `engine.py` with `engine/` package: `_shared.py` (data classes + 16 helpers), `prepare.py`, `execute.py`, `score.py`, `finalize.py`. `engine/__init__.py` re-exports all public symbols for backward compatibility. `from snowl.runtime.engine import X` continues to work.
+- **Files**: `snowl/runtime/engine/` package (5 modules + facade)
 
-#### P3.3: Consider moving `ChatModelClient` protocol to core
+#### P3.3: ~~Move `ChatModelClient` protocol to core~~ RESOLVED
 
-- Currently in `snowl/model/base.py`. If agents and scorers both need it as a protocol, it could live in core as `snowl.core.protocol.ChatModelClient`.
+- **Problem**: `ChatModelClient` was the sole symbol in `model/base.py`. Used by 13 files in snowl + 5 in snowl-evals.
+- **Resolution**: Moved protocol definition to `snowl/core/protocols.py`. Added re-export from `snowl/core/__init__.py`. Updated `snowl/model/base.py` to backward-compat re-export from core. All existing `from snowl.model import ChatModelClient` calls continue to work.
+- **Files**: `snowl/core/protocols.py`, `snowl/core/__init__.py`, `snowl/model/base.py`
 
 #### P3.4: ~~Lazy benchmark registration~~ RESOLVED
 

@@ -24,7 +24,7 @@ from snowl.cli_modules.util import (
 )
 from snowl.cli_modules.monitor import _ManagedWebMonitor
 from snowl.cli_modules.render import _build_renderer
-from snowl.cli_commands import _print_summary
+from snowl.cli_modules.eval import _print_summary
 
 
 def _cmd_bench_list() -> int:

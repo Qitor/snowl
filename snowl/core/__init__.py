@@ -119,11 +119,15 @@ from snowl.core.tool import (
     resolve_tool_spec,
     tool,
 )
+from snowl.core.protocols import (
+    ChatModelClient,
+)
 
 __all__ = [
     "Action",
     "Agent",
     "AgentContext",
+    "ChatModelClient",
     "AgentSolver",
     "AgentState",
     "AgentVariant",
