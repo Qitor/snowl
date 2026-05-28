@@ -499,11 +499,11 @@ The following P0 and P1 items are safe to implement now:
 ### Nice to Have (P2-P3)
 
 - [x] No duplicated utilities across adapters
-- [ ] CLI decomposed into subcommands
-- [ ] Runtime engine decomposed into phases
+- [x] CLI decomposed into subcommands
+- [x] Runtime engine decomposed into phases
 - [x] Lazy benchmark registration
 - [x] Deprecated benchmark shim removal (all 14 migrated to snowl-evals entry_points)
-- [ ] Public API stability test
+- [x] Public API stability test
 
 ### Feature Completeness (P4)
 

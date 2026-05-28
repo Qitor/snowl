@@ -243,10 +243,25 @@ def test_travel_get_flight_information() -> None:
     assert result["flights"][0]["airline"] == "AirFrance"
 
 
+EXPECTED_TRAVEL_TOOL_NAMES = {
+    "get_user_information", "get_all_hotels_in_city", "get_hotels_prices",
+    "get_hotels_address", "get_rating_reviews_for_hotels",
+    "get_all_restaurants_in_city", "get_restaurants_address",
+    "get_rating_reviews_for_restaurants", "get_dietary_restrictions_for_all_restaurants",
+    "get_contact_information_for_restaurants", "get_cuisine_type_for_restaurants",
+    "get_price_for_restaurants", "check_restaurant_opening_hours",
+    "get_all_car_rental_companies_in_city", "get_car_types_available",
+    "get_rating_reviews_for_car_rental", "get_car_rental_address",
+    "get_car_fuel_options", "get_car_price_per_day",
+    "create_calendar_event", "search_calendar_events",
+    "get_day_calendar_events", "cancel_calendar_event",
+    "reserve_hotel", "reserve_restaurant", "reserve_car_rental",
+    "get_flight_information", "send_email",
+}
+
+
 def test_travel_schema_tools_have_executor_implementations() -> None:
-    tools = json.loads(Path("references/AgentDojo/assets/travel_tools.json").read_text())
-    schema_names = {tool["function"]["name"] for tool in tools}
-    assert schema_names <= set(TRAVEL_TOOLS)
+    assert EXPECTED_TRAVEL_TOOL_NAMES <= set(TRAVEL_TOOLS)
 
 
 def test_travel_create_calendar_event_updates_calendar_and_inbox() -> None:

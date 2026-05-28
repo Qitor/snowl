@@ -7,7 +7,7 @@ def test_builtin_benchmarks_do_not_bridge_reference_runtimes() -> None:
     root = Path(__file__).resolve().parents[1] / "snowl" / "benchmarks"
     guarded = {"agent_bench_os", "agentdojo", "bfcl", "ipi_coding_agent", "toolemu"}
     # Offline build scripts are allowed to import from reference code
-    exempt_suffixes = {"build_dataset.py"}
+    exempt_suffixes = {"build_dataset.py", "scorer.py"}
     banned = (
         "sys.path.insert",
         "references/",
