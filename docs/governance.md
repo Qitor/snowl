@@ -512,6 +512,15 @@ The following P0 and P1 items are safe to implement now:
 - [x] Friendly error on missing API key (`QuickEvalResult.first_error`)
 - [x] Missing tutorials (first-eval, scoring-deep-dive, runtime, cli)
 
+### Final Task_v2 Completion (Round P)
+
+- [x] Tool Trace Policy v2 complete: `expected_return_patterns` + `PolicyApprovalAdapter` (approval system bridge)
+- [x] Verifier production hardening: retry logic, resource limits, `VerifierReport` with confidence
+- [x] OSWorld local code cleanup: replaced with thin re-export shim from snowl-evals
+- [x] Community adapter template: fixed template bugs, added cookiecutter, `snowl.adapters.contrib` namespace
+- [x] Leaderboard CI robustness: removed `|| true`, added pip cache, validation before publish
+- [x] Missing docs: separated-verifier, design-principles, plugin-system, runtime API, cli API
+
 ---
 
 ## Part 6: Validation

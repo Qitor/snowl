@@ -17,7 +17,7 @@ from snowl.benchmarks.agentsafetybench import AgentSafetyBenchBenchmarkAdapter
 from snowl.benchmarks.conformance import ConformanceReport, run_conformance
 from snowl.benchmarks.csv_adapter import CsvBenchmarkAdapter
 from snowl.benchmarks.jsonl_adapter import JsonlBenchmarkAdapter
-from snowl.benchmarks.osworld import OSWorldBenchmarkAdapter
+from snowl.benchmarks.osworld import OSWorldBenchmarkAdapter  # noqa: F401 — re-export shim
 from snowl.benchmarks.strongreject import StrongRejectBenchmarkAdapter
 from snowl.benchmarks.terminalbench import TerminalBenchBenchmarkAdapter
 from snowl.benchmarks.toolemu import ToolEmuBenchmarkAdapter

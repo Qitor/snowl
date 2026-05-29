@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from snowl.benchmarks.osworld.container import OSWorldContainerLauncher
+from snowl_evals.osworld.container import OSWorldContainerLauncher
 from snowl.core import EnvSpec
 from snowl.envs import GuiEnv
 

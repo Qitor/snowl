@@ -65,6 +65,8 @@ class SeparatedVerifierExecutor:
         run_id: str | None = None,
         trial_id: str | None = None,
         emit: Callable[[dict[str, Any]], None] | None = None,
+        max_retries: int = 0,
+        retry_backoff_seconds: float = 2.0,
     ) -> None:
         if spec.mode != VerifierMode.SEPARATE:
             raise SnowlValidationError(
@@ -74,6 +76,9 @@ class SeparatedVerifierExecutor:
         self._run_id = run_id
         self._trial_id = trial_id
         self._emit = emit
+        self._max_retries = max_retries
+        self._retry_backoff_seconds = retry_backoff_seconds
+        self._retries_used = 0
         self._container_id: str | None = None
         self._backend: Any = None
 
@@ -110,6 +115,7 @@ class SeparatedVerifierExecutor:
                 detach=True,
                 env=self._spec.environment or None,
                 network=self._spec.network.get("mode") if self._spec.network else None,
+                resources=self._spec.resources or None,
             )
             container_id = result.get("container_id") or result.get("output", "").strip()
             if not container_id:
@@ -209,60 +215,100 @@ class SeparatedVerifierExecutor:
 
         Returns:
             VerifierResult with exit_code, stdout, stderr, and metadata.
+
+        Retries:
+            If ``max_retries > 0``, infrastructure failures (Docker errors,
+            timeouts) are retried with exponential backoff. Test-logic failures
+            (non-zero exit code from the command itself) are NOT retried.
         """
         if self._container_id is None:
             raise RuntimeError("Verifier container not prepared. Call prepare() first.")
 
         effective_timeout = timeout_seconds or self._spec.timeout_seconds
+        attempts = 1 + self._max_retries
 
-        try:
-            result = await asyncio.to_thread(
-                self._backend.exec,
-                container_id=self._container_id,
-                command=command,
-                workdir=workdir or "/workspace",
-                timeout_seconds=effective_timeout,
-            )
+        for attempt in range(attempts):
+            try:
+                result = await asyncio.to_thread(
+                    self._backend.exec,
+                    container_id=self._container_id,
+                    command=command,
+                    workdir=workdir or "/workspace",
+                    timeout_seconds=effective_timeout,
+                )
 
-            exit_code = result.get("exit_code", -1)
-            stdout = str(result.get("output", ""))
-            stderr = str(result.get("stderr", ""))
-            timed_out = result.get("timed_out", False)
+                exit_code = result.get("exit_code", -1)
+                stdout = str(result.get("output", ""))
+                stderr = str(result.get("stderr", ""))
+                timed_out = result.get("timed_out", False)
 
-            verifier_result = VerifierResult(
-                exit_code=exit_code,
-                stdout=stdout,
-                stderr=stderr,
-                timed_out=timed_out,
-                container_id=self._container_id,
-                metadata={"command": command, "workdir": workdir},
-            )
+                verifier_result = VerifierResult(
+                    exit_code=exit_code,
+                    stdout=stdout,
+                    stderr=stderr,
+                    timed_out=timed_out,
+                    container_id=self._container_id,
+                    metadata={"command": command, "workdir": workdir, "attempt": attempt + 1},
+                )
 
-            self._emit_event({
-                "event": "runtime.verifier.execute",
-                "phase": "score",
-                "container_id": self._container_id,
-                "exit_code": exit_code,
-                "timed_out": timed_out,
-            })
+                self._emit_event({
+                    "event": "runtime.verifier.execute",
+                    "phase": "score",
+                    "container_id": self._container_id,
+                    "exit_code": exit_code,
+                    "timed_out": timed_out,
+                    "attempt": attempt + 1,
+                })
 
-            return verifier_result
+                # Infrastructure failure (exception from Docker, not test logic)
+                # — retry if attempts remain
+                if exit_code == -1 and attempt < attempts - 1:
+                    self._retries_used += 1
+                    backoff = self._retry_backoff_seconds * (2 ** attempt)
+                    logger.warning(
+                        "Verifier infrastructure failure (attempt %d/%d), retrying in %.1fs",
+                        attempt + 1, attempts, backoff,
+                    )
+                    await asyncio.sleep(backoff)
+                    continue
 
-        except Exception as exc:
-            self._emit_event({
-                "event": "runtime.verifier.error",
-                "phase": "score",
-                "step": "execute",
-                "message": str(exc),
-            })
-            return VerifierResult(
-                exit_code=-1,
-                stdout="",
-                stderr=str(exc),
-                timed_out=True,
-                container_id=self._container_id or "",
-                metadata={"command": command, "error": str(exc)},
-            )
+                return verifier_result
+
+            except Exception as exc:
+                if attempt < attempts - 1:
+                    self._retries_used += 1
+                    backoff = self._retry_backoff_seconds * (2 ** attempt)
+                    logger.warning(
+                        "Verifier exception (attempt %d/%d): %s, retrying in %.1fs",
+                        attempt + 1, attempts, exc, backoff,
+                    )
+                    await asyncio.sleep(backoff)
+                    continue
+
+                self._emit_event({
+                    "event": "runtime.verifier.error",
+                    "phase": "score",
+                    "step": "execute",
+                    "message": str(exc),
+                })
+                return VerifierResult(
+                    exit_code=-1,
+                    stdout="",
+                    stderr=str(exc),
+                    timed_out=True,
+                    container_id=self._container_id or "",
+                    metadata={"command": command, "error": str(exc), "retries_used": self._retries_used},
+                )
+
+        # Should not reach here, but safety fallback
+        return VerifierResult(
+            exit_code=-1,
+            stdout="",
+            stderr="Max retries exceeded",
+            timed_out=True,
+            container_id=self._container_id or "",
+            metadata={"command": command, "retries_used": self._retries_used},
+        )
 
     async def teardown(self) -> dict[str, Any]:
         """Remove the verifier container."""

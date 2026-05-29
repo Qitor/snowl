@@ -8,6 +8,23 @@ A **framework adapter** bridges between an external agent framework (LangGraph, 
 
 ## Quick Start
 
+### Option A: Cookiecutter template (Recommended)
+
+Use the cookiecutter template to generate a complete adapter package:
+
+```bash
+pip install cookiecutter
+cookiecutter templates/cookiecutter-snowl-adapter/
+```
+
+This generates:
+- `{{module_name}}/adapter.py` — adapter implementation
+- `{{module_name}}/__init__.py` — package exports
+- `tests/test_adapter.py` — basic conformance tests
+- `pyproject.toml` — with entry_points declaration
+
+### Option B: Manual setup
+
 ### 1. Copy the template
 
 ```bash
@@ -132,3 +149,14 @@ async def test_wrap_and_run():
 | `langgraph` | `snowl/adapters/langgraph.py` | LangGraph compiled graphs |
 | `openai_agents` | `snowl/adapters/openai_agents.py` | OpenAI Agents SDK |
 | `qitos` | `snowl/adapters/qitos.py` | QitOS AgentModule |
+
+## Community Adapters
+
+Third-party adapters can be published as separate packages using the `snowl.adapters.contrib` namespace. The adapter's `pyproject.toml` should declare an entry point:
+
+```toml
+[project.entry-points."snowl.adapters"]
+your_framework = "snowl.adapters.contrib.your_framework:YourFrameworkAdapter"
+```
+
+Snowl's adapter registry auto-discovers entry points from the `snowl.adapters` group, so no changes to Snowl itself are needed.

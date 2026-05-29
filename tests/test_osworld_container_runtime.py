@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from snowl.benchmarks.osworld import container as osw_container
-from snowl.benchmarks.osworld.container import OSWorldContainerLauncher
+from snowl_evals.osworld import container as osw_container
+from snowl_evals.osworld.container import OSWorldContainerLauncher
 
 
 def test_osworld_port_resolution_auto_allocates_unique_ports(monkeypatch) -> None:

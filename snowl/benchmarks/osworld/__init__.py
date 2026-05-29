@@ -1,17 +1,11 @@
-"""OSWorld benchmark package exports.
+"""OSWorld benchmark package — thin re-export shim.
 
-Framework role:
-- Exposes OSWorld adapter and scorer entrypoints used by registry wiring and direct imports.
-
-Runtime/usage wiring:
-- Enables benchmark resolution without importing deeper OSWorld internals.
-
-Change guardrails:
-- Keep this file import-light; heavy OSWorld runtime setup belongs in provider/evaluator modules.
+The OSWorld benchmark has been migrated to snowl-evals. This module
+provides backward-compatible re-exports so existing imports continue
+to work. New code should import from snowl_evals.osworld directly.
 """
 
-from snowl.benchmarks.osworld.adapter import OSWorldBenchmarkAdapter
-from snowl.benchmarks.osworld.scorer import OSWorldScorer, osworld
+from snowl_evals.osworld.adapter import OSWorldBenchmarkAdapter  # noqa: F401
+from snowl_evals.osworld.scorer import OSWorldScorer, osworld  # noqa: F401
 
 __all__ = ["OSWorldBenchmarkAdapter", "OSWorldScorer", "osworld"]
-

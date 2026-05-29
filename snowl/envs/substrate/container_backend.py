@@ -44,6 +44,7 @@ class ContainerBackend:
         detach: bool = True,
         on_event: EventSink = None,
         timeout_seconds: float | None = None,
+        resources: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         cmd = ["docker", "run"]
         if detach:
@@ -69,6 +70,21 @@ class ContainerBackend:
             cmd += ["-v", f"{os.path.abspath(host_path)}:{container_path}"]
         for key, value in (env or {}).items():
             cmd += ["-e", f"{key}={value}"]
+        # Resource constraints from resources dict
+        if resources:
+            mem_limit = resources.get("mem_limit") or resources.get("memory")
+            if mem_limit:
+                cmd += ["--memory", str(mem_limit)]
+            cpu_count = resources.get("cpu_count") or resources.get("cpus")
+            if cpu_count:
+                cmd += ["--cpus", str(cpu_count)]
+            pids_limit = resources.get("pids_limit")
+            if pids_limit is not None:
+                cmd += ["--pids-limit", str(pids_limit)]
+            network_mode = resources.get("network_mode")
+            if network_mode and not network:
+                network_value = "none" if str(network_mode).lower() in {"disabled", "none", "off"} else str(network_mode)
+                cmd += ["--network", network_value]
         cmd.append(str(image))
         if command:
             cmd += ["bash", "-lc", str(command)]

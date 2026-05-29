@@ -12,9 +12,11 @@ Change guardrails:
 
 from snowl.tools.gui import GuiToolset, build_gui_tools
 from snowl.tools.terminal import TerminalToolset, build_terminal_tools
+from snowl.tools.policy_approval import PolicyApprovalAdapter
 
 __all__ = [
     "GuiToolset",
+    "PolicyApprovalAdapter",
     "TerminalToolset",
     "build_gui_tools",
     "build_terminal_tools",

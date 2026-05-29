@@ -461,7 +461,6 @@ def test_osworld_provider_prepare_and_close_emit_events(monkeypatch) -> None:
                 self._emit({"event": "osworld.container.started", "phase": "env", "docker_path": docker_path})
             return type("Prepared", (), {"env": _FakeGuiEnv(), "metadata": {"image": "img"}})()
 
-    monkeypatch.setattr("snowl.benchmarks.osworld.container.OSWorldContainerLauncher", _FakeLauncher)
     monkeypatch.setattr("snowl_evals.osworld.container.OSWorldContainerLauncher", _FakeLauncher)
     monkeypatch.setattr("snowl.runtime.container_providers.shutil.which", lambda _name: "/usr/bin/docker")
 

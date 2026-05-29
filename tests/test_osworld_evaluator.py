@@ -8,8 +8,8 @@ from uuid import uuid4
 
 import pytest
 
-from snowl.benchmarks.osworld import evaluator as osworld_evaluator
-from snowl.benchmarks.osworld.evaluator import evaluate_task, run_setup_config
+from snowl_evals.osworld import evaluator as osworld_evaluator
+from snowl_evals.osworld.evaluator import evaluate_task, run_setup_config
 
 
 class _Resp:
@@ -43,7 +43,7 @@ def test_run_setup_config_calls_expected_routes(monkeypatch) -> None:
 
 def test_evaluate_task_single_metric(monkeypatch) -> None:
     # Avoid touching reference imports in unit test.
-    monkeypatch.setattr("snowl.benchmarks.osworld.evaluator._ensure_import_path", lambda: None)
+    monkeypatch.setattr("snowl_evals.osworld.evaluator._ensure_import_path", lambda: None)
 
     class FakeController:
         def __init__(self, vm_ip: str, server_port: int) -> None:
@@ -61,11 +61,11 @@ def test_evaluate_task_single_metric(monkeypatch) -> None:
     sys.modules["desktop_env.controllers.python"] = mod
 
     monkeypatch.setattr(
-        "snowl.benchmarks.osworld.evaluator._load_getter",
+        "snowl_evals.osworld.evaluator._load_getter",
         lambda _name: (lambda _env, cfg: cfg.get("value")),
     )
     monkeypatch.setattr(
-        "snowl.benchmarks.osworld.evaluator._load_metric",
+        "snowl_evals.osworld.evaluator._load_metric",
         lambda _name: (lambda result, expected, **_opts: 1.0 if result == expected else 0.0),
     )
 

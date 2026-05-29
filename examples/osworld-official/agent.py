@@ -11,7 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Sequence
 
-from snowl.benchmarks.osworld.evaluator import evaluate_task, run_setup_config
+from snowl_evals.osworld.evaluator import evaluate_task, run_setup_config
 from snowl.agents import build_model_variants
 from snowl.core import AgentContext, AgentState, EnvSpec, StopReason, agent as declare_agent
 from snowl.envs import GuiEnv

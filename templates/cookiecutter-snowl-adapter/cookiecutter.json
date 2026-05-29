@@ -1,0 +1,6 @@
+{
+    "adapter_name": "My Framework",
+    "framework_name": "my_framework",
+    "module_name": "snowl_adapter_my_framework",
+    "class_name": "MyFrameworkAdapter"
+}

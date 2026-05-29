@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass, field
 from typing import Any
 
 from snowl.core.scorer import Score, ScoreContext
@@ -26,6 +27,55 @@ from snowl.core.task_result import TaskResult
 from snowl.errors import SnowlValidationError
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class VerifierReport:
+    """Standardized verifier output with confidence assessment.
+
+    Attributes:
+        score: Primary numeric reward (0.0–1.0).
+        dimensions: Per-dimension scores when reward.json provides them.
+        confidence: Reliability indicator: HIGH (clear pass/fail), MEDIUM (partial),
+            LOW (infrastructure issue or timeout).
+        environment_diff: Differences between agent and verifier environments, if available.
+        raw_output: Raw stdout/stderr from the verifier command.
+        retries_used: Number of infrastructure retries used during execution.
+    """
+
+    score: float
+    dimensions: dict[str, float] | None = None
+    confidence: str = "HIGH"
+    environment_diff: dict[str, Any] | None = None
+    raw_output: str | None = None
+    retries_used: int = 0
+
+    def to_metadata(self) -> dict[str, Any]:
+        """Convert to a metadata dict suitable for Score.metadata."""
+        d: dict[str, Any] = {"verifier_report": True, "confidence": self.confidence}
+        if self.dimensions is not None:
+            d["dimensions"] = dict(self.dimensions)
+        if self.environment_diff is not None:
+            d["environment_diff"] = dict(self.environment_diff)
+        if self.raw_output is not None:
+            d["raw_output"] = self.raw_output[:2000]
+        if self.retries_used > 0:
+            d["retries_used"] = self.retries_used
+        return d
+
+
+def _assess_confidence(score: float, timed_out: bool, retries_used: int = 0) -> str:
+    """Assess verifier result confidence.
+
+    HIGH: clear pass/fail (0.0 or 1.0) with no infrastructure issues.
+    MEDIUM: partial score (between 0 and 1).
+    LOW: timeout or infrastructure retry occurred.
+    """
+    if timed_out or retries_used > 0:
+        return "LOW"
+    if score == 0.0 or score == 1.0:
+        return "HIGH"
+    return "MEDIUM"
 
 
 class VerifierScorer:
@@ -95,30 +145,34 @@ class VerifierScorer:
 
         # Read reward
         reward_value = 0.0
-        reward_metadata: dict[str, Any] = {
-            "test_command": self._test_command,
-            "reward_path": self._reward_path,
-            "exit_code": exit_code,
-            "timed_out": timed_out,
-        }
+        extra: dict[str, Any] = {}
 
         if env_read_file and callable(env_read_file):
             try:
                 content = await env_read_file(self._reward_path)
                 reward_value, extra = _parse_reward(content, self._reward_path)
-                reward_metadata.update(extra)
             except Exception as exc:
-                reward_metadata["reward_read_error"] = str(exc)
+                extra["reward_read_error"] = str(exc)
                 if self._strict:
                     raise
         elif exit_code == 0 and not timed_out:
             # No file reader but command passed — assume success
             reward_value = 1.0
 
+        report = _build_report(reward_value, timed_out=timed_out, extra_metadata=extra)
+        reward_metadata: dict[str, Any] = {
+            "test_command": self._test_command,
+            "reward_path": self._reward_path,
+            "exit_code": exit_code,
+            "timed_out": timed_out,
+            **extra,
+            **report.to_metadata(),
+        }
+
         return {
             "verifier": Score(
                 value=reward_value,
-                explanation=f"Verifier reward: {reward_value}" if reward_value else "Verifier failed.",
+                explanation=f"Verifier reward: {reward_value} (confidence: {report.confidence})" if reward_value else "Verifier failed.",
                 metadata=reward_metadata,
             )
         }
@@ -160,14 +214,7 @@ class VerifierScorer:
 
             # Read reward from container
             reward_value = 0.0
-            reward_metadata: dict[str, Any] = {
-                "test_command": self._test_command,
-                "reward_path": self._reward_path,
-                "exit_code": result.exit_code,
-                "timed_out": result.timed_out,
-                "container_id": result.container_id,
-                "separated": True,
-            }
+            extra: dict[str, Any] = {}
 
             if result.exit_code == 0 and not result.timed_out:
                 # Try to parse reward from stdout
@@ -175,16 +222,33 @@ class VerifierScorer:
                 if stdout.strip():
                     try:
                         reward_value, extra = _parse_reward(stdout, self._reward_path)
-                        reward_metadata.update(extra)
                     except Exception:
                         reward_value = 1.0  # Command passed, default reward
                 else:
                     reward_value = 1.0
 
+            report = _build_report(
+                reward_value,
+                timed_out=result.timed_out,
+                retries_used=executor._retries_used,
+                extra_metadata=extra,
+                raw_output=result.stdout,
+            )
+            reward_metadata: dict[str, Any] = {
+                "test_command": self._test_command,
+                "reward_path": self._reward_path,
+                "exit_code": result.exit_code,
+                "timed_out": result.timed_out,
+                "container_id": result.container_id,
+                "separated": True,
+                **extra,
+                **report.to_metadata(),
+            }
+
             return {
                 "verifier": Score(
                     value=reward_value,
-                    explanation=f"Verifier reward: {reward_value}" if reward_value else "Verifier failed.",
+                    explanation=f"Verifier reward: {reward_value} (confidence: {report.confidence})" if reward_value else "Verifier failed.",
                     metadata=reward_metadata,
                 )
             }
@@ -269,3 +333,27 @@ def _parse_reward(content: str, path: str) -> tuple[float, dict[str, Any]]:
                     continue
 
     return 0.0, {"reward_parse_failed": True, "raw_content": content[:200]}
+
+
+def _build_report(
+    reward_value: float,
+    *,
+    timed_out: bool = False,
+    retries_used: int = 0,
+    extra_metadata: dict[str, Any] | None = None,
+    raw_output: str | None = None,
+) -> VerifierReport:
+    """Build a VerifierReport from raw reward value with confidence assessment."""
+    dimensions = None
+    if extra_metadata and "reward_dimensions" in extra_metadata:
+        dimensions = extra_metadata["reward_dimensions"]
+
+    confidence = _assess_confidence(reward_value, timed_out, retries_used)
+
+    return VerifierReport(
+        score=reward_value,
+        dimensions=dimensions,
+        confidence=confidence,
+        raw_output=raw_output,
+        retries_used=retries_used,
+    )

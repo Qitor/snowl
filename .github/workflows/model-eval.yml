@@ -16,7 +16,7 @@ on:
         required: false
         default: '10'
   schedule:
-    - cron: '0 6 * * 1'  # Weekly Monday 6am UTC
+    - cron: '3 6 * * 1'  # Weekly Monday 6:03am UTC
 
 jobs:
   eval:
@@ -31,6 +31,14 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
       - name: Install Snowl
         run: pip install -e ".[dev]"
 
@@ -43,6 +51,7 @@ jobs:
           LIMIT="${{ github.event.inputs.limit || '10' }}"
 
           IFS=',' read -ra BMK_ARRAY <<< "$BENCHMARKS"
+          FAILED=0
           for bmk in "${BMK_ARRAY[@]}"; do
             bmk=$(echo "$bmk" | xargs)
             echo "=== Running benchmark: $bmk ==="
@@ -50,17 +59,37 @@ jobs:
             if [ "$LIMIT" != "0" ]; then
               LIMIT_FLAG="--limit $LIMIT"
             fi
-            snowl bench run "$bmk" --model "$MODEL" $LIMIT_FLAG || true
+            if ! snowl bench run "$bmk" --model "$MODEL" $LIMIT_FLAG; then
+              echo "::warning::Benchmark $bmk failed"
+              FAILED=$((FAILED + 1))
+            fi
           done
+          echo "failed_benchmarks=$FAILED" >> "$GITHUB_ENV"
 
       - name: Publish to leaderboard
         if: always()
         run: |
+          PUBLISHED=0
           for dir in .snowl/runs/*/; do
-            if [ -d "$dir" ]; then
-              snowl leaderboard publish "$dir" || true
+            if [ -d "$dir" ] && [ -f "${dir}outcomes.json" ]; then
+              echo "Publishing: $dir"
+              if snowl leaderboard publish "$dir"; then
+                PUBLISHED=$((PUBLISHED + 1))
+              else
+                echo "::warning::Failed to publish $dir"
+              fi
+            else
+              echo "Skipping (no outcomes.json): $dir"
             fi
           done
+          echo "published=$PUBLISHED" >> "$GITHUB_ENV"
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Evaluation Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Failed benchmarks: ${failed_benchmarks:-unknown}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Published to leaderboard: ${published:-0}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload artifacts
         if: always()

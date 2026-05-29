@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "{{cookiecutter.module_name}}"
+version = "0.1.0"
+description = "Snowl adapter for {{cookiecutter.adapter_name}}"
+requires-python = ">=3.10"
+dependencies = [
+    "snowl>=0.2.0",
+]
+
+[project.entry-points."snowl.adapters"]
+{{cookiecutter.framework_name}} = "{{cookiecutter.module_name}}.adapter:{{cookiecutter.class_name}}"

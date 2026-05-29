@@ -37,6 +37,8 @@ class ToolTracePolicyConfig:
         arg_value_constraints: Per-tool per-arg regex patterns that values must match.
             Inner dict maps arg name -> regex pattern.
         blocked_return_patterns: Per-tool regex patterns that must not appear in return values.
+        expected_return_patterns: Per-tool regex patterns that return values must match at
+            least one of. If the result matches none, the call is rejected.
     """
 
     required_tools: tuple[str, ...] = ()
@@ -46,6 +48,7 @@ class ToolTracePolicyConfig:
     allowed_args: dict[str, tuple[str, ...]] = field(default_factory=dict)
     arg_value_constraints: dict[str, dict[str, str]] = field(default_factory=dict)
     blocked_return_patterns: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    expected_return_patterns: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 class PolicyEnforcementMiddleware:
@@ -130,10 +133,10 @@ class PolicyEnforcementMiddleware:
 
     async def intercept_result(self, tool_name: str, args: dict, result: Any) -> Any:
         cfg = self._config
+        rendered = str(result)
 
         # Blocked return patterns
         if tool_name in cfg.blocked_return_patterns:
-            rendered = str(result)
             for pattern in cfg.blocked_return_patterns[tool_name]:
                 if re.search(pattern, rendered):
                     raise PolicyViolationError(
@@ -141,5 +144,14 @@ class PolicyEnforcementMiddleware:
                         violation_type="blocked_return_pattern",
                         detail=f"Return value matches blocked pattern '{pattern}'",
                     )
+
+        # Expected return patterns (positive match: must match at least one)
+        if tool_name in cfg.expected_return_patterns:
+            if not any(re.search(p, rendered) for p in cfg.expected_return_patterns[tool_name]):
+                raise PolicyViolationError(
+                    tool_name=tool_name,
+                    violation_type="unexpected_return",
+                    detail=f"Return value does not match any expected pattern for tool '{tool_name}'",
+                )
 
         return result
