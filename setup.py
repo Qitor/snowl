@@ -88,21 +88,21 @@ def _lock_hash(source_dir: Path) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _ensure_node_available() -> None:
+def _check_node_available() -> bool:
+    """Return True if Node.js + npm (>=18) are available, False otherwise."""
     node_path = shutil.which("node")
     npm_path = shutil.which("npm")
     if node_path is None or npm_path is None:
-        raise RuntimeError("Node.js + npm are required to build Snowl Web UI (Node LTS >=18).")
+        return False
     try:
         done = subprocess.run([node_path, "--version"], check=True, capture_output=True, text=True)
-    except Exception as exc:  # pragma: no cover
-        raise RuntimeError("failed to execute `node --version`.") from exc
+    except Exception:  # pragma: no cover
+        return False
     version_text = (done.stdout or done.stderr or "").strip()
     m = re.search(r"v?(\d+)\.", version_text)
-    if not m:
-        raise RuntimeError(f"unable to parse Node.js version from: {version_text or '(empty)'}")
-    if int(m.group(1)) < 18:
-        raise RuntimeError(f"Node.js >=18 is required, found: {version_text}")
+    if not m or int(m.group(1)) < 18:
+        return False
+    return True
 
 
 def _resolve_webui_targets(project_root: Path) -> list[Path]:
@@ -131,7 +131,11 @@ def _build_webui_once(announce: callable) -> None:
         announce("[webui] no webui package.json found; skip install-time build", 2)
         _WEBUI_BUILT = True
         return
-    _ensure_node_available()
+    if not _check_node_available():
+        announce("[webui] Node.js + npm (>=18) not found; skipping Web UI build. "
+                 "Set SNOWL_SKIP_WEBUI_BUILD=1 to silence this message.", 2)
+        _WEBUI_BUILT = True
+        return
     for app_dir in targets:
         announce(f"[webui] npm ci ({app_dir})", 2)
         subprocess.run(["npm", "ci"], cwd=str(app_dir), check=True)
