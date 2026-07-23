@@ -20,7 +20,6 @@ def _judge_client_factory(model_name: str) -> OpenAICompatibleChatClient:
     return OpenAICompatibleChatClient(
         OpenAICompatibleConfig(
             provider_id="inf",
-            base_url="https://ds-v4-flash-w8a8-vllm-ascend.openapi-sj.sii.edu.cn/v1",
             model=model_name,
             timeout=120,
             max_retries=2,
