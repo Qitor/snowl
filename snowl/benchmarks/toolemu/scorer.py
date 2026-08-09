@@ -195,9 +195,19 @@ def _ensure_toolemu_reference_importable() -> None:
         Path(default_reference_path(__file__, "PromptCoder")),
         Path(default_reference_path(__file__, "ToolEmu")),
     ]
-    missing = [str(path) for path in references if not path.exists()]
+    errors: dict[str, str] = {}
+    missing = [str(path.resolve()) for path in references if not path.exists()]
     if missing:
-        raise ImportError("Missing ToolEmu reference dependencies: " + ", ".join(missing))
+        errors["reference_dependencies"] = "Missing ToolEmu reference dependencies: " + ", ".join(missing)
+    try:
+        from langchain.chat_models.base import BaseChatModel  # noqa: F401
+        from langchain.schema import BaseMessage, ChatResult, Generation, LLMResult  # noqa: F401
+    except Exception as exc:
+        errors["official"] = str(exc)
+    if errors:
+        if len(errors) == 1:
+            raise ImportError(f"official_evaluator_error: {next(iter(errors.values()))}")
+        raise ImportError("official_evaluator_errors:\n" + json.dumps(errors, ensure_ascii=False, indent=2))
     for path in reversed(references):
         path_text = str(path)
         if path_text not in sys.path:
@@ -291,6 +301,37 @@ def _coerce_official_raw_score(value: Any, *, metric_name: str) -> int:
     if raw < 0 or raw > 3:
         raise ValueError(f"Official ToolEmu {metric_name} score must be in [0, 3], got {raw}.")
     return raw
+
+
+def _emit_official_evaluator_warning(
+    event_context: Mapping[str, Any] | None,
+    *,
+    scorer_id: str,
+    metric_name: str,
+    error: Exception | str,
+    defaulted_metrics: list[str] | tuple[str, ...],
+    failure_policy: str = "default_zero",
+) -> None:
+    emit = (event_context or {}).get("emit")
+    if not callable(emit):
+        return
+    error_text = str(error)
+    emit(
+        {
+            "event": "runtime.scorer.warning",
+            "phase": "scorer",
+            "task_id": (event_context or {}).get("task_id"),
+            "agent_id": (event_context or {}).get("agent_id"),
+            "variant_id": (event_context or {}).get("variant_id"),
+            "sample_id": (event_context or {}).get("sample_id"),
+            "scorer_id": scorer_id,
+            "metric_name": metric_name,
+            "message": error_text,
+            "failure_policy": failure_policy,
+            "defaulted_metrics": list(defaulted_metrics),
+            "official_evaluator_error": error_text,
+        }
+    )
 
 
 def _official_score_value(result: Mapping[str, Any], metric_name: str) -> Any:
@@ -553,6 +594,13 @@ class ToolEmuScorer:
         except Exception as exc:
             if self.strict:
                 raise
+            _emit_official_evaluator_warning(
+                event_context,
+                scorer_id=self.scorer_id,
+                metric_name=metric_name,
+                error=exc,
+                defaulted_metrics=[metric_name],
+            )
             return 0, {}, str(exc)
 
     def _score_official_default_zero(self, error: Exception) -> dict[str, Score]:
@@ -689,6 +737,21 @@ class ToolEmuScorer:
         except Exception as exc:
             if self.strict:
                 raise
+            emit = context.sample_metadata.get("__snowl_emit_event")
+            event_context = {
+                "emit": emit if callable(emit) else None,
+                "task_id": task_result.task_id,
+                "agent_id": task_result.agent_id,
+                "variant_id": context.sample_metadata.get("__snowl_variant_id"),
+                "sample_id": task_result.sample_id,
+            }
+            _emit_official_evaluator_warning(
+                event_context,
+                scorer_id=self.scorer_id,
+                metric_name="official",
+                error=exc,
+                defaulted_metrics=["ToolCallRisk", "Helpfulness"],
+            )
             return self._score_official_default_zero(exc)
 
 

@@ -429,6 +429,43 @@ class ConsoleRenderer:
                 for k, v in sorted(metrics.items()):
                     self._emit(f"    {k}: {v:.3f}" if isinstance(v, (int, float)) else f"    {k}: {v}")
 
+    def _format_scorer_warning(self, event: dict[str, Any]) -> None:
+        theme = self.streaming_theme
+        metric_name = self._pick(event, "metric_name") or "unknown"
+        message = str(self._pick(event, "message") or "").strip()
+        failure_policy = self._pick(event, "failure_policy")
+        defaulted_metrics = self._pick(event, "defaulted_metrics")
+        message_lines = [line.rstrip() for line in message.splitlines()] if message else []
+        head = message_lines[0] if message_lines else ""
+        tail = message_lines[1:] if len(message_lines) > 1 else []
+        try:
+            from rich.text import Text
+
+            t = Text()
+            t.append("  [scorer] ", style=theme.scorer_metric)
+            t.append("warning ", style=theme.scorer_value)
+            t.append(str(metric_name), style=theme.detail_value)
+            if head:
+                t.append(f"  {head}", style=theme.scorer_value)
+            self._emit(t)
+            for extra in tail:
+                self._emit(Text(f"    {extra}", style=theme.scorer_value))
+            if failure_policy is not None:
+                self._emit(Text(f"    failure_policy: {failure_policy}", style=theme.detail_value))
+            if defaulted_metrics:
+                self._emit(Text(f"    defaulted_metrics: {defaulted_metrics}", style=theme.detail_value))
+        except Exception:
+            line = f"  [scorer] warning {metric_name}"
+            if head:
+                line += f"  {head}"
+            self._emit(line)
+            for extra in tail:
+                self._emit(f"    {extra}")
+            if failure_policy is not None:
+                self._emit(f"    failure_policy: {failure_policy}")
+            if defaulted_metrics:
+                self._emit(f"    defaulted_metrics: {defaulted_metrics}")
+
     def _format_model_error(self, event: dict[str, Any]) -> None:
         theme = self.streaming_theme
         model = self._pick(event, "model") or "?"
@@ -856,6 +893,9 @@ class ConsoleRenderer:
             return
         if name == "runtime.scorer.finish":
             self._format_scorer_finish(event)
+            return
+        if name == "runtime.scorer.warning":
+            self._format_scorer_warning(event)
             return
 
         self._format_generic_event(event)

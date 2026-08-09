@@ -223,6 +223,24 @@ def test_console_renderer_format_scorer(capsys) -> None:
     assert "toolemu_toolcall_risk: 1.000" in out
 
 
+def test_console_renderer_prints_scorer_warning(capsys) -> None:
+    r = ConsoleRenderer(verbose=True)
+    r.render_runtime_event(
+        {
+            "event": "runtime.scorer.warning",
+            "scorer_id": "toolemu",
+            "metric_name": "ToolCallRisk",
+            "message": "Missing ToolEmu reference dependencies: references/PromptCoder",
+            "failure_policy": "default_zero",
+            "defaulted_metrics": ["ToolCallRisk"],
+        }
+    )
+    out = capsys.readouterr().out
+    assert "[scorer] warning ToolCallRisk" in out
+    assert "Missing ToolEmu reference dependencies" in out
+    assert "failure_policy: default_zero" in out
+
+
 def test_console_renderer_format_model_error(capsys) -> None:
     r = ConsoleRenderer(verbose=True)
     r.render_runtime_event({

@@ -257,6 +257,55 @@ def _seed_task_monitor_from_serialized_outcome(task_monitor: TaskMonitor, row: d
     )
 
 
+def _iter_backend_scorer_warning_events(row: dict[str, Any]) -> list[dict[str, Any]]:
+    task_result = dict(row.get("task_result") or {})
+    payload = dict(task_result.get("payload") or {})
+    scores = dict(row.get("scores") or {})
+    task_id = str(task_result.get("task_id") or "").strip() or None
+    agent_id = str(task_result.get("agent_id") or "").strip() or None
+    variant_id = str(payload.get("variant_id") or "default").strip() or "default"
+    sample_id = task_result.get("sample_id")
+    sample_token = str(sample_id) if sample_id is not None else None
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for score_name, score_row in scores.items():
+        if not isinstance(score_row, dict):
+            continue
+        metadata = dict(score_row.get("metadata") or {})
+        error_text = str(metadata.get("official_evaluator_error") or "").strip()
+        if not error_text:
+            continue
+        key = (str(score_name), error_text)
+        if key in seen:
+            continue
+        seen.add(key)
+        defaulted_metrics = metadata.get("official_evaluator_defaulted_metrics")
+        if isinstance(defaulted_metrics, (list, tuple, set)):
+            defaulted = [str(item) for item in defaulted_metrics if str(item).strip()]
+        elif defaulted_metrics:
+            defaulted = [str(defaulted_metrics)]
+        else:
+            defaulted = []
+        out.append(
+            {
+                "event": "runtime.scorer.warning",
+                "phase": "scorer",
+                "task_id": task_id,
+                "agent_id": agent_id,
+                "variant_id": variant_id,
+                "sample_id": sample_token,
+                "scorer_id": str(score_name),
+                "metric_name": str(score_name),
+                "message": error_text,
+                "failure_policy": metadata.get("official_evaluator_failure_policy"),
+                "defaulted_metrics": defaulted,
+                "official_evaluator_error": error_text,
+                "source": "recovery",
+            }
+        )
+    return out
+
+
 def _to_serializable_outcome(outcome: TrialOutcome) -> dict[str, Any]:
     return to_serializable_outcome(
         outcome,
@@ -679,6 +728,16 @@ async def run_eval_with_components(
                     "scores": raw.get("scores") or {},
                 },
             )
+            for warning_evt in _iter_backend_scorer_warning_events(raw):
+                evt = normalize_ui_event(
+                    warning_evt,
+                    run_id=run_id,
+                    ts_ms=int(datetime.now(timezone.utc).timestamp() * 1000),
+                ).to_dict()
+                _record_event(dict(evt))
+                _log("recovery_warning " + json.dumps(warning_evt, ensure_ascii=False))
+                if renderer and hasattr(renderer, "render_runtime_event"):
+                    renderer.render_runtime_event(evt)
     else:
         for key, raw in completed.items():
             outcome = _outcome_from_serialized(raw)
